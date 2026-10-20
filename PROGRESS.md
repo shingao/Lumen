@@ -39,9 +39,23 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 - **Tests** : 16 tests portables du scanner (Linux : liens physiques, liens symboliques, fichiers clairsemés, identité pour `safety`, dossier illisible, progression et annulation, tranches, sérialisation et rejet d'un flux falsifié) ; tests Windows sur de vraies fixtures (`scan/src/win/tests.rs`) : parcours (fichier verrouillé listé sans erreur, résident = 0, clairsemé, compressé, flux nommé ignoré, jonction non traversée, hors ligne compté à part, file ID), **MFT = parcours fichier par fichier** (mêmes fichiers, mêmes tailles allouées et logiques, mêmes liens, mêmes file ID), dossier interdit compté.
 - **CI** : job `scan` (Windows, administrateur) : tests, puis banc d'essai — génération de 200 000 fichiers, parcours et MFT sur ce dossier, puis scan complet de `C:\` par chaque méthode dans un processus séparé avec le **pic de mémoire** ; tout est écrit dans le résumé du run.
 
-### Mesures (CI Windows)
+### Mesures (CI Windows, run 39456100757)
 
-_À compléter avec le run de la PR._
+Runner GitHub `windows-latest` (Windows Server 2025, 4 vCPU, disque géré), administrateur.
+
+| mesure | volume | taille allouée | durée | pic mémoire |
+|---|---|---|---|---|
+| génération | 200 000 fichiers, 404 dossiers | | 17,7 s | |
+| parcours | 200 000 fichiers | 1,97 Gio | 1,02 s | 31 Mio |
+| MFT | 200 000 fichiers | 1,97 Gio | 6,63 s | 45 Mio |
+| parcours de `C:\` (cache froid) | 1 139 609 fichiers, 208 873 dossiers | 119,12 Gio | 481,8 s | **197 Mio** (133 Mio après) |
+| parcours de `C:\` (cache chaud) | idem | 119,14 Gio | 11,3 s | |
+| MFT de `C:\` | 1 139 648 fichiers, 208 880 dossiers | 119,31 Gio | 7,1 s | **327 Mio** (136 Mio après) |
+
+- **Mémoire** : le résultat d'une analyse de `C:\` (1,41 million d'entrées) occupe ~135 Mio ; le pic du parcours (197 Mio) vient des listes de dossiers en cours, celui de la MFT (327 Mio) de la table des enregistrements avant construction de l'arbre. Mesure par `GetProcessMemoryInfo` (pic de l'ensemble de travail).
+- **Parcours = MFT sur `C:\`** (comparaison fichier par fichier, `bench compare`) : 0 fichier vu seulement par le parcours ; 24 fichiers (0,17 Gio) vus seulement par la MFT, tous dans les 18 dossiers que Windows refuse à un administrateur sans privilège de sauvegarde (`System Volume Information`, Defender ATP, `LogFiles\WMI\RtBackup`…) ; 43 fichiers de tailles différentes pour un écart total < 0,01 Gio (téléchargements Windows Update en cours d'écriture, quelques petits fichiers à la limite résident / non résident).
+- **Écart corrigé pendant le jalon** : la première version prenait les tailles dans la liste du dossier. Sur `C:\`, 120 193 fichiers y avaient une taille périmée (autres noms des liens physiques de WinSxS, fichiers d'installeurs) : 108,0 Gio au lieu de 119,4. L'Explorateur Windows lit la même copie et affiche les mêmes valeurs fausses. Désormais chaque fichier est ouvert par son file ID pour ses attributs seulement ; test Windows `liste_de_dossier_perimee_corrigee`.
+- **Durée** : le parcours à froid est limité par les lectures aléatoires du disque du runner (même code : 11 s à chaud) ; la MFT se lit séquentiellement. Sur un SSD NVMe, le parcours à froid devrait être proche du chiffre à chaud — à mesurer sur ta machine (étape 8 du test manuel). `GetCompressedFileSizeW` : 15 appels seulement sur `C:\`.
 
 ### Décisions
 
@@ -59,7 +73,7 @@ _À compléter avec le run de la PR._
 5. Si tu as OneDrive avec des fichiers « disponibles en ligne » : ils apparaissent « dans le cloud, non comptés » et **ne se téléchargent pas** (l'icône nuage reste).
 6. « Scan rapide (admin) » : la bulle explique pourquoi ; « Lancer » déclenche une seule demande UAC ; le résultat doit être identique au parcours (même nombre de fichiers, même taille à quelques fichiers en cours d'écriture près), en beaucoup moins de temps.
 7. Refuser l'UAC : message d'échec, l'analyse précédente reste.
-8. Gestionnaire des tâches pendant un scan de `C:` : noter la mémoire de Lumen (et de l'assistant pour le scan rapide).
+8. Gestionnaire des tâches pendant un scan de `C:` : noter la mémoire de Lumen (et de l'assistant pour le scan rapide) et la durée affichée sur la ligne de bilan, avec et sans « Scan rapide (admin) ». Pour un chiffre comparable à la CI : `cd src-tauri && cargo run --release -p scan --example bench -- walk C:\` (et `mft C:\` puis `compare C:\` dans un terminal administrateur).
 
 ---
 
