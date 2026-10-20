@@ -65,12 +65,17 @@ fn fixtures() -> tempfile::TempDir {
     sparse.set_len(64 * 1024 * 1024).unwrap();
     sparse.seek(SeekFrom::Start(1024 * 1024)).unwrap();
     sparse.write_all(&[9u8; 4096]).unwrap();
+    // Tant que le cache n'est pas écrit, NTFS n'a pas encore alloué (ni compressé) les données :
+    // le parcours et la MFT doivent voir le même état disque.
+    sparse.sync_all().unwrap();
     drop(sparse);
 
-    // Compressé NTFS : 2 Mio de zéros.
+    // Compressé NTFS : 2 Mio de texte répétitif (compressible, mais pas que des zéros).
     let mut compressed = OpenOptions::new().create(true).truncate(true).read(true).write(true).open(r.join("compresse.bin")).unwrap();
     ioctl(&compressed, FSCTL_SET_COMPRESSION, &1u16.to_le_bytes());
-    compressed.write_all(&vec![0u8; 2 * 1024 * 1024]).unwrap();
+    let text: Vec<u8> = b"Lumen compresse ce texte. ".iter().copied().cycle().take(2 * 1024 * 1024).collect();
+    compressed.write_all(&text).unwrap();
+    compressed.sync_all().unwrap();
     drop(compressed);
 
     // Flux nommé : ignoré par les deux méthodes, comme par l'Explorateur.
@@ -133,7 +138,7 @@ fn parcours_sur_les_fixtures() {
     assert_eq!(sparse.logical, 64 * 1024 * 1024);
     assert!(sparse.allocated < 1024 * 1024, "clairsemé : {}", sparse.allocated);
     let compressed = node("compresse.bin");
-    assert!(compressed.allocated < compressed.logical, "compressé : {}", compressed.allocated);
+    assert!(compressed.allocated > 0 && compressed.allocated < compressed.logical, "compressé : {}", compressed.allocated);
     assert_eq!(node("un.txt").logical, 1, "flux nommé ignoré");
     let j = scan.find("jonction-windows").unwrap();
     assert_eq!(scan.node(j).unwrap().kind, Kind::Link);
