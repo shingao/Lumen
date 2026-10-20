@@ -2,14 +2,32 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useStore } from "../../app/store";
+import { backend } from "../../ipc/client";
 import { DEFAULT_CHECKED } from "../../ipc/mock/data";
+import type { ScanSummary } from "../../ipc/types";
 import { Recommendations } from "./Recommendations";
 
 const text = (el: HTMLElement) => (el.textContent ?? "").replace(/[\u202f\u00a0]/g, " ");
 
 describe("Recommandations", () => {
-  beforeEach(() => {
-    useStore.setState({ locale: "fr", volume: "C:", checked: [...DEFAULT_CHECKED], openReco: null, hoverReco: null });
+  beforeEach(async () => {
+    const scanId = await backend.startScan({ kind: "userProfile" }, "auto");
+    const summary = await new Promise<ScanSummary>((resolve) => {
+      const off = backend.onScanEvent((e) => {
+        if (e.type === "done" && e.summary.scanId === scanId) {
+          off();
+          resolve(e.summary);
+        }
+      });
+    });
+    useStore.setState({
+      locale: "fr",
+      target: { kind: "userProfile" },
+      scan: { id: scanId, status: "done", method: "auto", progress: null, summary, message: null },
+      checked: [...DEFAULT_CHECKED],
+      openReco: null,
+      hoverReco: null,
+    });
   });
 
   it("affiche les deux groupes et le total sélectionné de la maquette", async () => {

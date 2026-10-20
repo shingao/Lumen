@@ -88,12 +88,15 @@ export function formatDate(time: number, locale: Locale): string {
   return new Intl.DateTimeFormat(INTL[locale], { day: "2-digit", month: "2-digit", year: "numeric" }).format(time);
 }
 
-/** Langue de l'interface d'après la langue du système : français si fr-*, anglais sinon. */
+/**
+ * Langue de l'interface d'après les langues du système, dans leur ordre de préférence.
+ * Le français est la langue de référence : c'est aussi le repli si aucune langue n'est reconnue.
+ */
 export function detectLocale(languages: readonly string[]): Locale {
   for (const lang of languages) {
     const l = lang.toLowerCase();
     if (l.startsWith("fr")) return "fr";
     if (l.startsWith("en")) return "en";
   }
-  return "en";
+  return "fr";
 }

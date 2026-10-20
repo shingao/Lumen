@@ -4,9 +4,9 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 
 | # | Jalon | État |
 |---|---|---|
-| 1 | Projet Tauri, UI statique fidèle à la maquette (données mockées), navigation, thèmes, Paramètres et palette en squelette | **fait — à tester** |
-| 2 | Module `safety/` complet + tests (bloquants en CI) | à faire |
-| 3 | Scanner Rust (jwalk puis MFT), progression, sélecteur de disque réel | à faire |
+| 1 | Projet Tauri, UI statique fidèle à la maquette (données mockées), navigation, thèmes, Paramètres et palette en squelette | **fait — validé** |
+| 2 | Module `safety/` complet + tests (bloquants en CI) | **fait — validé** |
+| 3 | Scanner Rust (parcours parallèle puis MFT), progression, sélecteur de disque réel | **fait — à tester** |
 | 4 | Moteur de règles, recommandations et KPI calculés | à faire |
 | 5 | Scripts, copie, exécution (simulation, confirmation, journal) | à faire |
 | 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | à faire |
@@ -15,6 +15,123 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 9 | Déplacement intelligent, recherche instantanée, export de rapport | à faire |
 | 10 | Onboarding et astuces contextuelles | à faire |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | à faire |
+
+---
+
+## Jalon 3 — scanner
+
+### Livré
+
+- Crate `src-tauri/scan/` (membre du workspace) :
+  - **Métadonnées uniquement.** Sous Windows, chaque dossier est lu par `GetFileInformationByHandleEx(FileIdExtdDirectoryInfo)` sur le handle du dossier (ouvert avec `FILE_FLAG_OPEN_NO_RECALL`, sans suivre les liens) : file ID 128 bits, attributs et étiquette de point d'analyse de chaque entrée. Les tailles et dates de cette liste sont une copie que NTFS ne tient pas toujours à jour (voir Mesures) : chaque fichier est donc ouvert **par son file ID, pour ses attributs seulement** (`OpenFileById`, `FILE_READ_ATTRIBUTES`, `FILE_FLAG_OPEN_NO_RECALL` : ni lecture du contenu, ni rappel cloud, aucun conflit avec un fichier verrouillé) et ses tailles et dates sont lues dans son propre enregistrement. Fichiers cloud et points d'analyse jamais ouverts. Repli `FileIdBothDirectoryInfo` pour les systèmes de fichiers qui ignorent la classe étendue. Les fichiers compressés, clairsemés, WOF ou dédupliqués passent en plus par `GetCompressedFileSizeW`.
+  - **Cloud (OneDrive / Files On-Demand).** `RECALL_ON_DATA_ACCESS` ou `OFFLINE` : fichier compté à part (« dans le cloud »), hors taille sur disque, jamais ouvert. Dossier `RECALL_ON_OPEN` (pas encore peuplé) : jamais énuméré, car l'énumérer ferait télécharger sa liste.
+  - **Taille allouée** par défaut (compression, fichiers clairsemés ; petits fichiers résidents dans la MFT = 0 octet, comme l'Explorateur), **taille logique** en infobulle.
+  - **Liens physiques** : chaque fichier compté une fois, dédoublonné par file ID après le parcours ; le lien retenu est celui au plus petit chemin (résultat stable malgré le parcours parallèle).
+  - **Points d'analyse** (jonctions, liens symboliques, alias d'applis, liens WSL) jamais traversés, comptés à part ; fichiers WOF / dédupliqués comptés comme fichiers. Accès refusés et verrous comptés (avec échantillon de chemins), jamais bloquants.
+  - **Chaque entrée** garde son file ID, sa taille, sa taille allouée, sa date de modification et de dernier accès (FILETIME, même unité que `safety`) : c'est ce que `safety` comparera pour l'anti-TOCTOU.
+  - **Arène compacte** (72 octets par entrée + nom), enfants contigus, agrégation en un passage ; le front ne reçoit que des **tranches agrégées** (2 niveaux, 30 plus gros enfants + un nœud « autres »), rechargées au zoom.
+  - **Parcours parallèle** (pool rayon dédié, un travail par dossier), **progression ~10/s** (fichiers, dossiers, Go, erreurs, durée, et les dossiers de premier niveau déjà comptés pour la carte en direct), **annulation** propre.
+  - **MFT** (`scan::win::mft`) : lecture brute du volume (`\\.\C:`, `FSCTL_GET_NTFS_VOLUME_DATA`, extents de `$MFT`, correction des secteurs, `$STANDARD_INFORMATION`, `$FILE_NAME` — noms 8.3 ignorés, liens physiques = plusieurs noms —, `$DATA` résident / non résident / compressé / clairsemé, flux `WofCompressedData`, `$REPARSE_POINT`), enregistrements d'extension fusionnés, métadonnées NTFS (enregistrements < 24, `$Extend`) exclues, même classement et même règle de taille que le parcours. Le cache est d'abord écrit sur disque (`FlushFileBuffers` du volume) pour lire une MFT à jour.
+  - **Élévation** : jamais d'UAC au démarrage. La MFT n'est lue que si l'appli est déjà administrateur, ou après un clic sur « Scan rapide (admin) » et une phrase d'explication : Lumen se relance lui-même avec `runas` en **assistant** (`--lumen-mft-scan <lecteur> <jeton> <dossier>`, arguments validés), qui lit la MFT et renvoie le résultat par un tube nommé (première instance, client local uniquement) ; le flux est validé au décodage (indices, bornes). Volumes non NTFS (exFAT, FAT32, réseau) : parcours.
+- **Appli** : commandes typées `app_info`, `volumes_list`, `scan_start` (cible « dossier utilisateur » ou une lettre présente dans la liste des volumes — jamais un chemin), `scan_cancel`, `scan_summary`, `scan_tree` ; événements `scan:progress`, `scan:done`, `scan:failed`. Une seule analyse gardée en mémoire.
+- **Interface** (même DA) : analyse du dossier utilisateur au lancement ; menu « Que faut-il analyser ? » (dossier utilisateur, chaque disque avec son espace libre) ; « Analyser à nouveau » ; « Scan rapide (admin) » avec sa bulle d'explication ; carte de progression (compteurs mono, barre, Annuler) et carte en direct des dossiers de premier niveau pendant la première analyse ; infobulle avec taille sur disque **et** taille logique ; tuiles « N autres éléments » ; ligne de bilan sous la légende (fichiers, cloud non comptés, liens physiques, liens non suivis, inaccessibles, méthode et durée). KPI réels : espace libre, « non analysé » = espace utilisé du disque − taille analysée ; « sans risque » et « à vérifier » attendent le moteur de règles (jalon 4). Couleurs de catégorie provisoires d'après les noms de dossiers (`core/categories.ts`), en attendant les règles.
+- **Navigateur** (`npm run dev`) : le backend factice simule une analyse (progression puis résultat) sur les données de la maquette.
+- **Tests** : 16 tests portables du scanner (Linux : liens physiques, liens symboliques, fichiers clairsemés, identité pour `safety`, dossier illisible, progression et annulation, tranches, sérialisation et rejet d'un flux falsifié) ; tests Windows sur de vraies fixtures (`scan/src/win/tests.rs`) : parcours (fichier verrouillé listé sans erreur, résident = 0, clairsemé, compressé, flux nommé ignoré, jonction non traversée, hors ligne compté à part, file ID), **MFT = parcours fichier par fichier** (mêmes fichiers, mêmes tailles allouées et logiques, mêmes liens, mêmes file ID), dossier interdit compté.
+- **CI** : job `scan` (Windows, administrateur) : tests, puis banc d'essai — génération de 200 000 fichiers, parcours et MFT sur ce dossier, puis scan complet de `C:\` par chaque méthode dans un processus séparé avec le **pic de mémoire** ; tout est écrit dans le résumé du run.
+
+### Mesures (CI Windows, run 39456100757)
+
+Runner GitHub `windows-latest` (Windows Server 2025, 4 vCPU, disque géré), administrateur.
+
+| mesure | volume | taille allouée | durée | pic mémoire |
+|---|---|---|---|---|
+| génération | 200 000 fichiers, 404 dossiers | | 17,7 s | |
+| parcours | 200 000 fichiers | 1,97 Gio | 1,02 s | 31 Mio |
+| MFT | 200 000 fichiers | 1,97 Gio | 6,63 s | 45 Mio |
+| parcours de `C:\` (cache froid) | 1 139 609 fichiers, 208 873 dossiers | 119,12 Gio | 481,8 s | **197 Mio** (133 Mio après) |
+| parcours de `C:\` (cache chaud) | idem | 119,14 Gio | 11,3 s | |
+| MFT de `C:\` | 1 139 648 fichiers, 208 880 dossiers | 119,31 Gio | 7,1 s | **327 Mio** (136 Mio après) |
+
+- **Mémoire** : le résultat d'une analyse de `C:\` (1,41 million d'entrées) occupe ~135 Mio ; le pic du parcours (197 Mio) vient des listes de dossiers en cours, celui de la MFT (327 Mio) de la table des enregistrements avant construction de l'arbre. Mesure par `GetProcessMemoryInfo` (pic de l'ensemble de travail).
+- **Parcours = MFT sur `C:\`** (comparaison fichier par fichier, `bench compare`) : 0 fichier vu seulement par le parcours ; 24 fichiers (0,17 Gio) vus seulement par la MFT, tous dans les 18 dossiers que Windows refuse à un administrateur sans privilège de sauvegarde (`System Volume Information`, Defender ATP, `LogFiles\WMI\RtBackup`…) ; 43 fichiers de tailles différentes pour un écart total < 0,01 Gio (téléchargements Windows Update en cours d'écriture, quelques petits fichiers à la limite résident / non résident).
+- **Écart corrigé pendant le jalon** : la première version prenait les tailles dans la liste du dossier. Sur `C:\`, 120 193 fichiers y avaient une taille périmée (autres noms des liens physiques de WinSxS, fichiers d'installeurs) : 108,0 Gio au lieu de 119,4. L'Explorateur Windows lit la même copie et affiche les mêmes valeurs fausses. Désormais chaque fichier est ouvert par son file ID pour ses attributs seulement ; test Windows `liste_de_dossier_perimee_corrigee`.
+- **Durée** : le parcours à froid est limité par les lectures aléatoires du disque du runner (même code : 11 s à chaud) ; la MFT se lit séquentiellement. Sur un SSD NVMe, le parcours à froid devrait être proche du chiffre à chaud — à mesurer sur ta machine (étape 8 du test manuel). `GetCompressedFileSizeW` : 15 appels seulement sur `C:\`.
+
+### Compléments demandés à la validation
+
+- **Assistant administrateur muet et éphémère** (`scan/src/win/helper.rs`, `trust.rs`) :
+  - il ne fait qu'une chose : lire la MFT d'un volume désigné par sa **seule lettre** (disque fixe NTFS, ni amovible, ni réseau, ni SUBST, vérifié des deux côtés), envoyer le résultat et quitter. Il ne reçoit plus aucun chemin : le dossier demandé (le profil, par exemple) est extrait ensuite par Lumen, sans privilège (`Scan::subtree`, réagrégé) ;
+  - il n'écoute rien : c'est Lumen (non élevé) qui crée le tube — nom aléatoire (`BCryptGenRandom`), `FILE_FLAG_FIRST_PIPE_INSTANCE`, une seule instance, clients distants refusés, DACL réservée au SID de l'utilisateur courant. L'assistant s'y connecte en client avec `SECURITY_IDENTIFICATION` (le serveur du tube ne peut pas agir en son nom) ;
+  - PID vérifié des deux côtés : Lumen exige que le client soit le processus rendu par `ShellExecuteEx` (`SEE_MASK_NOCLOSEPROCESS`, `GetNamedPipeClientProcessId`) ; l'assistant exige que le serveur soit le PID de Lumen reçu au lancement **et** le même exécutable (`GetNamedPipeServerProcessId`, `QueryFullProcessImageNameW`) ;
+  - jetons aléatoires à usage unique (32 octets dans chaque sens, comparés en temps constant) : l'assistant ne lit sur le tube que ces 32 octets ; tout autre contenu est refusé et il quitte sans rien analyser. Il n'existe aucune commande ;
+  - délais : l'assistant quitte seul si l'échange n'est pas fait sous 10 s (et Lumen abandonne de même), s'il perd Lumen (processus parent surveillé), et dans tous les cas après le scan ; au moindre écart, Lumen le termine ;
+  - exécutable : avant tout lancement, Lumen vérifie que son exécutable est installé sous `Program Files` (chemin réel) et que ni lui, ni son dossier (pose d'une DLL), ni aucun dossier parent ne sont modifiables par l'utilisateur sans ses droits administrateur (`AccessCheck` avec le groupe Administrateurs désactivé). L'installeur passe donc en **installation pour tous les utilisateurs** (`perMachine`, Program Files, une demande UAC à l'installation). Un Lumen lancé depuis un autre dossier (`npm run tauri dev`, copie portable) ne propose pas le « Scan rapide (admin) » ;
+  - tests Windows (`win/helper.rs`, `win/trust.rs`), dont de vrais processus assistants : client étranger connecté avant l'assistant → refusé ; mauvais jeton → refusé ; « commande » envoyée à la place du jeton → l'assistant quitte (code 6) sans rien envoyer ; lettre invalide, lecteur absent, lecteur SUBST ou chemin à la place de la lettre → refusés ; assistant sans réponse (tube inexistant ou muet) → arrêt seul en 10 s ; bout en bout en administrateur → résultat reçu, assistant terminé avec succès ; exécutable hors Program Files ou dans un dossier de Program Files ouvert à tous → refusé.
+- **Dernier accès intact** : les fichiers ne sont ouverts que pour leurs attributs (`FILE_READ_ATTRIBUTES`, jamais `FILE_READ_DATA`) ; lister un dossier mettant à jour sa propre date, chaque dossier est listé par un handle où `SetFileTime(…, 0xFFFFFFFF, …)` gèle cette date (repli sans gel si `FILE_WRITE_ATTRIBUTES` est refusé, dossiers système). Les racines sont résolues par leur handle (`GetFinalPathNameByHandleW`) et non plus par `GetLongPathNameW`, qui liste les dossiers parents. Test Windows `scan_sans_toucher_au_dernier_acces` sur un volume NTFS neuf monté par la CI après `fsutil behavior set disablelastaccess 0` : témoins (lire un fichier, lister un dossier changent bien la date), puis parcours et MFT → dates d'un dossier, d'un sous-dossier et de deux fichiers inchangées, et le scan rapporte la date d'origine.
+- **MFT fragmentée** : au lieu d'une erreur, le parcours prend le relais automatiquement et une ligne discrète l'indique sous la ligne de bilan (« MFT trop fragmentée pour une lecture directe… »). Les autres erreurs de la MFT (UAC refusée, échec de l'assistant) restent des erreurs.
+
+### Décisions
+
+- **Parcours maison plutôt que jwalk** : jwalk s'appuie sur `std::fs::read_dir`, qui ne donne ni file ID ni taille allouée ; il faudrait ouvrir chaque fichier pour les obtenir. La lecture par handle de dossier donne le file ID ; les tailles viennent de l'enregistrement de chaque fichier, ouvert par ce file ID (sans analyse de chemin). Le parcours reste parallèle (rayon, comme jwalk) et sert de repli pour tout volume non NTFS.
+- La date de dernière utilisation vient de `LastAccess` seulement si Windows la tient à jour (`NtfsDisableLastAccessUpdate`), sinon de `LastWrite` ; l'information est dans le résumé de l'analyse (affichée au jalon 6 avec les fichiers dormants).
+- Les dates et tailles d'une liste de dossier peuvent être en retard sur un fichier en cours d'écriture : sans danger, `safety` refusera l'élément (identité changée).
+- Persistance SQLite de l'index (et recherche) : jalon 9 ; snapshots : jalon 7.
+
+### Test manuel (jalon 3)
+
+1. `npm run tauri dev` : l'analyse de ton dossier utilisateur démarre seule, sans demande UAC ; les compteurs avancent (~10 fois par seconde) et la carte se remplit en direct.
+2. « Annuler » pendant une analyse : elle s'arrête proprement, l'analyse précédente reste affichée.
+3. Survoler une tuile : taille sur disque et taille logique ; zoomer dans un dossier, revenir par le fil d'Ariane.
+4. Ouvrir le menu « C: » : choisir un disque entier ; vérifier les chiffres de la ligne de bilan (fichiers, cloud, liens, inaccessibles, durée).
+5. Si tu as OneDrive avec des fichiers « disponibles en ligne » : ils apparaissent « dans le cloud, non comptés » et **ne se téléchargent pas** (l'icône nuage reste).
+6. « Scan rapide (admin) » : la bulle explique pourquoi ; « Lancer » déclenche une seule demande UAC ; le résultat doit être identique au parcours (même nombre de fichiers, même taille à quelques fichiers en cours d'écriture près), en beaucoup moins de temps.
+7. Refuser l'UAC : message d'échec, l'analyse précédente reste.
+8. Gestionnaire des tâches pendant un scan de `C:` : noter la mémoire de Lumen (et de l'assistant pour le scan rapide) et la durée affichée sur la ligne de bilan, avec et sans « Scan rapide (admin) ». Pour un chiffre comparable à la CI : `cd src-tauri && cargo run --release -p scan --example bench -- walk C:\` (et `mft C:\` puis `compare C:\` dans un terminal administrateur).
+
+---
+
+## Jalon 2 — `safety/`
+
+### Livré
+
+- Crate `src-tauri/safety/` (membre du workspace Cargo), seul habilité à décider d'une suppression, d'un déplacement ou d'une commande. Séparation nette :
+  - **logique pure** (Linux et Windows) : `path.rs` (chemins absolus normalisés : `\\?\`, `\\?\UNC\`, `..` résolus lexicalement, chemins relatifs / de périphérique / `\\?\Volume{…}` / flux `:` / noms réservés / composants finissant par un point ou une espace refusés, comparaison insensible à la casse façon NTFS) ; `denylist.rs` (liste du brief codée en dur, emplacements réels **et** littéraux sur `C:`, parents des zones protégées refusés aussi) ; `allow.rs` (règle : dossier entier ou contenu seul, âge minimum ; sélection : chemins exacts) ; `check.rs` (pipeline dans l'ordre : canonisation → liste blanche → denylist (+ SYSTEM, dossier git) → liens sur le chemin et chaque parent → anti-TOCTOU → verrou) ; `plan.rs` (plan dédoublonné, empreinte BLAKE3, simulation, confirmation, double confirmation du définitif) ; `script.rs` (PowerShell `-WhatIf` par défaut, apostrophes typographiques échappées, pas de `Remove-Item -Recurse` qui suivrait les jonctions sous PowerShell 5.1) ; `commands.rs` (liste fermée : npm, pnpm, yarn, pip, uv, gradle, dotnet, docker, ollama, wsl, DISM, powercfg, vssadmin `/oldest`, cleanmgr ; arguments en tableau, noms de modèles et lecteurs validés) ;
+  - **Win32** (`safety::win`, seul endroit avec `unsafe`) : `WinProbe` (`CreateFileW` sans suivre les liens, `GetFinalPathNameByHandleW` pour les noms 8.3 et la casse, `FileIdInfo` 128 bits, attributs, verrou par ouverture sans partage), dossiers connus (`SHGetKnownFolderPath`), Corbeille via `IFileOperation` sur un fil STA dédié.
+- **Uniquement en simulation** : `plan::execute` vérifie l'empreinte et la double confirmation puis refuse (`REAL_EXECUTION_ENABLED = false`, assertion de compilation). Aucune commande IPC n'expose `safety` : sans scan (jalon 3), il n'y a pas encore d'identifiants d'éléments à lui confier, et le front n'envoie jamais de chemin. Le bouton « Nettoyer » reste un aperçu.
+- **Tests** : 52 tests portables (47 à la première version) (chaque entrée de la denylist, variantes de casse, `\\?\`, `PROGRA~1` via la sonde, jonction vers `C:\Windows`, `..`, chemins relatifs, TOCTOU, verrous, git, âge minimum, empreinte, scripts) + 20 tests **Windows réels** (17 à la première version) sur des fixtures créées dans `%TEMP%` (`win/tests.rs`) :
+  - adversariaux : jonction dans `%TEMP%` vers `C:\Windows` (la jonction, un fichier à travers elle, même avec une règle couvrant tout le dossier) ; fichier remplacé entre le scan et l'action (même nom, même taille, même date → nouvel ID refusé) ; chemin de plus de 260 caractères avec espaces, Unicode et emoji (remontée par `..` jusqu'à Windows, hors zone, remplacé, à travers une jonction : tous refusés ; contrôle positif : le même chemin légitime est accepté) ;
+  - fixtures : jonction sur un parent, liens symboliques fichier et dossier, noms courts 8.3 (et `C:\PROGRA~1` → refusé), `\\?\` et casse, chemins relatifs, file ID NTFS (lien physique = même ID), fichier verrouillé ignoré et compté, attribut SYSTEM, dossier git, dossiers connus réels, simulation qui ne touche à rien, Corbeille `IFileOperation` (le fichier quitte son dossier et la Corbeille compte un élément de plus).
+- **CI** : job `safety` (Windows, 8.3 activé sur `C:`) puis `safety-portable` (Linux) ; tous les autres jobs en dépendent. `scripts/check-safety-tests.mjs` exige chaque test de `src-tauri/safety/required-tests.txt`, refuse tout `#[ignore]`, vérifie que le nombre exécuté = le nombre listé, et que seul `safety/` lève l'interdiction clippy des suppressions.
+- Langue : le français est la langue de référence, et le repli quand Windows n'est ni en français ni en anglais.
+- Ménage : branche `main` créée depuis `b85cf16` ; brouillon `lumen/` retiré de `shingao/Rhoda`.
+
+### Compléments demandés à la validation
+
+- **Corbeille sans destruction silencieuse** : pré-contrôle explicite du volume avant tout envoi (`bin.rs`, pur et testé partout ; lu par `safety::win::volume_facts`) — type de lecteur (`GetDriveTypeW` sur la vraie racine du volume, `GetVolumePathNameW`), lecteur SUBST (`QueryDosDeviceW` → `\??\…`), Corbeille désactivée pour le volume (`NukeOnDelete` du GUID de volume) ou par stratégie (`NoRecycleFiles`), taille maximale de la Corbeille (`MaxCapacity`). Refaite sur le chemin réel **et** sur le chemin demandé (un SUBST résout vers `C:`), dans `Plan::build` et encore juste avant `IFileOperation`. Les drapeaux restent `FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE | FOF_WANTNUKEWARNING | …` : `FOF_NOCONFIRMATION` n'est jamais seul, `FOF_WANTNUKEWARNING` l'emporte si Windows voulait malgré tout détruire. Nouveau test Windows : un lecteur SUBST temporaire (`DefineDosDeviceW`) → refusé, fichier intact.
+- **Profils sans reposer sur les noms** : les autres profils viennent du registre (`ProfileList\<SID>\ProfileImagePath`), le profil courant de `FOLDERID_Profile`, tous résolus en chemins longs (`GetLongPathNameW`) et comparés comme chemins ; un profil d'un autre compte est protégé où qu'il soit (même hors de `C:\Users`). Le chemin canonique passe aussi par `GetLongPathNameW`. Nouveau test Windows : le profil courant est dans ProfileList, chaque autre profil est refusé, le nom 8.3 du profil courant résout vers lui, et un dossier anodin déclaré comme profil d'un autre compte est refusé par le pipeline.
+
+### Décisions
+
+- `safety` est un crate à part dans le workspace : il ne dépend que de `thiserror`, `blake3` et `windows`, ce qui permet de le vérifier pour la cible Windows depuis Linux (`cargo clippy --target x86_64-pc-windows-msvc`).
+- La denylist s'applique au **chemin réel** (après canonisation) : le chemin demandé peut contenir des noms courts 8.3 (`C:\Users\RUNNER~1`) qui fausseraient la comparaison avec le profil courant. Le chemin demandé reste contrôlé à l'étape des liens (chaque parent).
+- Un nom 8.3 resté non développé après canonisation (`PROGRA~1`) est refusé.
+- Anti-TOCTOU : un fichier doit avoir le même ID, la même taille et la même date ; un dossier le même ID (sa date bouge dès qu'un fichier y change) — son contenu sera revérifié élément par élément au jalon 5.
+- Corbeille : `FOF_WANTNUKEWARNING` empêche toute destruction silencieuse si un élément ne peut pas aller à la Corbeille (trop gros, volume sans Corbeille).
+- Commandes externes en simulation : écrites en commentaire dans le script (`-WhatIf` ne s'applique pas aux exécutables).
+- Racines `$…` d'un volume refusées (métadonnées NTFS) ; un `$` plus profond (`$facture.pdf`) reste permis.
+
+### Reste
+
+- Brancher `safety` sur le scan (jalon 3, identifiants d'éléments) et les règles (jalon 4) ; exécution réelle, journal, restauration depuis la Corbeille, suivi des éléments recyclés et lancement des commandes (jalon 5).
+
+### Test manuel (jalon 2)
+
+Rien de visible dans l'interface à ce jalon. Pour vérifier sur ta machine :
+
+1. `cd src-tauri && cargo test -p safety` : 47 tests portables + 17 tests Windows, aucun ignoré.
+2. `node scripts/check-safety-tests.mjs` depuis la racine : « OK : tous les tests requis de safety/ ont été exécutés ».
+3. Vérifier que la Corbeille contient `a recycler é.txt` après les tests (preuve que rien n'a été détruit définitivement), puis la vider si tu veux.
+4. `npm run tauri dev` : l'appli se comporte comme au jalon 1 ; « Nettoyer » n'affiche toujours qu'un aperçu.
 
 ---
 

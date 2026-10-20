@@ -40,6 +40,8 @@ export interface Fill {
 }
 
 export function tileFill(node: TreeNode, mode: ColorMode, now: number): Fill {
+  // Regroupement « autres » : neutre dans tous les modes.
+  if (node.othersCount !== null) return { bg: "var(--st-keep)", hatch: false, deep: false };
   const hatch = node.status === "safe";
   if (mode === "category") return { bg: CATEGORY_VAR[node.category], hatch, deep: false };
   if (mode === "cleanup") return { bg: `var(--st-${node.status})`, hatch, deep: false };

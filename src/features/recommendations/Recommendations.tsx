@@ -1,5 +1,5 @@
 import { useCopyFlash } from "../../app/clipboard";
-import { useRecommendations } from "../../app/data";
+import { useKpis, useRecommendations } from "../../app/data";
 import { useStore } from "../../app/store";
 import { Button } from "../../components/Button";
 import { StatusDot } from "../../components/StatusDot";
@@ -63,11 +63,11 @@ function Group({ status, recos }: { status: RecoStatus; recos: Recommendation[] 
 
 export function Recommendations() {
   const t = useT();
-  const volume = useStore((s) => s.volume);
   const checked = useStore((s) => s.checked);
   const setChecked = useStore((s) => s.setChecked);
   const showToast = useStore((s) => s.showToast);
-  const recos = useRecommendations(volume) ?? [];
+  const recos = useRecommendations() ?? [];
+  const rulesReady = useKpis()?.rulesReady ?? true;
   const [copied, copy] = useCopyFlash();
 
   const safe = recos.filter((r) => r.status === "safe");
@@ -83,7 +83,7 @@ export function Recommendations() {
       </div>
 
       <div className={styles.body}>
-        {recos.length === 0 && <p className={styles.empty}>{t("reco.empty")}</p>}
+        {recos.length === 0 && <p className={styles.empty}>{rulesReady ? t("reco.empty") : t("reco.pending")}</p>}
         {safe.length > 0 && <Group status="safe" recos={safe} />}
         {review.length > 0 && (
           <div className={styles.divider}>

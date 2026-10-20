@@ -1,6 +1,6 @@
 // Backend factice : sert les données de la maquette avec la même forme que le futur backend Rust.
 
-import type { Backend } from "../backend";
+import { targetKey, type Backend } from "../backend";
 import type { Locale } from "../../core/format";
 import { GIB } from "../../core/format";
 import { fuzzyFilter } from "../../core/fuzzy";
@@ -10,6 +10,8 @@ import type {
   NodeId,
   Recommendation,
   RecommendationDetail,
+  ScanEvent,
+  ScanSummary,
   SearchHit,
   Settings,
   TreeNode,
@@ -120,7 +122,10 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         id,
         name,
         path: tree.base.replace(/\\$/, ""),
+        kind: "dir",
         size: gb(sizeOf(tree, id)),
+        logical: gb(sizeOf(tree, id) * 0.97),
+        othersCount: null,
         files: children.reduce((s, c) => s + c.files, 0),
         lastOpened: Math.max(0, ...children.map((c) => c.lastOpened)),
         category: "system",
@@ -137,7 +142,10 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       id,
       name: l(t.name),
       path: tree.base + l(t.path),
+      kind: (n?.children.length ?? 0) > 0 || t.files > 1 ? "dir" : "file",
       size: gb(t.size),
+      logical: gb(t.size * 0.97),
+      othersCount: null,
       ...(t.layoutSize !== undefined ? { layoutSize: gb(t.layoutSize) } : {}),
       files: t.files,
       lastOpened: resolveWhen(t.last, now()),
@@ -166,6 +174,39 @@ export function createMockBackend(now: () => number = Date.now): Backend {
   }
 
   const recosOf = (volume: string): MockReco[] => (volume === "C:" ? RECOS : []);
+
+  // Analyses factices : chaque cible pointe vers un jeu de données de la maquette.
+  const scans = new Map<number, string>();
+  let nextScan = 0;
+  const listeners = new Set<(e: ScanEvent) => void>();
+  const emit = (e: ScanEvent) => listeners.forEach((fn) => fn(e));
+  const volumeOf = (key: string) => (key === "D:" ? "D:" : "C:");
+  const scanVolume = (scanId: number) => volumeOf(scans.get(scanId) ?? "user");
+  const summaryOf = (scanId: number): ScanSummary => {
+    const tree = treeOf(scanVolume(scanId));
+    const files = [...tree.nodes.values()].reduce((s, n) => s + (n.tile && !n.tile.parent ? n.tile.files : 0), 0);
+    return {
+      scanId,
+      rootPath: tree.base.replace(/\\$/, ""),
+      method: "walk",
+      files,
+      dirs: Math.round(files / 12),
+      allocated: gb(sizeOf(tree, tree.rootId)),
+      logical: gb(sizeOf(tree, tree.rootId) * 0.97),
+      links: 12,
+      cloudFiles: 3412,
+      cloudDirs: 2,
+      cloudBytes: gb(6.4),
+      hardlinkDups: 0,
+      accessDenied: 4,
+      locked: 1,
+      otherErrors: 0,
+      elapsedMs: 2300,
+      lastAccessReliable: false,
+      notice: null,
+      volume: scanVolume(scanId),
+    };
+  };
 
   function toReco(r: MockReco): Recommendation {
     const tree = TREES["C:"] as VolumeTree;
@@ -201,19 +242,70 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       locale = next;
     },
 
+    appInfo() {
+      return resolved({ elevated: false, fastScanAvailable: true, version: "0.1.0" });
+    },
+
     volumes() {
       return resolved<Volume[]>(
-        VOLUMES.map((v) => ({ id: v.id, letter: v.letter, label: l(v.label), kind: v.kind, total: gb(v.total), free: gb(v.free) })),
+        VOLUMES.map((v) => ({
+          id: v.id,
+          letter: v.letter,
+          label: l(v.label),
+          kind: v.kind,
+          fileSystem: v.kind === "network" ? "SMB" : "NTFS",
+          mftCapable: v.kind !== "network",
+          total: gb(v.total),
+          free: gb(v.free),
+        })),
       );
     },
 
-    kpis(volume) {
+    startScan(target) {
+      const id = ++nextScan;
+      scans.set(id, targetKey(target));
+      const total = summaryOf(id);
+      // Progression rapide puis résultat, comme le backend réel (événements ≈ 10/s).
+      [0.25, 0.6, 0.9].forEach((ratio, i) => {
+        setTimeout(() => {
+          emit({
+            type: "progress",
+            progress: {
+              scanId: id,
+              files: Math.round(total.files * ratio),
+              dirs: Math.round(total.dirs * ratio),
+              allocated: Math.round(total.allocated * ratio),
+              errors: 0,
+              elapsedMs: (i + 1) * 100,
+              phase: "walk",
+              tops: [],
+            },
+          });
+        }, (i + 1) * 100);
+      });
+      setTimeout(() => emit({ type: "done", summary: total }), 400);
+      return resolved(id);
+    },
+
+    cancelScan(scanId) {
+      emit({ type: "failed", scanId, cancelled: true, message: "analyse annulée" });
+      return resolved(undefined);
+    },
+
+    onScanEvent(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+
+    kpis(target) {
+      const volume = volumeOf(targetKey(target));
       const recos = recosOf(volume);
       const sum = (status: string) => recos.filter((r) => r.status === status).reduce((s, r) => s + r.size, 0);
       const count = (status: string) => recos.filter((r) => r.status === status).length;
       const vol = VOLUMES.find((v) => v.id === volume);
       const freeNow = volume === "C:" ? KPI.freeNow : (vol?.free ?? 0);
       const k: Kpis = {
+        rulesReady: true,
         freeNow: gb(freeNow),
         freeAfter: gb(freeNow + sum("safe")),
         safeBytes: gb(sum("safe")),
@@ -226,15 +318,15 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       return resolved(k);
     },
 
-    tree(volume, node) {
-      const tree = treeOf(volume);
+    tree(scanId, node) {
+      const tree = treeOf(scanVolume(scanId));
       const id = node !== null && tree.nodes.has(node) ? node : tree.rootId;
       const slice: TreeSlice = { root: toNode(tree, id, 2), breadcrumb: breadcrumb(tree, id) };
       return resolved(slice);
     },
 
-    recommendations(volume) {
-      return resolved(recosOf(volume).map(toReco));
+    recommendations(scanId) {
+      return resolved(recosOf(scanVolume(scanId)).map(toReco));
     },
 
     recommendation(id) {

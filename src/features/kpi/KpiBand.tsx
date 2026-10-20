@@ -8,9 +8,10 @@ import styles from "./KpiBand.module.css";
 
 export function KpiBand() {
   const t = useT();
-  const volume = useStore((s) => s.volume);
   const go = useStore((s) => s.go);
-  const kpis = useKpis(volume);
+  const kpis = useKpis();
+  // Sans moteur de règles (jalon 4), pas encore de « sans risque » ni de « à vérifier ».
+  const rules = kpis?.rulesReady ?? false;
   const size = (n: number) => formatBytes(n, t.locale);
 
   return (
@@ -27,13 +28,16 @@ export function KpiBand() {
         </span>
         <span className={styles.value}>{kpis ? size(kpis.freeAfter) : "—"}</span>
         <span className={styles.sub}>
-          {kpis && (
-            <>
-              <span className={styles.gain}>{formatDelta(kpis.safeBytes, t.locale)}</span>
-              {" · "}
-              {t("kpi.freeToday", { size: size(kpis.freeNow) })}
-            </>
-          )}
+          {kpis &&
+            (rules ? (
+              <>
+                <span className={styles.gain}>{formatDelta(kpis.safeBytes, t.locale)}</span>
+                {" · "}
+                {t("kpi.freeToday", { size: size(kpis.freeNow) })}
+              </>
+            ) : (
+              t("kpi.freeToday", { size: size(kpis.freeNow) })
+            ))}
         </span>
       </div>
       <div className={styles.cell}>
@@ -41,16 +45,16 @@ export function KpiBand() {
           <StatusDot status="safe" />
           {t("kpi.safe")}
         </span>
-        <span className={styles.value}>{kpis ? size(kpis.safeBytes) : "—"}</span>
-        <span className={styles.sub}>{kpis && t.plural("kpi.safeSub", kpis.safeCount)}</span>
+        <span className={styles.value}>{kpis && rules ? size(kpis.safeBytes) : "—"}</span>
+        <span className={styles.sub}>{kpis && (rules ? t.plural("kpi.safeSub", kpis.safeCount) : t("kpi.rulesPending"))}</span>
       </div>
       <div className={styles.cell}>
         <span className={styles.label}>
           <StatusDot status="review" />
           {t("kpi.review")}
         </span>
-        <span className={styles.value}>{kpis ? size(kpis.reviewBytes) : "—"}</span>
-        <span className={styles.sub}>{kpis && t.plural("kpi.reviewSub", kpis.reviewCount)}</span>
+        <span className={styles.value}>{kpis && rules ? size(kpis.reviewBytes) : "—"}</span>
+        <span className={styles.sub}>{kpis && (rules ? t.plural("kpi.reviewSub", kpis.reviewCount) : t("kpi.rulesPending"))}</span>
       </div>
       <div className={styles.cell}>
         <span className={styles.label}>

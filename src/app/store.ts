@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import type { Locale } from "../core/format";
-import type { NodeId, Settings } from "../ipc/types";
+import type { AppInfo, NodeId, ScanMethod, ScanProgress, ScanSummary, ScanTarget, Settings } from "../ipc/types";
 
 export type Screen = "analyse" | "timeline" | "cleanup" | "dev" | "games" | "journal";
 export const SCREENS: readonly Screen[] = ["analyse", "timeline", "cleanup", "dev", "games", "journal"];
@@ -12,6 +12,17 @@ export type ColorMode = "category" | "cleanup" | "age";
 export interface Toast {
   id: number;
   text: string;
+}
+
+export interface ScanState {
+  id: number | null;
+  status: "idle" | "running" | "done" | "failed";
+  method: ScanMethod;
+  progress: ScanProgress | null;
+  /** Dernière analyse terminée de la cible affichée. */
+  summary: ScanSummary | null;
+  /** Message d'échec (en français, venu du backend). */
+  message: string | null;
 }
 
 export interface State {
@@ -24,7 +35,10 @@ export interface State {
   /** Thème effectif. */
   dark: boolean;
 
-  volume: string;
+  appInfo: AppInfo | null;
+  /** Ce qu'on analyse : le dossier utilisateur (par défaut) ou un disque entier. */
+  target: ScanTarget;
+  scan: ScanState;
   /** Nœud zoomé dans l'Explorer (null = racine analysée). */
   node: NodeId | null;
   colorMode: ColorMode;
@@ -36,7 +50,8 @@ export interface State {
   go(screen: Screen): void;
   setSettingsOpen(open: boolean): void;
   setPaletteOpen(open: boolean): void;
-  setVolume(volume: string): void;
+  setTarget(target: ScanTarget): void;
+  setScan(patch: Partial<ScanState>): void;
   zoom(node: NodeId | null): void;
   setColorMode(mode: ColorMode): void;
   toggleChecked(id: string): void;
@@ -57,7 +72,9 @@ export const useStore = create<State>()((set) => ({
   locale: "fr",
   dark: false,
 
-  volume: "C:",
+  appInfo: null,
+  target: { kind: "userProfile" },
+  scan: { id: null, status: "idle", method: "auto", progress: null, summary: null, message: null },
   node: null,
   colorMode: "category",
   checked: [],
@@ -68,7 +85,8 @@ export const useStore = create<State>()((set) => ({
   go: (screen) => set({ screen, settingsOpen: false }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
-  setVolume: (volume) => set({ volume, node: null, openReco: null, hoverReco: null }),
+  setTarget: (target) => set({ target, node: null, openReco: null, hoverReco: null }),
+  setScan: (patch) => set((s) => ({ scan: { ...s.scan, ...patch } })),
   zoom: (node) => set({ node }),
   setColorMode: (colorMode) => set({ colorMode }),
   toggleChecked: (id) =>

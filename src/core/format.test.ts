@@ -53,7 +53,8 @@ describe("autres formats", () => {
     expect(detectLocale(["fr-FR", "en-US"])).toBe("fr");
     expect(detectLocale(["fr-CA"])).toBe("fr");
     expect(detectLocale(["en-GB", "fr-FR"])).toBe("en");
-    expect(detectLocale(["de-DE"])).toBe("en");
+    expect(detectLocale(["de-DE"])).toBe("fr");
+    expect(detectLocale([])).toBe("fr");
     expect(detectLocale(["de-DE", "fr-FR"])).toBe("fr");
   });
 });

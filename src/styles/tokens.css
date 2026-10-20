@@ -134,6 +134,7 @@
   --dur-fast: 150ms;
   --dur-tile: 200ms;
   --dur-flash: 1600ms;
+  --dur-sweep: 1200ms;
   --ease: ease;
 }
 

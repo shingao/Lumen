@@ -6,6 +6,18 @@ use serde::{Serialize, Serializer};
 pub enum LumenError {
     #[error("Lumen n'a pas pu démarrer : {0}")]
     Startup(String),
+    #[error("lecteur inconnu : {0}")]
+    UnknownVolume(String),
+    #[error("dossier utilisateur introuvable")]
+    NoProfile,
+    #[error("analyse inconnue ou expirée")]
+    UnknownScan,
+    #[error("élément inconnu dans cette analyse")]
+    UnknownNode,
+    #[error("une analyse est déjà en cours")]
+    ScanRunning,
+    #[error("{0}")]
+    Scan(#[from] scan::ScanError),
 }
 
 /// Les commandes IPC renvoient le message lisible, jamais la structure interne.
@@ -24,5 +36,6 @@ mod tests {
         let err = LumenError::Startup("WebView2 absent".into());
         assert_eq!(err.to_string(), "Lumen n'a pas pu démarrer : WebView2 absent");
         assert_eq!(serde_json::to_string(&err).unwrap(), "\"Lumen n'a pas pu démarrer : WebView2 absent\"");
+        assert_eq!(LumenError::from(scan::ScanError::Cancelled).to_string(), "analyse annulée");
     }
 }

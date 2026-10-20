@@ -8,12 +8,21 @@ export type RecoStatus = Exclude<Status, "keep">;
 /** Identifiant d'un élément du scan : le front n'envoie jamais de chemin libre. */
 export type NodeId = number;
 
+export type NodeKind = "dir" | "file" | "link" | "cloudFile" | "cloudDir";
+
 export interface TreeNode {
+  /** Identifiant dans l'analyse ; négatif pour un regroupement « autres ». */
   id: NodeId;
   name: string;
   /** Chemin complet, pour l'affichage uniquement. */
   path: string;
+  kind: NodeKind;
+  /** Taille allouée sur le disque (affichée par défaut). */
   size: number;
+  /** Taille logique (infobulle). */
+  logical: number;
+  /** Regroupement des plus petits éléments : nombre d'éléments regroupés (sinon null). */
+  othersCount: number | null;
   /** Surface de la tuile si elle diffère de `size` (sinon absente). */
   layoutSize?: number;
   files: number;
@@ -42,18 +51,81 @@ export interface TreeSlice {
   breadcrumb: Crumb[];
 }
 
-export type VolumeKind = "fixed" | "removable" | "network";
+export type VolumeKind = "fixed" | "removable" | "network" | "other";
 
 export interface Volume {
   id: string;
   letter: string;
   label: string;
   kind: VolumeKind;
+  fileSystem: string;
+  /** NTFS local : la lecture rapide de la MFT est possible. */
+  mftCapable: boolean;
   total: number;
   free: number;
 }
 
+export type ScanTarget = { kind: "userProfile" } | { kind: "volume"; letter: string };
+/** « auto » : parcours (ou MFT si l'appli est déjà élevée) ; « fast » : Scan rapide (admin). */
+export type ScanMethod = "auto" | "fast";
+
+export interface AppInfo {
+  elevated: boolean;
+  /** « Scan rapide (admin) » proposé : Lumen installé dans Program Files, non modifiable. */
+  fastScanAvailable: boolean;
+  version: string;
+}
+
+/** Information discrète sur une analyse (le parcours a pris le relais d'une MFT trop fragmentée). */
+export type ScanNotice = "mftFragmented";
+
+export interface TopProgress {
+  name: string;
+  allocated: number;
+  files: number;
+}
+
+export interface ScanProgress {
+  scanId: number;
+  files: number;
+  dirs: number;
+  allocated: number;
+  errors: number;
+  elapsedMs: number;
+  phase: string;
+  tops: TopProgress[];
+}
+
+export interface ScanSummary {
+  scanId: number;
+  rootPath: string;
+  method: "walk" | "mft";
+  files: number;
+  dirs: number;
+  allocated: number;
+  logical: number;
+  links: number;
+  cloudFiles: number;
+  cloudDirs: number;
+  cloudBytes: number;
+  hardlinkDups: number;
+  accessDenied: number;
+  locked: number;
+  otherErrors: number;
+  elapsedMs: number;
+  lastAccessReliable: boolean;
+  volume: string;
+  notice: ScanNotice | null;
+}
+
+export type ScanEvent =
+  | { type: "progress"; progress: ScanProgress }
+  | { type: "done"; summary: ScanSummary }
+  | { type: "failed"; scanId: number; cancelled: boolean; message: string };
+
 export interface Kpis {
+  /** Faux tant que le moteur de règles (jalon 4) n'est pas là : pas encore de sans risque / à vérifier. */
+  rulesReady: boolean;
   freeNow: number;
   freeAfter: number;
   safeBytes: number;

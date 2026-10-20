@@ -1,0 +1,22 @@
+.box {
+  position: fixed;
+  z-index: 50;
+  width: 320px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.text {
+  font-size: var(--fs-12-5);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}

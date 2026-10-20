@@ -106,6 +106,25 @@
   text-overflow: ellipsis;
 }
 
+.crumbEnd {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+}
+
+.scanLink {
+  padding: 0;
+  font-size: var(--fs-12);
+}
+
+.mapArea {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 520px;
+  display: flex;
+}
+
 .total {
   font-family: var(--font-mono);
   font-size: var(--fs-12);

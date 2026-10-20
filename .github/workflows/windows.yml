@@ -13,9 +13,110 @@ permissions:
   contents: read
 
 jobs:
-  # Jalon 2 : un job « safety » (cargo test safety) passera en premier et bloquera tout le reste.
+  # safety/ d'abord : si un de ses tests échoue, est ignoré ou manque, rien d'autre ne tourne
+  # et aucun installeur n'est produit.
+  safety:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Les fixtures 8.3 ont besoin de noms courts sur le volume du dossier temporaire.
+      - name: "Noms courts 8.3 actifs sur C:"
+        run: |
+          fsutil 8dot3name set C: 0
+          fsutil 8dot3name query C:
+          echo "TEMP=$env:TEMP"
+      - name: Tests de safety/ (jonctions, symlinks, 8.3, verrous, SYSTEM, Corbeille…)
+        run: node scripts/check-safety-tests.mjs
+
+  # La partie pure de safety/ doit aussi passer hors de Windows.
+  safety-portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-safety-tests.mjs
+
+  # Scanner : tests Windows (dont MFT = parcours sur les fixtures, en administrateur), banc
+  # sur 200 000 fichiers générés et mémoire mesurée sur le scan de C:, résumés dans le run.
+  scan:
+    needs: [safety, safety-portable]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # Volume NTFS neuf, monté après avoir activé la mise à jour du dernier accès : le test
+      # « scan_sans_toucher_au_dernier_acces » y prouve que le scan ne modifie pas cette date.
+      - name: Volume de test (dernier accès tenu à jour)
+        shell: pwsh
+        run: |
+          fsutil behavior set disablelastaccess 0
+          $vhd = Join-Path $env:RUNNER_TEMP "lumen-test.vhdx"
+          $script = Join-Path $env:RUNNER_TEMP "vhd.txt"
+          @(
+            "create vdisk file=`"$vhd`" maximum=512 type=expandable",
+            "select vdisk file=`"$vhd`"",
+            "attach vdisk",
+            "create partition primary",
+            "format fs=ntfs quick label=LumenTest",
+            "assign letter=L"
+          ) | Set-Content -Encoding ascii $script
+          diskpart /s $script
+          fsutil behavior query disablelastaccess
+          if (-not (Test-Path "L:\")) { throw "volume de test non monté" }
+          "LUMEN_TEST_NTFS=L:\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Tests du scanner (parcours, MFT, assistant élevé, dernier accès, liens physiques, cloud)
+        working-directory: src-tauri
+        run: cargo test -p scan -- --nocapture
+      - name: Banc d'essai
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          cargo build --release -p scan --example bench
+          $bench = "target\release\examples\bench.exe"
+          $sum = $env:GITHUB_STEP_SUMMARY
+          $dir = Join-Path $env:RUNNER_TEMP "lumen-bench"
+          "## Scanner : banc d'essai" | Out-File -Append $sum
+          "| mesure | volume | taille allouée | durée | mémoire |" | Out-File -Append $sum
+          "|---|---|---|---|---|" | Out-File -Append $sum
+          & $bench generate $dir 200000 | Tee-Object -Append -FilePath $sum
+          & $bench walk $dir | Tee-Object -Append -FilePath $sum
+          & $bench mft $dir | Tee-Object -Append -FilePath $sum
+          "" | Out-File -Append $sum
+          "**Scan de C:\ complet** (un processus par méthode, mémoire = pic de l'ensemble de travail)" | Out-File -Append $sum
+          "" | Out-File -Append $sum
+          "| mesure | volume | taille allouée | durée | mémoire |" | Out-File -Append $sum
+          "|---|---|---|---|---|" | Out-File -Append $sum
+          & $bench walk "C:\" | Tee-Object -Append -FilePath $sum
+          & $bench mft "C:\" | Tee-Object -Append -FilePath $sum
+          "" | Out-File -Append $sum
+          "<details><summary>Différences parcours / MFT sur C:\ (fichier par fichier)</summary>" | Out-File -Append $sum
+          "" | Out-File -Append $sum
+          '```' | Out-File -Append $sum
+          & $bench compare "C:\" | Tee-Object -Append -FilePath $sum
+          '```' | Out-File -Append $sum
+          "</details>" | Out-File -Append $sum
 
   front:
+    needs: [safety, safety-portable]
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -27,10 +128,16 @@ jobs:
       - run: npm ci
       - name: Typecheck, lint, tests (dont contrastes AA des deux thèmes)
         run: npm run check
-      - name: npm audit
+      # Bloquant : ce qui est embarqué dans l'appli.
+      - name: npm audit (dépendances livrées)
+        run: npm audit --omit=dev --audit-level=high
+      # Informatif : outillage de dev (ex. braces via stylelint, sans correctif publié).
+      - name: npm audit (outillage de dev, informatif)
+        continue-on-error: true
         run: npm audit --audit-level=high
 
   rust:
+    needs: [safety, safety-portable]
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -49,10 +156,11 @@ jobs:
       - run: npm ci && npm run build
       - name: Clippy (unwrap, panic et suppressions hors safety/ interdits)
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # Le scanner a son propre job (volume de test monté, administrateur) : pas de double exécution ici.
       - name: Tests Rust
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace --exclude scan
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -61,7 +169,7 @@ jobs:
         run: cargo audit
 
   build:
-    needs: [front, rust]
+    needs: [safety, scan, front, rust]
     runs-on: windows-latest
     timeout-minutes: 60
     env:

@@ -16,8 +16,8 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 ## Méthode
 
 - Avancer **jalon par jalon** (liste dans `PROGRESS.md`), s'arrêter après chacun pour que l'utilisateur teste. Ne pas démarrer le suivant sans son accord.
-- Fin de jalon : `npm run check` vert, `cargo clippy --all-targets -- -D warnings` et `cargo test` verts, captures comparées à la maquette (`npm run captures`), `PROGRESS.md` à jour (fait / reste / décisions / écarts), checklist de test manuel, commit, push.
-- Branche : `claude/bold-mayer-llad39`. Commits en anglais, `milestone N: …`.
+- Fin de jalon : `npm run check` vert, `cargo clippy --workspace --all-targets -- -D warnings` et `cargo test --workspace` verts, captures comparées à la maquette (`npm run captures`), `PROGRESS.md` à jour (fait / reste / décisions / écarts), checklist de test manuel, commit, push, **PR vers `main`**. Un jalon n'est terminé qu'avec la CI Windows verte.
+- Branche de travail : `claude/bold-mayer-llad39`, PR vers `main`. Commits en anglais, `milestone N: …`.
 
 ## Stack
 
@@ -25,7 +25,7 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 - CSS fait main : CSS modules (`*.module.css`) + variables de `tokens.css`. Stylelint interdit hex/rgb/hsl, `ms`/`s`, tailles et graisses en dur hors `src/styles/tokens*.css`.
 - Polices embarquées : Inter (variable) et JetBrains Mono via `@fontsource` (aucun CDN).
 - Treemap squarified maison : `src/core/treemap/squarify.ts` (2 niveaux, gap 3 px).
-- À venir : scan jwalk / MFT, SQLite (rusqlite) dans `%LOCALAPPDATA%\Lumen\`, BLAKE3.
+- Analyse : crate `src-tauri/scan/` — parcours parallèle maison (rayon) par handle de dossier (`FileIdExtdDirectoryInfo`, puis chaque fichier ouvert par file ID pour ses attributs seulement), MFT pour NTFS en administrateur (assistant élevé `--lumen-mft-scan`). À venir : SQLite (rusqlite) dans `%LOCALAPPDATA%\Lumen\`.
 
 ## Tokens (résumé — détail dans `src/styles/tokens.css`)
 
@@ -54,22 +54,27 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 
 ## Langue et unités
 
-- Interface FR/EN selon la langue de Windows (`detectLocale`), réglable (Système / Français / English). Textes uniquement dans `src/i18n/fr.ts` (référence) et `en.ts` (mêmes clés), via `useT()` / `currentT()`. Aucune chaîne visible en dur.
+- **Le français est la langue de référence** : textes écrits d'abord dans `src/i18n/fr.ts`, `en.ts` en reprend exactement les clés ; repli en français si la langue de Windows n'est ni le français ni l'anglais. Réglable (Système / Français / English). Accès via `useT()` / `currentT()`. Aucune chaîne visible en dur.
 - Tailles en **base 1024** comme l'Explorateur : `13,4 Go` (fr, Ko/Mo/Go/To) ou `13.4 GB` (en). Signe moins U+2212. Tout passe par `src/core/format.ts`.
 
 ## Règles de sécurité (non négociables)
 
-- Toute suppression, tout déplacement et toute commande passent par **un seul module Rust `safety/`**. Le front n'envoie jamais de chemin libre : seulement des ids d'éléments du scan, des ids de règles ou de sélections. `clippy.toml` interdit `std::fs::remove_*`, `rename`, `copy`, `Command::new` ailleurs.
+- Toute suppression, tout déplacement et toute commande passent par **un seul crate Rust `src-tauri/safety/`**.
+  - Logique pure, testable partout : `path.rs` (canonisation lexicale), `denylist.rs`, `allow.rs` (liste blanche), `check.rs` (pipeline dans l'ordre), `plan.rs` (plan, simulation, empreinte BLAKE3, confirmation), `script.rs` (PowerShell), `commands.rs` (liste fermée des commandes officielles). Tests portables avec une sonde en mémoire (`probe::memory`).
+  - Appels Win32 : `safety::win` uniquement (`WinProbe`, dossiers connus, Corbeille `IFileOperation`), seul endroit avec `unsafe`. Ses tests (`win/tests.rs`) tournent **uniquement sur Windows, sur de vraies fixtures** (jonctions, symlinks, 8.3, `\\?\`, file ID, verrous, SYSTEM, chemins longs Unicode, Corbeille) : jamais de sonde simulée.
+  - Chaque test de `safety/` est listé dans `src-tauri/safety/required-tests.txt` ; `node scripts/check-safety-tests.mjs` échoue si un test manque, est ignoré, échoue ou n'est pas exécuté. Ajouter tout nouveau test à cette liste.
+  - Exécution réelle verrouillée par `plan::REAL_EXECUTION_ENABLED = false` (assertion de compilation) jusqu'au jalon 5 : seule la simulation est exposée. Le front n'envoie jamais de chemin libre : seulement des ids d'éléments du scan, des ids de règles ou de sélections. `clippy.toml` interdit `std::fs::remove_*`, `rename`, `copy`, `Command::new` ailleurs.
 - Avant chaque action, dans l'ordre : canonisation (`\\?\`, 8.3, casse, `..`) → liste blanche (règle ou sélection Dormants/Doublons) → denylist → aucun reparse point sur le chemin ni ses parents → anti-TOCTOU (file ID, taille, date de modif identiques au scan) → fichier non verrouillé (sinon ignoré et compté).
 - Corbeille par défaut (`IFileOperation`, annulable). Suppression définitive : option désactivée par défaut, double confirmation (taille + nombre). Commande officielle préférée à `Remove-Item`. Simulation par défaut ; exécution réelle après confirmation montrant total et liste. Un « À vérifier » n'est jamais coché par défaut.
 - Scripts générés : `-WhatIf` par défaut, chemins absolus validés par `safety/` uniquement, commentés.
 - Denylist codée en dur : `C:\Windows`, `Program Files`, `Program Files (x86)`, `ProgramData` (seules les commandes officielles des gouffres système y touchent) ; racines de volumes, EFI, `\Boot`, `\EFI`, `bootmgr`, `BOOTNXT` ; `System Volume Information`, `$Recycle.Bin`, `$Extend`, tout `$*` NTFS ; `pagefile.sys`, `swapfile.sys`, `hiberfil.sys` ; ruches (`NTUSER.DAT*`, `UsrClass.dat*`, `System32\config`) ; profils `Default`, `Public` et autres utilisateurs ; attribut SYSTEM ; un dossier contenant `.git` n'est jamais supprimé en entier.
 - Déplacement intelligent : copie → vérification **BLAKE3 obligatoire** → jonction créée **et testée** (lecture d'un fichier à travers elle) → suppression **définitive** de l'original, annoncée comme telle ; rollback possible avant la suppression ; « Annuler le déplacement » recopie depuis la cible et retire la jonction.
 - Sans droits admin par défaut ; élévation (assistant séparé) seulement pour le scan MFT et les actions système, expliquée en une phrase.
+- Assistant élevé (`scan/src/win/helper.rs`) **muet et éphémère** : une seule mission (lire la MFT d'un volume désigné par sa lettre, disque fixe NTFS), aucun chemin ni commande en entrée ; tube créé par Lumen non élevé (nom aléatoire, première instance, DACL utilisateur, client en `SECURITY_IDENTIFICATION`) ; PID et exécutable du pair vérifiés des deux côtés ; jetons à usage unique ; arrêt seul après 10 s sans échange, à la fermeture de Lumen et après le scan. Exécutable vérifié avant lancement (`trust.rs` : sous Program Files, non modifiable sans droits admin) ; installeur `perMachine`. Tout nouveau processus élevé suit les mêmes règles.
 - Tauri : capabilities minimales (`src-tauri/capabilities/main.json` : contrôles de fenêtre seulement), CSP stricte, aucune commande shell exposée, IPC typé et validé côté Rust. Commandes externes : liste fermée de binaires, arguments en tableau.
 - **Aucun accès réseau, aucune télémétrie.**
 - Aucun `unwrap()`/`expect()`/`panic!` en production (lints clippy `deny`). Erreurs `thiserror` avec message français (`src-tauri/src/error.rs`).
-- Si un test de `safety/` échoue, le build est bloqué (job CI dédié, jalon 2).
+- Si un test de `safety/` échoue, est ignoré ou manque, le build est bloqué : le job CI `safety` (Windows) passe avant tous les autres.
 
 ## Structure
 
@@ -81,14 +86,24 @@ src/
   components/      Segmented, Button, Toggle, Menu, Toast, StatusDot, icônes, style des popovers
   features/        titlebar, kpi, explorer (treemap, légende), recommendations, detail, screens, settings, palette
   core/            logique pure testée : format, squarify, fuzzy, contrast
-  ipc/             backend.ts (contrat), client.ts (seul contact Tauri), mock/ (données de la maquette), types.ts
+  ipc/             backend.ts (contrat), client.ts + tauri.ts (seuls contacts Tauri), mock/ (données de la maquette, analyse simulée), types.ts
   i18n/            fr.ts, en.ts
   styles/          tokens.css, fonts.css, global.css (+ contrast.test.ts)
-src-tauri/         Rust : lib.rs, error.rs ; safety/, scan/, rules/… arrivent jalon par jalon
-scripts/           captures.mjs, make-icon.mjs
+src-tauri/         Rust (workspace) : lib.rs, error.rs, scanning.rs (commandes de l'analyse) ; safety/ (crate garde-fou) ; scan/ (crate d'analyse) ; rules/… arrivent jalon par jalon
+scripts/           captures.mjs, make-icon.mjs, check-safety-tests.mjs
 ```
 
-Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `components/`, `app/` ; seul `ipc/client.ts` importe `@tauri-apps/*`.
+Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `components/`, `app/` ; seuls `ipc/client.ts` et `ipc/tauri.ts` importent `@tauri-apps/*`.
+
+## Analyse (règles)
+
+- **Jamais le contenu d'un fichier** : liste des dossiers, puis chaque fichier ouvert par file ID avec `FILE_READ_ATTRIBUTES` et `FILE_FLAG_OPEN_NO_RECALL` pour lire tailles et dates dans son propre enregistrement (la copie de la liste du dossier peut être périmée : autres noms d'un lien physique…) ; `GetCompressedFileSizeW` en plus pour les fichiers compressés / clairsemés / WOF / dédupliqués. Fichiers cloud (`RECALL_ON_DATA_ACCESS`, `OFFLINE`) jamais ouverts, comptés à part ; dossiers cloud `RECALL_ON_OPEN` jamais énumérés.
+- Taille **allouée** par défaut, logique en infobulle. Liens physiques comptés une fois (file ID). Points d'analyse jamais traversés. Erreurs comptées, jamais bloquantes.
+- Chaque entrée garde file ID, tailles, dates (FILETIME) pour l'anti-TOCTOU de `safety`.
+- **Le scan ne modifie jamais la date de dernier accès** (base des fichiers dormants) : fichiers ouverts en `FILE_READ_ATTRIBUTES` seulement, dossiers listés avec la date gelée (`SetFileTime` à `0xFFFFFFFF`), racines résolues sans lister les parents. Test `scan_sans_toucher_au_dernier_acces`.
+- MFT de forme non gérée (`ScanError::MftUnsupported`) : bascule automatique sur le parcours, signalée dans l'interface.
+- Parcours et MFT doivent donner les mêmes totaux : même classement (`scan/src/classify.rs`), test Windows `mft_identique_au_parcours`.
+- Le front ne reçoit que des tranches agrégées (`Scan::slice`) ; jamais d'UAC au démarrage ; MFT seulement si déjà élevé ou après « Scan rapide (admin) ».
 
 ## Commandes
 
@@ -102,7 +117,10 @@ npm run captures         # captures Playwright (serveur dev lancé) → design/c
 npm run build            # build du front
 npm run tauri build      # installeur NSIS (src-tauri/target/release/bundle/nsis/)
 npm run icon             # icônes depuis design/app-icon.svg
-cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo audit
+node scripts/check-safety-tests.mjs   # tests de safety/ : présents, exécutés, aucun ignoré (tous sous Windows)
+cd src-tauri && cargo run --release -p scan --example bench -- generate <dossier> 200000   # puis walk <dossier>, mft <dossier>
+cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo audit
+cd src-tauri && cargo clippy -p safety --target x86_64-pc-windows-msvc --all-targets   # depuis Linux : vérifie safety::win (blake3 en feature « pure » le temps de la commande)
 ```
 
 Conteneur Linux de dev : typecheck, lint, tests, build Vite, `cargo clippy/test` ; l'appli Windows (`npm run tauri dev`, WebView2, API Windows) ne tourne que sur la machine de l'utilisateur et en CI (`.github/workflows/windows.yml`). Code Windows derrière `#[cfg(windows)]`.
