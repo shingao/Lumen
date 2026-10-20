@@ -45,7 +45,7 @@
     "windows": {
       "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
       "nsis": {
-        "installMode": "currentUser",
+        "installMode": "perMachine",
         "languages": ["French", "English"],
         "displayLanguageSelector": false
       }

@@ -13,6 +13,7 @@
 
 pub mod helper;
 pub mod mft;
+pub mod trust;
 #[cfg(test)]
 mod tests;
 
@@ -21,14 +22,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use windows::core::{HSTRING, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, FILETIME, HANDLE};
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FileBasicInfo, FileIdInfo, FileStandardInfo, GetCompressedFileSizeW, GetDiskFreeSpaceExW, GetDiskFreeSpaceW, GetDriveTypeW,
     GetFileInformationByHandle, GetFileInformationByHandleEx, GetLogicalDrives, GetLongPathNameW, GetVolumeInformationW,
     GetVolumePathNameW, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_NO_RECALL,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, OpenFileById, ExtendedFileIdType, FileIdType,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, SetFileTime, GetFinalPathNameByHandleW,
+    FILE_NAME_NORMALIZED, FILE_WRITE_ATTRIBUTES, GETFINALPATHNAMEBYHANDLE_FLAGS, VOLUME_NAME_DOS, OpenFileById, ExtendedFileIdType, FileIdType,
     FILE_BASIC_INFO, FILE_ID_128, FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0, FILE_STANDARD_INFO,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
@@ -296,7 +298,7 @@ impl Source for WinSource {
     }
 
     fn read_dir(&self, path: &str, out: &mut Vec<RawEntry>) -> Result<(), DirError> {
-        let h = open_meta(path, FILE_LIST_DIRECTORY.0).map_err(|e| dir_error(&e))?;
+        let h = open_dir(path)?;
         // Tampon aligné sur 8 octets, 64 Kio par appel.
         let mut buf = vec![0u64; 8192];
         let bytes = (buf.len() * 8) as u32;
@@ -376,6 +378,46 @@ fn volume_serial_of(h: &Handle) -> Option<u64> {
     id_info(h).map(|i| i.VolumeSerialNumber)
 }
 
+/// Ouvre un dossier pour le lister sans changer sa date de dernier accès : lister un dossier la
+/// met à jour (quand Windows tient cette date) ; `SetFileTime` à `0xFFFFFFFF` la gèle pour toutes
+/// les opérations faites par ce handle. Le gel demande `FILE_WRITE_ATTRIBUTES` ; s'il est refusé
+/// (dossier système), le dossier est listé sans gel. Les fichiers, eux, ne sont ouverts que pour
+/// leurs attributs (`FILE_READ_ATTRIBUTES`), ce qui ne touche jamais leur dernier accès.
+fn open_dir(path: &str) -> Result<Handle, DirError> {
+    if let Ok(h) = open_meta(path, FILE_LIST_DIRECTORY.0 | FILE_WRITE_ATTRIBUTES.0) {
+        let frozen = FILETIME { dwLowDateTime: u32::MAX, dwHighDateTime: u32::MAX };
+        // SAFETY : handle valide ouvert avec FILE_WRITE_ATTRIBUTES ; aucune date n'est modifiée.
+        if unsafe { SetFileTime(h.0, None, Some(&frozen), None) }.is_ok() {
+            return Ok(h);
+        }
+    }
+    open_meta(path, FILE_LIST_DIRECTORY.0).map_err(|e| dir_error(&e))
+}
+
+/// Chemin réel d'un dossier ou d'un fichier (noms longs, liens résolus), obtenu par son handle :
+/// contrairement à `GetLongPathNameW`, ne liste aucun dossier parent (dont la date de dernier
+/// accès changerait).
+pub fn real_path(path: &str) -> Option<String> {
+    let h = open_meta(path, FILE_READ_ATTRIBUTES.0).ok()?;
+    let mut buf = vec![0u16; 32_768];
+    let flags = GETFINALPATHNAMEBYHANDLE_FLAGS(FILE_NAME_NORMALIZED.0 | VOLUME_NAME_DOS.0);
+    // SAFETY : handle valide, tampon possédé.
+    let n = unsafe { GetFinalPathNameByHandleW(h.0, &mut buf, flags) } as usize;
+    if n == 0 || n >= buf.len() {
+        return None;
+    }
+    let p = String::from_utf16_lossy(&buf[..n]);
+    if p.starts_with("\\\\?\\UNC\\") {
+        return None;
+    }
+    Some(p.strip_prefix("\\\\?\\").unwrap_or(&p).to_owned())
+}
+
+/// Racine d'une analyse : chemin réel, ou à défaut en noms longs.
+pub fn root_path(path: &str) -> String {
+    real_path(path).unwrap_or_else(|| long_path(path))
+}
+
 /// Chemin en noms longs (aucun nom court 8.3), inchangé si Windows ne peut pas le résoudre.
 pub fn long_path(path: &str) -> String {
     let mut buf = vec![0u16; 32_768];
@@ -445,9 +487,9 @@ pub struct Volume {
 }
 
 impl Volume {
-    /// La MFT ne se lit que sur un volume NTFS local.
+    /// La MFT ne se lit que sur un disque fixe NTFS (ni amovible, ni réseau, ni lecteur SUBST).
     pub fn mft_capable(&self) -> bool {
-        self.file_system.eq_ignore_ascii_case("NTFS") && matches!(self.kind, VolumeKind::Fixed | VolumeKind::Removable)
+        self.file_system.eq_ignore_ascii_case("NTFS") && self.kind == VolumeKind::Fixed && helper::validate_volume(self.letter).is_ok()
     }
 }
 

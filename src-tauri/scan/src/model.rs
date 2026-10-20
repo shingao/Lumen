@@ -289,6 +289,57 @@ impl Scan {
         path
     }
 
+    /// Analyse restreinte au dossier `id`, reconstruite et réagrégée (liens physiques comptés
+    /// dans ce seul dossier). Sert à extraire le dossier demandé d'une lecture de MFT, qui porte
+    /// toujours sur le volume entier : l'assistant élevé ne reçoit jamais de chemin.
+    pub fn subtree(&self, id: NodeId) -> Option<Scan> {
+        let top = self.node(id)?;
+        if top.kind != Kind::Dir {
+            return None;
+        }
+        let raw = |i: NodeId| -> RawEntry {
+            let n = &self.nodes[i as usize];
+            RawEntry {
+                name: self.name(i).to_owned(),
+                kind: n.kind,
+                attributes: n.attributes,
+                file_id: self.file_id(i),
+                logical: n.logical,
+                allocated: n.allocated,
+                modified: n.modified,
+                accessed: n.accessed,
+            }
+        };
+        let mut builder = Builder::new(&raw(id));
+        if top.flags & F_UNREADABLE != 0 {
+            builder.mark_unreadable(0);
+        }
+        let mut queue = std::collections::VecDeque::from([(id, 0 as NodeId)]);
+        while let Some((old, new)) = queue.pop_front() {
+            let olds: Vec<NodeId> = self.children(old).collect();
+            let entries: Vec<RawEntry> = olds.iter().map(|&c| raw(c)).collect();
+            let range = builder.add_children(new, &entries);
+            for (k, &c) in olds.iter().enumerate() {
+                let n = &self.nodes[c as usize];
+                let child = range.start + k as NodeId;
+                if n.flags & F_UNREADABLE != 0 {
+                    builder.mark_unreadable(child);
+                }
+                if n.kind == Kind::Dir && n.child_count > 0 {
+                    queue.push_back((c, child));
+                }
+            }
+        }
+        let root_path = self.path(id);
+        let prefix = root_path.to_lowercase();
+        let stats = Stats {
+            elapsed_ms: self.stats.elapsed_ms,
+            error_samples: self.stats.error_samples.iter().filter(|p| p.to_lowercase().starts_with(&prefix)).cloned().collect(),
+            ..Stats::default()
+        };
+        Some(builder.finish(root_path, self.volume_serial, self.method, self.last_access_reliable, stats))
+    }
+
     /// Nœud au chemin relatif donné (composants séparés par `\` ou `/`, sans tenir compte de la casse).
     pub fn find(&self, relative: &str) -> Option<NodeId> {
         let mut cur = self.root();
@@ -718,6 +769,24 @@ mod tests {
         // Le lien compté est celui au plus petit chemin : « …\arthur\a.bin » < « …\arthur\projets\… ».
         assert_eq!(s.node(projets).unwrap().allocated, 1011);
         assert_eq!(s.node(projets).unwrap().files, 3);
+    }
+
+    #[test]
+    fn sous_arbre_reagrege() {
+        let s = sample();
+        let sub = s.subtree(s.find("Projets").unwrap()).unwrap();
+        assert_eq!(sub.root_path, "C:\\Users\\Arthur\\Projets");
+        // Le lien physique de a.bin, hors du dossier, est ici le seul nom : il est compté.
+        assert_eq!(sub.stats.files, 4);
+        assert_eq!(sub.stats.hardlink_dups, 0);
+        assert_eq!(sub.stats.allocated, 1000 + 10 + 100 + 1);
+        let y = sub.find("y.bin").unwrap();
+        assert_eq!(sub.file_id(y), 7);
+        assert_eq!(sub.path(y), "C:\\Users\\Arthur\\Projets\\y.bin");
+        assert_eq!(sub.node(y).unwrap().modified, 10);
+        // Le volume entier redonne la même analyse ; un fichier n'est pas un dossier.
+        assert_eq!(s.subtree(0).unwrap().stats, s.stats);
+        assert!(s.subtree(s.find("a.bin").unwrap()).is_none());
     }
 
     #[test]

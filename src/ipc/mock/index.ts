@@ -203,6 +203,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       otherErrors: 0,
       elapsedMs: 2300,
       lastAccessReliable: false,
+      notice: null,
       volume: scanVolume(scanId),
     };
   };
@@ -242,7 +243,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     appInfo() {
-      return resolved({ elevated: false, version: "0.1.0" });
+      return resolved({ elevated: false, fastScanAvailable: true, version: "0.1.0" });
     },
 
     volumes() {

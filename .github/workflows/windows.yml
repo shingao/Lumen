@@ -63,7 +63,27 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Tests du scanner (parcours, MFT, liens physiques, clairsemés, compressés, cloud)
+      # Volume NTFS neuf, monté après avoir activé la mise à jour du dernier accès : le test
+      # « scan_sans_toucher_au_dernier_acces » y prouve que le scan ne modifie pas cette date.
+      - name: Volume de test (dernier accès tenu à jour)
+        shell: pwsh
+        run: |
+          fsutil behavior set disablelastaccess 0
+          $vhd = Join-Path $env:RUNNER_TEMP "lumen-test.vhdx"
+          $script = Join-Path $env:RUNNER_TEMP "vhd.txt"
+          @(
+            "create vdisk file=`"$vhd`" maximum=512 type=expandable",
+            "select vdisk file=`"$vhd`"",
+            "attach vdisk",
+            "create partition primary",
+            "format fs=ntfs quick label=LumenTest",
+            "assign letter=L"
+          ) | Set-Content -Encoding ascii $script
+          diskpart /s $script
+          fsutil behavior query disablelastaccess
+          if (-not (Test-Path "L:\")) { throw "volume de test non monté" }
+          "LUMEN_TEST_NTFS=L:\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Tests du scanner (parcours, MFT, assistant élevé, dernier accès, liens physiques, cloud)
         working-directory: src-tauri
         run: cargo test -p scan -- --nocapture
       - name: Banc d'essai

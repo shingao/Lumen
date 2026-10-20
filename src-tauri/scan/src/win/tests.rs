@@ -18,7 +18,7 @@ use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_OFF
 use windows::Win32::System::Ioctl::{FSCTL_SET_COMPRESSION, FSCTL_SET_SPARSE};
 use windows::Win32::System::IO::DeviceIoControl;
 
-use super::{is_elevated, long_path, mft::scan_mft, WinSource};
+use super::{is_elevated, mft::scan_mft, root_path, WinSource};
 use crate::model::{Kind, Scan};
 use crate::walk::{walk, DirError, Progress, Source};
 
@@ -103,7 +103,7 @@ fn fixtures() -> tempfile::TempDir {
 }
 
 fn scan_walk(root: &Path) -> Scan {
-    let root = long_path(&s(root));
+    let root = root_path(&s(root));
     walk(&WinSource::new(&root), &root, &AtomicBool::new(false), &|_: &Progress| {}).unwrap()
 }
 
@@ -160,7 +160,7 @@ fn mft_identique_au_parcours() {
     }
     let d = fixtures();
     let walked = scan_walk(d.path());
-    let read = scan_mft(&long_path(&s(d.path())), &AtomicBool::new(false), &|_: &Progress| {}).unwrap();
+    let read = scan_mft(&root_path(&s(d.path())), &AtomicBool::new(false), &|_: &Progress| {}).unwrap();
     let (a, b) = (&walked.stats, &read.stats);
     assert_eq!(sizes(&walked), sizes(&read), "détail fichier par fichier");
     assert_eq!((a.files, a.allocated, a.logical), (b.files, b.allocated, b.logical));
@@ -206,4 +206,77 @@ fn liste_de_dossier_perimee_corrigee() {
     assert_eq!(scan.stats.files, 1);
     assert_eq!(scan.stats.hardlink_dups, 1);
     assert_eq!(scan.stats.logical, real);
+}
+
+/// 1er janvier 2020, en FILETIME : une date de dernier accès « dormante ».
+const DORMANT: u64 = 132_223_104_000_000_000;
+
+fn last_access(p: &Path) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+    // Métadonnées par handle, sans lire le contenu ni lister le dossier.
+    fs::metadata(p).unwrap().last_access_time()
+}
+
+fn set_last_access(p: &Path, value: u64) {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::Storage::FileSystem::{SetFileTime, FILE_FLAG_BACKUP_SEMANTICS, FILE_WRITE_ATTRIBUTES};
+    let f = OpenOptions::new().access_mode(FILE_WRITE_ATTRIBUTES.0).custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0).open(p).unwrap();
+    let t = FILETIME { dwLowDateTime: value as u32, dwHighDateTime: (value >> 32) as u32 };
+    // SAFETY : handle valide ouvert avec FILE_WRITE_ATTRIBUTES.
+    unsafe { SetFileTime(HANDLE(f.as_raw_handle()), None, Some(&t), None) }.unwrap();
+}
+
+#[test]
+fn scan_sans_toucher_au_dernier_acces() {
+    // Volume où Windows tient la date de dernier accès à jour (la CI en monte un), sinon %TEMP%.
+    let base = std::env::var("LUMEN_TEST_NTFS").ok();
+    let d = match &base {
+        Some(v) => tempfile::Builder::new().prefix("lumen-acces-").tempdir_in(v).unwrap(),
+        None => tempfile::Builder::new().prefix("lumen-acces-").tempdir().unwrap(),
+    };
+    let r = d.path();
+    fs::create_dir_all(r.join("dormant\\sous-dossier")).unwrap();
+    fs::create_dir_all(r.join("temoin-dossier")).unwrap();
+    File::create(r.join("dormant\\vieux.txt")).unwrap().write_all(&[4u8; 9000]).unwrap();
+    File::create(r.join("dormant\\sous-dossier\\petit.txt")).unwrap().write_all(b"dormant").unwrap();
+    File::create(r.join("temoin.txt")).unwrap().write_all(&[1u8; 9000]).unwrap();
+    File::create(r.join("temoin-dossier\\x.txt")).unwrap().write_all(b"x").unwrap();
+    let watched = ["dormant", "dormant\\vieux.txt", "dormant\\sous-dossier", "dormant\\sous-dossier\\petit.txt"];
+    for p in watched.iter().chain(&["temoin.txt", "temoin-dossier"]) {
+        set_last_access(&r.join(p), DORMANT);
+        assert_eq!(last_access(&r.join(p)), DORMANT);
+    }
+
+    // Témoins : lire un fichier et lister un dossier mettent bien la date à jour sur ce volume,
+    // sinon le test ne prouverait rien.
+    let _ = fs::read(r.join("temoin.txt")).unwrap();
+    let _ = fs::read_dir(r.join("temoin-dossier")).unwrap().count();
+    let file_tracked = last_access(&r.join("temoin.txt")) != DORMANT;
+    let dir_tracked = last_access(&r.join("temoin-dossier")) != DORMANT;
+    eprintln!("dernier accès tenu à jour : fichiers {file_tracked}, dossiers {dir_tracked} (volume {base:?})");
+    if !file_tracked {
+        assert!(std::env::var("CI").is_err(), "la CI doit fournir un volume où le dernier accès est tenu à jour (LUMEN_TEST_NTFS)");
+        eprintln!("ignoré : Windows ne tient pas la date de dernier accès à jour sur ce volume");
+        return;
+    }
+
+    let walked = scan_walk(r);
+    for p in watched {
+        assert_eq!(last_access(&r.join(p)), DORMANT, "parcours : dernier accès de {p} modifié");
+    }
+    // Le scan rapporte bien la date d'origine (base des fichiers dormants).
+    assert_eq!(walked.node(walked.find("dormant\\vieux.txt").unwrap()).unwrap().accessed as u64, DORMANT);
+
+    if is_elevated() {
+        let read = scan_mft(&root_path(&s(r)), &AtomicBool::new(false), &|_: &Progress| {}).unwrap();
+        for p in watched {
+            assert_eq!(last_access(&r.join(p)), DORMANT, "MFT : dernier accès de {p} modifié");
+        }
+        assert_eq!(read.node(read.find("dormant\\vieux.txt").unwrap()).unwrap().accessed as u64, DORMANT);
+    } else {
+        assert!(std::env::var("CI").is_err(), "la CI doit lancer ce test en administrateur");
+    }
+    if !dir_tracked {
+        eprintln!("note : lister un dossier ne met pas sa date à jour sur ce système ; seule la partie fichiers est probante");
+    }
 }

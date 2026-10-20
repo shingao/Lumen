@@ -363,8 +363,9 @@ fn mft_extents(v: &mut Volume) -> Result<Vec<(u64, u64)>, ScanError> {
         }
         off += len;
     }
-    // MFT très fragmentée (liste d'attributs) : non gérée, le parcours prend le relais.
-    Err(err("MFT fragmentée : liste d'attributs non prise en charge"))
+    // MFT très fragmentée (ses extents sont dans une liste d'attributs) : non gérée, le parcours
+    // prend le relais.
+    Err(ScanError::MftUnsupported("MFT fragmentée (liste d'attributs)".into()))
 }
 
 fn read_table(v: &mut Volume, cancel: &AtomicBool, progress: &mut dyn FnMut(u64, u64)) -> Result<Table, ScanError> {
@@ -403,7 +404,7 @@ fn read_table(v: &mut Volume, cancel: &AtomicBool, progress: &mut dyn FnMut(u64,
 pub fn scan_mft(root: &str, cancel: &AtomicBool, on_progress: &(dyn Fn(&Progress) + Sync)) -> Result<Scan, ScanError> {
     let started = Instant::now();
     // La MFT ne connaît que les noms longs (les noms courts 8.3 sont ignorés) : on résout d'abord.
-    let root_owned = super::long_path(root);
+    let root_owned = super::root_path(root);
     let root = root_owned.as_str();
     let drive = root.chars().next().filter(|c| c.is_ascii_alphabetic() && root[1..].starts_with(":\\")).ok_or_else(|| err("racine sans lettre de lecteur"))?;
     let mut volume = open_volume(drive.to_ascii_uppercase())?;

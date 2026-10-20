@@ -80,7 +80,7 @@ fn run_walk(dir: &str) -> Result<(), String> {
     let started = Instant::now();
     #[cfg(windows)]
     let (root, source) = {
-        let root = scan::win::long_path(dir);
+        let root = scan::win::root_path(dir);
         let source = scan::win::WinSource::new(&root);
         (root, source)
     };
@@ -120,7 +120,7 @@ fn files_of(scan: &Scan) -> std::collections::HashMap<String, (u64, u32, scan::K
 #[cfg(windows)]
 fn run_compare(dir: &str) -> Result<(), String> {
     let cancel = AtomicBool::new(false);
-    let root = scan::win::long_path(dir);
+    let root = scan::win::root_path(dir);
     let started = Instant::now();
     let walked = scan::walk(&scan::win::WinSource::new(&root), &root, &cancel, &|_: &Progress| {}).map_err(|e| e.to_string())?;
     let walk_s = started.elapsed().as_secs_f64();

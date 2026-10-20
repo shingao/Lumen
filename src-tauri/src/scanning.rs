@@ -35,6 +35,8 @@ pub enum ScanMethod {
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub elevated: bool,
+    /// « Scan rapide (admin) » proposé : Lumen installé dans Program Files, non modifiable.
+    pub fast_scan_available: bool,
     pub version: &'static str,
 }
 
@@ -93,6 +95,8 @@ pub struct SummaryDto {
     pub last_access_reliable: bool,
     /// Lecteur analysé, pour l'espace libre et « non analysé ».
     pub volume: String,
+    /// Information discrète pour l'interface (`mftFragmented` : le parcours a pris le relais).
+    pub notice: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -139,6 +143,7 @@ pub struct TreeSliceDto {
 struct Entry {
     scan: Scan,
     volume: String,
+    notice: Option<&'static str>,
 }
 
 #[derive(Default)]
@@ -209,6 +214,20 @@ fn summary(id: u32, e: &Entry) -> SummaryDto {
         elapsed_ms: s.elapsed_ms,
         last_access_reliable: e.scan.last_access_reliable,
         volume: e.volume.clone(),
+        notice: e.notice,
+    }
+}
+
+/// MFT demandée mais de forme non gérée (MFT très fragmentée) : le parcours prend le relais, et
+/// l'interface l'indique. Toute autre erreur de la MFT reste une erreur.
+fn with_fallback(
+    mft: Option<Box<dyn FnOnce() -> Result<Scan, ScanError> + '_>>,
+    walk: impl FnOnce() -> Result<Scan, ScanError>,
+) -> Result<(Scan, Option<&'static str>), ScanError> {
+    match mft.map(|m| m()) {
+        Some(Err(ScanError::MftUnsupported(_))) => walk().map(|s| (s, Some("mftFragmented"))),
+        Some(other) => other.map(|s| (s, None)),
+        None => walk().map(|s| (s, None)),
     }
 }
 
@@ -262,28 +281,51 @@ mod platform {
     }
 
     #[cfg(windows)]
-    pub fn run(root: &str, mft: bool, cancel: &AtomicBool, on: &(dyn Fn(&Progress) + Sync)) -> Result<Scan, ScanError> {
-        if mft {
-            if scan::win::is_elevated() {
-                scan::win::mft::scan_mft(root, cancel, on)
-            } else {
-                scan::win::helper::scan_mft_elevated(root, cancel, on)
-            }
-        } else {
-            let root = scan::win::long_path(root);
-            scan::walk(&scan::win::WinSource::new(&root), &root, cancel, on)
-        }
+    pub fn fast_scan_available() -> bool {
+        scan::win::trust::helper_executable().is_ok()
     }
 
     #[cfg(not(windows))]
-    pub fn run(root: &str, _mft: bool, cancel: &AtomicBool, on: &(dyn Fn(&Progress) + Sync)) -> Result<Scan, ScanError> {
-        scan::walk(&scan::unix::StdSource, root, cancel, on)
+    pub fn fast_scan_available() -> bool {
+        false
+    }
+
+    /// Lecture de la MFT. Déjà administrateur : directement. Sinon par l'assistant élevé, qui ne
+    /// reçoit que la lettre du volume ; le dossier demandé est extrait ici, sans privilège.
+    #[cfg(windows)]
+    fn mft(root: &str, cancel: &AtomicBool, on: &(dyn Fn(&Progress) + Sync)) -> Result<Scan, ScanError> {
+        if scan::win::is_elevated() {
+            return scan::win::mft::scan_mft(root, cancel, on);
+        }
+        let root = scan::win::root_path(root);
+        let drive = root.chars().next().filter(char::is_ascii_alphabetic).ok_or_else(|| ScanError::Mft("racine sans lettre de lecteur".into()))?;
+        let volume = scan::win::helper::scan_volume_elevated(drive, cancel, on)?;
+        let relative = root.get(3..).unwrap_or("");
+        if relative.trim_matches('\\').is_empty() {
+            return Ok(volume);
+        }
+        let id = volume.find(relative).ok_or_else(|| ScanError::Mft(format!("{root} introuvable dans la MFT")))?;
+        volume.subtree(id).ok_or_else(|| ScanError::Mft(format!("{root} n'est pas un dossier")))
+    }
+
+    #[cfg(windows)]
+    pub fn run(root: &str, mft: bool, cancel: &AtomicBool, on: &(dyn Fn(&Progress) + Sync)) -> Result<(Scan, Option<&'static str>), ScanError> {
+        let read_mft = mft.then(|| Box::new(move || self::mft(root, cancel, on)) as Box<dyn FnOnce() -> Result<Scan, ScanError> + '_>);
+        with_fallback(read_mft, || {
+            let root = scan::win::root_path(root);
+            scan::walk(&scan::win::WinSource::new(&root), &root, cancel, on)
+        })
+    }
+
+    #[cfg(not(windows))]
+    pub fn run(root: &str, _mft: bool, cancel: &AtomicBool, on: &(dyn Fn(&Progress) + Sync)) -> Result<(Scan, Option<&'static str>), ScanError> {
+        with_fallback(None, || scan::walk(&scan::unix::StdSource, root, cancel, on))
     }
 }
 
 #[tauri::command]
 pub fn app_info() -> AppInfo {
-    AppInfo { elevated: platform::elevated(), version: env!("CARGO_PKG_VERSION") }
+    AppInfo { elevated: platform::elevated(), fast_scan_available: platform::fast_scan_available(), version: env!("CARGO_PKG_VERSION") }
 }
 
 #[tauri::command]
@@ -350,8 +392,8 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
             };
             inner.running = None;
             match result {
-                Ok(scan) => {
-                    let entry = Arc::new(Entry { scan, volume });
+                Ok((scan, notice)) => {
+                    let entry = Arc::new(Entry { scan, volume, notice });
                     let dto = summary(id, &entry);
                     // Une seule analyse gardée en mémoire : la dernière.
                     inner.results.clear();
@@ -426,6 +468,24 @@ mod tests {
         assert_eq!(epoch_ms(116_444_736_000_000_000), 0);
         assert_eq!(epoch_ms(0), 0);
         assert_eq!(kind_name(Kind::CloudFile), "cloudFile");
+    }
+
+    fn tiny() -> Scan {
+        let root = scan::RawEntry { name: "C:".into(), kind: Kind::Dir, attributes: 0, file_id: 5, logical: 0, allocated: 0, modified: 0, accessed: 0 };
+        scan::model::Builder::new(&root).finish("C:\\".into(), 1, scan::Method::Walk, false, scan::Stats::default())
+    }
+
+    #[test]
+    fn mft_fragmentee_bascule_sur_le_parcours() {
+        let unsupported: Box<dyn FnOnce() -> Result<Scan, ScanError>> = Box::new(|| Err(ScanError::MftUnsupported("liste d'attributs".into())));
+        let (_, notice) = with_fallback(Some(unsupported), || Ok(tiny())).unwrap();
+        assert_eq!(notice, Some("mftFragmented"));
+        // Toute autre erreur de la MFT n'est pas masquée par le parcours.
+        let refused: Box<dyn FnOnce() -> Result<Scan, ScanError>> = Box::new(|| Err(ScanError::NotElevated));
+        assert_eq!(with_fallback(Some(refused), || Ok(tiny())).err(), Some(ScanError::NotElevated));
+        let ok: Box<dyn FnOnce() -> Result<Scan, ScanError>> = Box::new(|| Ok(tiny()));
+        assert_eq!(with_fallback(Some(ok), || Err(ScanError::Cancelled)).unwrap().1, None);
+        assert_eq!(with_fallback(None, || Ok(tiny())).unwrap().1, None);
     }
 
     #[test]

@@ -31,6 +31,7 @@ export function Explorer() {
   const target = useStore((s) => s.target);
   const scan = useStore((s) => s.scan);
   const elevated = useStore((s) => s.appInfo?.elevated ?? false);
+  const fastScanAvailable = useStore((s) => s.appInfo?.fastScanAvailable ?? false);
   const node = useStore((s) => s.node);
   const zoom = useStore((s) => s.zoom);
   const colorMode = useStore((s) => s.colorMode);
@@ -61,8 +62,9 @@ export function Explorer() {
   const running = scan.status === "running";
   const targetLetter = target.kind === "volume" ? target.letter : (scan.summary?.volume ?? "C:");
   const targetVolume = volumes?.find((v) => v.letter.toUpperCase() === targetLetter.toUpperCase());
-  // Scan rapide : NTFS local, et seulement si l'appli n'est pas déjà administrateur (sinon automatique).
-  const canFastScan = !elevated && (targetVolume?.mftCapable ?? false);
+  // Scan rapide : disque fixe NTFS, Lumen installé dans Program Files (assistant élevé vérifié), et
+  // seulement si l'appli n'est pas déjà administrateur (sinon la MFT est lue d'office).
+  const canFastScan = !elevated && fastScanAvailable && (targetVolume?.mftCapable ?? false);
 
   const targetItems: MenuItem[] = [
     { label: t("explorer.target.user"), onSelect: () => void startScan({ kind: "userProfile" }) },

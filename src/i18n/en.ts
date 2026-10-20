@@ -233,6 +233,7 @@ export const en: Record<MessageKey, string> = {
   "scan.hardlinks": "{n} hard links counted once",
   "scan.method.walk": "walked in {s}",
   "scan.method.mft": "MFT read in {s}",
+  "scan.notice.mftFragmented": "The MFT is too fragmented to read directly: folders were walked instead.",
   "tooltip.logical": "Logical size",
   "kpi.rulesPending": "rules: milestone 4",
   "reco.pending": "Recommendations arrive with the rules engine (milestone 4).",

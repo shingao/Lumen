@@ -34,6 +34,9 @@ pub enum ScanError {
     Root(DirError),
     #[error("lecture de la MFT impossible : {0}")]
     Mft(String),
+    /// Forme de MFT non gérée (MFT très fragmentée) : le parcours prend le relais.
+    #[error("MFT non lisible directement : {0}")]
+    MftUnsupported(String),
     #[error("l'analyse rapide demande les droits administrateur")]
     NotElevated,
 }

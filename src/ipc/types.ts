@@ -71,8 +71,13 @@ export type ScanMethod = "auto" | "fast";
 
 export interface AppInfo {
   elevated: boolean;
+  /** « Scan rapide (admin) » proposé : Lumen installé dans Program Files, non modifiable. */
+  fastScanAvailable: boolean;
   version: string;
 }
+
+/** Information discrète sur une analyse (le parcours a pris le relais d'une MFT trop fragmentée). */
+export type ScanNotice = "mftFragmented";
 
 export interface TopProgress {
   name: string;
@@ -110,6 +115,7 @@ export interface ScanSummary {
   elapsedMs: number;
   lastAccessReliable: boolean;
   volume: string;
+  notice: ScanNotice | null;
 }
 
 export type ScanEvent =

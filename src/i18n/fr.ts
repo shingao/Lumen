@@ -234,6 +234,7 @@ export const fr = {
   "scan.hardlinks": "{n} liens physiques comptés une fois",
   "scan.method.walk": "parcours en {s}",
   "scan.method.mft": "lecture MFT en {s}",
+  "scan.notice.mftFragmented": "MFT trop fragmentée pour une lecture directe : l'analyse a été faite par le parcours des dossiers.",
   "tooltip.logical": "Taille logique",
   "kpi.rulesPending": "règles : jalon 4",
   "reco.pending": "Les recommandations arrivent avec le moteur de règles (jalon 4).",
