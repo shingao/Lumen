@@ -14,6 +14,8 @@ pub enum LumenError {
     UnknownScan,
     #[error("élément inconnu dans cette analyse")]
     UnknownNode,
+    #[error("recommandation inconnue : {0}")]
+    UnknownReco(String),
     #[error("une analyse est déjà en cours")]
     ScanRunning,
     #[error("{0}")]

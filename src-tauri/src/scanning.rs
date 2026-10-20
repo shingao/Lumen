@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
+use crate::analysis::{self, Applied, RecoDetailDto, RecoDto, RuleKpisDto};
 use crate::error::LumenError;
-use scan::{Kind, Progress, Scan, ScanError, SliceNode};
+use scan::{Kind, NodeId, Progress, Scan, ScanError, SliceNode};
 
 /// Enfants les plus gros envoyés par niveau ; le reste est regroupé en « autres ».
 const TOP_N: usize = 30;
@@ -123,6 +124,13 @@ pub struct TreeNodeDto {
     pub last_opened: i64,
     pub others: Option<u32>,
     pub has_children: bool,
+    /// Moteur de règles : statut, catégorie, recommandation qui le couvre, octets récupérables dessous.
+    pub status: &'static str,
+    pub category: &'static str,
+    pub reco: Option<String>,
+    pub gain: u64,
+    pub gain_status: Option<&'static str>,
+    pub gain_up_to: bool,
     pub children: Vec<TreeNodeDto>,
 }
 
@@ -144,6 +152,8 @@ struct Entry {
     scan: Scan,
     volume: String,
     notice: Option<&'static str>,
+    /// Règles appliquées (absent hors de Windows ou si les règles livrées sont invalides).
+    applied: Option<Applied>,
 }
 
 #[derive(Default)]
@@ -174,7 +184,10 @@ fn epoch_ms(filetime: i64) -> i64 {
     filetime / 10_000 - 11_644_473_600_000
 }
 
-fn to_dto(n: SliceNode) -> TreeNodeDto {
+fn to_dto(n: SliceNode, applied: Option<&Applied>) -> TreeNodeDto {
+    // Nœud « autres » (identifiant négatif) : pas de statut propre.
+    let view = applied.filter(|_| n.id >= 0).map(|a| a.node(n.id as NodeId));
+    let reco = view.and_then(|v| v.reco);
     TreeNodeDto {
         id: n.id,
         name: n.name,
@@ -186,7 +199,13 @@ fn to_dto(n: SliceNode) -> TreeNodeDto {
         last_opened: epoch_ms(n.last_used),
         others: n.others,
         has_children: n.has_children,
-        children: n.children.into_iter().map(to_dto).collect(),
+        status: view.map_or("keep", |v| v.status),
+        category: view.map_or("tools", |v| v.category),
+        reco: reco.and_then(|r| applied.and_then(|a| a.reco_id(r))),
+        gain: view.map_or(0, |v| v.gain),
+        gain_status: view.and_then(|v| v.gain_status),
+        gain_up_to: reco.is_some_and(|r| applied.is_some_and(|a| a.reco_up_to(r))),
+        children: n.children.into_iter().map(|c| to_dto(c, applied)).collect(),
     }
 }
 
@@ -393,7 +412,17 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
             inner.running = None;
             match result {
                 Ok((scan, notice)) => {
-                    let entry = Arc::new(Entry { scan, volume, notice });
+                    drop(inner);
+                    let _ = app.emit(
+                        "scan:progress",
+                        ProgressDto { scan_id: id, files: scan.stats.files, dirs: scan.stats.dirs, allocated: scan.stats.allocated, errors: scan.stats.errors(), elapsed_ms: scan.stats.elapsed_ms, phase: "rules", tops: Vec::new() },
+                    );
+                    let applied = analysis::apply(&scan);
+                    let mut inner = match state.0.lock() {
+                        Ok(i) => i,
+                        Err(_) => return,
+                    };
+                    let entry = Arc::new(Entry { scan, volume, notice, applied });
                     let dto = summary(id, &entry);
                     // Une seule analyse gardée en mémoire : la dernière.
                     inner.results.clear();
@@ -456,7 +485,26 @@ pub fn scan_tree(state: State<'_, ScanState>, scan_id: u32, node: Option<i64>) -
     let mut breadcrumb: Vec<CrumbDto> = parts.into_iter().map(|p| CrumbDto { label: p.to_owned(), id: None }).collect();
     breadcrumb.push(CrumbDto { label: root_label, id: Some(0) });
     breadcrumb.extend(chain);
-    Ok(TreeSliceDto { root: to_dto(slice), breadcrumb })
+    Ok(TreeSliceDto { root: to_dto(slice, e.applied.as_ref()), breadcrumb })
+}
+
+#[tauri::command]
+pub fn recommendations(state: State<'_, ScanState>, scan_id: u32) -> Result<Vec<RecoDto>, LumenError> {
+    let e = entry(&state, scan_id)?;
+    Ok(e.applied.as_ref().map(|a| a.recommendations(&e.scan)).unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn recommendation_detail(state: State<'_, ScanState>, scan_id: u32, id: String) -> Result<RecoDetailDto, LumenError> {
+    let e = entry(&state, scan_id)?;
+    e.applied.as_ref().and_then(|a| a.detail(&e.scan, &id)).ok_or(LumenError::UnknownReco(id))
+}
+
+/// KPI des règles ; `None` tant qu'aucune règle n'est appliquée (hors Windows, règles invalides).
+#[tauri::command]
+pub fn rule_kpis(state: State<'_, ScanState>, scan_id: u32) -> Result<Option<RuleKpisDto>, LumenError> {
+    let e = entry(&state, scan_id)?;
+    Ok(e.applied.as_ref().map(Applied::kpis))
 }
 
 #[cfg(test)]

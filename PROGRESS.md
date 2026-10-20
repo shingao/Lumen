@@ -6,8 +6,8 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 |---|---|---|
 | 1 | Projet Tauri, UI statique fidèle à la maquette (données mockées), navigation, thèmes, Paramètres et palette en squelette | **fait — validé** |
 | 2 | Module `safety/` complet + tests (bloquants en CI) | **fait — validé** |
-| 3 | Scanner Rust (parcours parallèle puis MFT), progression, sélecteur de disque réel | **fait — à tester** |
-| 4 | Moteur de règles, recommandations et KPI calculés | à faire |
+| 3 | Scanner Rust (parcours parallèle puis MFT), progression, sélecteur de disque réel | **fait — validé** (PR #1 mergée) |
+| 4 | Moteur de règles, recommandations et KPI calculés | **fait — à tester** |
 | 5 | Scripts, copie, exécution (simulation, confirmation, journal) | à faire |
 | 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | à faire |
 | 7 | Snapshots et Timeline | à faire |
@@ -15,6 +15,44 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 9 | Déplacement intelligent, recherche instantanée, export de rapport | à faire |
 | 10 | Onboarding et astuces contextuelles | à faire |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | à faire |
+
+---
+
+## Jalon 4 — moteur de règles
+
+### Livré
+
+- Crate `src-tauri/rules/` (logique pure, sans React ni Tauri) :
+  - **`rules.toml`** embarqué, **validé au chargement** (`schema.rs`) : champs inconnus refusés, identifiants uniques, textes français (référence) et anglais obligatoires, commandes de la liste fermée de `safety` seulement, cohérence portée / âge / action. **Aucun chemin absolu en dur** : une cible commence toujours par une variable connue — `%USERPROFILE%`, `%LOCALAPPDATA%`, `%APPDATA%`, `%TEMP%` pour les règles ; `%SYSTEMDRIVE%` pour une commande officielle seulement (Windows.old) ; les zones de classement ont en plus `%DOCUMENTS%`, `%WINDIR%`, `%PROGRAMFILES%`… Pas de `..`, pas de `.`, pas de lecteur ni de partage, `**` jamais en fin de cible. Une seule règle invalide : aucune règle n'est appliquée.
+  - Valeurs des variables : dossiers connus de Windows (`safety::win::rule_variables`, chemins longs), jamais l'environnement du processus (sauf `%TEMP%`, puis vérifié).
+  - **Moteur** (`engine.rs`) : un seul parcours de l'arène, un automate par motif (`*`, `?`, `**`, insensible à la casse). Portées : la cible entière, son contenu, ou son contenu inchangé depuis N heures (sous-arbre entier). Un élément n'est couvert que par une règle (la première), une correspondance plus profonde dans un élément déjà couvert est ignorée, les gains remontent jusqu'à la racine séparés par statut.
+  - **Jamais la denylist** : chaque élément couvert par une règle de suppression, et tout ce qu'il contient, passe `DenyList::check` et les vérifications de faits de `safety` (attribut SYSTEM, dossier contenant `.git` — ni entier, ni en partie). Sinon seuls ses enfants sûrs sont pris. Une cible littérale qui tombe dans la denylist sur la machine (`%TEMP%` = `C:\Windows\Temp` d'un compte de service) est neutralisée et journalisée. Les règles « commande » (Windows.old par le Nettoyage de disque) mesurent seulement : rien n'est couvert pour suppression.
+  - **Projets** : artefacts (`node_modules`, `.next`, `target`, `build`, `obj`…) comptés seulement si un marqueur du projet est à côté (`package.json`, `Cargo.toml`, `build.gradle`, `*.csproj`…) ; `node_modules` « sans risque » exige en plus un fichier de verrouillage (régénération à l'identique) ; `dist` et `bin` exigent d'être exclus par le `.gitignore` du projet ; jamais sous `AppData`, `%LOCALAPPDATA%`, `%APPDATA%`, les dossiers `~\.*` (extensions d'éditeur…) ni `~\scoop` (applis installées qui embarquent un `node_modules`). Actif / inactif d'après la **date du dernier commit lue dans `.git` sans lancer git** (`git.rs` : `HEAD` et branches locales, références isolées ou `packed-refs`, objets isolés zlib ou packfile index v2 avec deltas `OFS_DELTA` / `REF_DELTA`, SHA-1 et SHA-256, worktrees et sous-modules via `.git` fichier et `commondir`) ; sans git, fichier source modifié le plus récemment hors artefacts et `.git`. Inactif = 180 jours.
+  - Lecture de `.git` et `.gitignore` sans changer leur date de dernier accès (`fsread.rs` : handle à date gelée, comme le scan).
+- **Règles livrées** (`rules/rules.toml`) — sans risque : caches npm, Yarn, pnpm (store prune, gain « jusqu'à »), NuGet, Gradle (après `gradle --stop`), pip, uv, caches de shaders DirectX / NVIDIA / AMD, artefacts des projets actifs, fichiers temporaires de plus de 48 h ; à vérifier : registre Cargo, dépôt Maven, Android SDK (images système, plateformes), émulateurs Android, modèles Ollama et Hugging Face, artefacts des projets inactifs, rapports de plantage, Windows.old (Nettoyage de disque). Classement : système, jeux (Steam, Epic, GOG, Ubisoft, EA), documents et médias (dossiers connus), projets (marqueurs), caches de paquets, Android, modèles IA ; par défaut « Outils dev & autres ».
+- **Liste à relire** : `src-tauri/rules/sans-risque.txt`, générée par le test `liste_des_regles_sans_risque_a_relire` (cibles, portée, commandes, artefacts et conditions, « régénéré par »). Toute règle « Sans risque » ajoutée ou modifiée fait échouer le test tant que la liste n'est pas régénérée (`LUMEN_UPDATE_RULE_LISTS=1 cargo test -p rules`) : le changement apparaît donc dans la PR.
+- **Appli** : règles appliquées à la fin de chaque analyse (phase « application des règles ») ; commandes `recommendations`, `recommendation_detail`, `rule_kpis` ; chaque nœud de la treemap reçoit son statut, sa catégorie, sa recommandation et son gain. Plus aucune catégorie devinée par le nom (`core/categories.ts` supprimé) : la carte en direct de la première analyse est neutre.
+- **Interface** : KPI réels (libre après nettoyage = libre + sans risque, sans risque, à vérifier) ; recommandations groupées par statut ; **seuls les « Sans risque » sont cochés par défaut** ; panneau de détail avec explication, fichiers concernés, nombre de fichiers / dossiers / projets, dernière utilisation ou activité, et aperçu des commandes officielles. Survol d'une recommandation : les éléments couverts et leurs parents restent nets, quel que soit le zoom.
+- **Tests** : 21 tests du crate `rules`, dont schéma strict et chemins interdits (15 formes refusées), motifs, git (objet isolé et `packed-refs`, packfile avec deltas en SHA-1 et SHA-256, worktree, dépôt vide, objet manquant, référence qui sort du dépôt, deltas invalides) ; **aucune cible dans la denylist** sur trois dispositions de profil ; **aucun élément couvert dans la denylist** sur un volume `C:` complet piégé (ruche, fichier SYSTEM et dépôt git dans `%TEMP%`, profil d'un autre utilisateur, Windows.old, appli Electron dans AppData, extension d'éditeur) ; `%TEMP%` dans `C:\Windows` neutralisé ; Lumen sous le compte SYSTEM : rien de couvert ; projets actifs / inactifs et garde-fous ; statuts, catégories, gains. Windows (CI) : variables des règles = dossiers connus (`safety`), dépôts **réels créés par git** (objets isolés, après `git gc`, SHA-256, worktree), lecture de `.git` sans toucher au dernier accès.
+
+### Décisions
+
+- **Actifs « sans risque », inactifs « à vérifier »** (comme la maquette validée) : les artefacts d'un projet actif seront reconstruits au prochain build de toute façon ; ceux d'un projet abandonné peuvent dépendre de versions qui ne s'installent plus.
+- **Commandes officielles : mesure seulement.** Une règle `action = "command"` (npm, Yarn, pnpm, NuGet, pip, uv, Nettoyage de disque) n'autorise aucune suppression directe ; la taille est celle des dossiers que la commande vide (« jusqu'à » pour `pnpm store prune`). Gradle reste une suppression, précédée de `gradle --stop`.
+- **pip et uv séparés** (deux règles) : chacun a sa propre commande, et l'un peut être absent.
+- **Docker / WSL (compactage)** reporté au jalon 8 (écran Dev) : le gain dépend de l'espace libre à l'intérieur du disque virtuel, qu'il faut mesurer avec WSL arrêté ; l'annoncer sans mesure serait trompeur.
+- **Détail : aperçu des commandes seulement.** Le script PowerShell complet (chemins validés par `safety`, `-WhatIf`) et la simulation arrivent au jalon 5, comme prévu au plan ; le texte du panneau le dit.
+- La note de la maquette « Suppression définitive » (données factices) est corrigée : la Corbeille est la règle par défaut.
+
+### Test manuel (jalon 4)
+
+1. Analyse de ton profil : la colonne de droite liste des recommandations réelles, « Sans risque » d'abord ; seules celles-là sont cochées.
+2. KPI : « Libre après nettoyage » = espace libre + total sans risque ; « Sans risque » et « À vérifier » donnent le nombre d'éléments.
+3. Mode « Nettoyage » de la treemap : vert (hachuré) pour le sans risque, ambre pour l'à vérifier, gris pour le reste ; mode « Catégorie » : Documents en violet, projets en rose, caches en vert d'eau…
+4. Survole une recommandation : seules ses tuiles restent nettes, au premier niveau comme après un zoom.
+5. Ouvre le détail d'un cache npm, d'un projet actif et de « Artefacts de projets inactifs » : fichiers concernés, nombre de projets, dernière activité (date de ton dernier commit).
+6. Vérifie qu'un `node_modules` sans `package-lock.json` (ou yarn/pnpm) n'est pas en « Sans risque », et que rien sous `AppData\Local\Programs` (VS Code, Discord…) ni `~\.vscode` n'apparaît.
+7. Relis `src-tauri/rules/sans-risque.txt` (dans la PR) : c'est la liste exhaustive de ce que Lumen proposera de nettoyer sans te demander de vérifier.
 
 ---
 

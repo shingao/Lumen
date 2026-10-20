@@ -1,0 +1,30 @@
+[package]
+name = "rules"
+version = "0.1.0"
+description = "Lumen — moteur de règles en données (TOML) : recommandations, statuts, KPI"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+thiserror = "2"
+miniz_oxide = "0.8"
+safety = { path = "../safety" }
+scan = { path = "../scan" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+disallowed_methods = "deny"

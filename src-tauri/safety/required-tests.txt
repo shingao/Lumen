@@ -74,4 +74,5 @@ windows win::tests::fixture_prefixe_verbatim_et_casse
 windows win::tests::fixture_profils_du_registre
 windows win::tests::fixture_progra_1_vers_program_files_refuse
 windows win::tests::fixture_simulation_ne_touche_a_rien
+windows win::tests::fixture_variables_des_regles
 windows win::tests::fixture_volume_fixe_avec_corbeille

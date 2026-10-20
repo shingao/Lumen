@@ -1,0 +1,82 @@
+# Règles « Sans risque » de Lumen : uniquement des données régénérables.
+# Fichier généré par le test liste_des_regles_sans_risque_a_relire (rules/src/tests.rs) : à relire à chaque changement.
+
+[cache-npm] Cache npm
+  action : commande officielle
+  commandes : npm cache clean --force ; npm cache verify
+  cible : %LOCALAPPDATA%\npm-cache (la cible entière)
+  régénéré par : npm retélécharge les paquets à la prochaine installation.
+
+[cache-yarn] Cache Yarn
+  action : commande officielle
+  commandes : yarn cache clean
+  cible : %LOCALAPPDATA%\Yarn\Cache (la cible entière)
+  régénéré par : Yarn retélécharge les paquets à la prochaine installation.
+
+[store-pnpm] Store pnpm (paquets inutilisés)
+  action : commande officielle
+  commandes : pnpm store prune
+  cible : %LOCALAPPDATA%\pnpm\store (la cible entière)
+  régénéré par : pnpm retélécharge un paquet retiré si un projet en a de nouveau besoin.
+
+[caches-nuget] Caches NuGet
+  action : commande officielle
+  commandes : dotnet nuget locals all --clear
+  cible : %USERPROFILE%\.nuget\packages (la cible entière)
+  cible : %LOCALAPPDATA%\NuGet\v3-cache (la cible entière)
+  cible : %LOCALAPPDATA%\NuGet\plugins-cache (la cible entière)
+  régénéré par : dotnet restore retélécharge les paquets au prochain build.
+
+[caches-gradle] Caches Gradle
+  action : suppression (Corbeille par défaut, via safety)
+  commandes : gradle --stop
+  cible : %USERPROFILE%\.gradle\caches (la cible entière)
+  cible : %USERPROFILE%\.gradle\wrapper\dists (la cible entière)
+  régénéré par : Gradle recrée ses caches et ses distributions au prochain build (démons arrêtés avant : gradle --stop).
+
+[cache-pip] Cache pip
+  action : commande officielle
+  commandes : pip cache purge
+  cible : %LOCALAPPDATA%\pip\Cache (la cible entière)
+  régénéré par : pip retélécharge les paquets à la prochaine installation.
+
+[cache-uv] Cache uv
+  action : commande officielle
+  commandes : uv cache clean
+  cible : %LOCALAPPDATA%\uv\cache (la cible entière)
+  régénéré par : uv retélécharge les paquets à la prochaine installation.
+
+[caches-shaders] Caches de shaders (DirectX, NVIDIA, AMD)
+  action : suppression (Corbeille par défaut, via safety)
+  cible : %LOCALAPPDATA%\D3DSCache (son contenu)
+  cible : %LOCALAPPDATA%\NVIDIA\DXCache (son contenu)
+  cible : %LOCALAPPDATA%\NVIDIA\GLCache (son contenu)
+  cible : %LOCALAPPDATA%\NVIDIA Corporation\NV_Cache (son contenu)
+  cible : %LOCALAPPDATA%\AMD\DxCache (son contenu)
+  cible : %LOCALAPPDATA%\AMD\DxcCache (son contenu)
+  cible : %LOCALAPPDATA%\AMD\VkCache (son contenu)
+  cible : %LOCALAPPDATA%\AMD\GLCache (son contenu)
+  régénéré par : Windows et les pilotes NVIDIA / AMD recompilent les shaders au prochain lancement.
+
+[artefacts-projets-actifs] Artefacts de build (node_modules, .next, target…)
+  action : suppression (Corbeille par défaut, via safety)
+  projets sous : %USERPROFILE% ; jamais sous : %USERPROFILE%\AppData, %LOCALAPPDATA%, %APPDATA%, %USERPROFILE%\.*, %USERPROFILE%\scoop
+  projets actifs (activité depuis moins de 180 jours)
+  artefact : node_modules si package.json et package-lock.json | npm-shrinkwrap.json | yarn.lock | pnpm-lock.yaml | bun.lockb | bun.lock
+  artefact : .next si package.json
+  artefact : .nuxt si package.json
+  artefact : .svelte-kit si package.json
+  artefact : .turbo si package.json
+  artefact : .parcel-cache si package.json
+  artefact : dist si package.json et exclu par .gitignore
+  artefact : target si Cargo.toml
+  artefact : build si build.gradle | build.gradle.kts | settings.gradle | settings.gradle.kts
+  artefact : .gradle si build.gradle | build.gradle.kts | settings.gradle | settings.gradle.kts
+  artefact : obj si *.csproj | *.fsproj | *.vbproj
+  artefact : bin si *.csproj | *.fsproj | *.vbproj et exclu par .gitignore
+  régénéré par : Le prochain npm install (fichier de verrouillage présent), next build, cargo build, gradle build ou dotnet build.
+
+[fichiers-temporaires] Fichiers temporaires
+  action : suppression (Corbeille par défaut, via safety)
+  cible : %TEMP% (son contenu inchangé depuis 48 h)
+  régénéré par : Les applis recréent leurs fichiers temporaires à la demande ; rien n'est compté s'il a changé depuis 48 h.

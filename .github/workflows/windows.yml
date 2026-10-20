@@ -83,9 +83,36 @@ jobs:
           fsutil behavior query disablelastaccess
           if (-not (Test-Path "L:\")) { throw "volume de test non monté" }
           "LUMEN_TEST_NTFS=L:\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-      - name: Tests du scanner (parcours, MFT, assistant élevé, dernier accès, liens physiques, cloud)
+      # Dépôts réels créés par git (objets isolés, packfile après gc, SHA-256, worktree) : le
+      # moteur de règles doit y lire la date du dernier commit sans lancer git.
+      - name: Dépôts git de test
+        shell: pwsh
+        run: |
+          $root = "L:\depots"
+          New-Item -ItemType Directory -Force $root | Out-Null
+          function Commit($repo, $date, $msg) {
+            $env:GIT_AUTHOR_DATE = $date; $env:GIT_COMMITTER_DATE = $date
+            Set-Content -Path (Join-Path $repo "$msg.txt") -Value $msg
+            git -C $repo add -A
+            git -C $repo -c user.name=Lumen -c user.email=ci@lumen.invalid commit -q -m $msg
+          }
+          $list = @()
+          foreach ($kind in @("isole", "pack", "sha256")) {
+            $repo = Join-Path $root $kind
+            if ($kind -eq "sha256") { git init -q -b main --object-format=sha256 $repo } else { git init -q -b main $repo }
+            Commit $repo "2024-01-02T03:04:05+00:00" "premier"
+            Commit $repo "2025-03-04T05:06:07+00:00" "dernier"
+            git -C $repo branch ancienne HEAD~1
+            if ($kind -eq "pack") { git -C $repo gc -q --aggressive --prune=now; git -C $repo pack-refs --all }
+            $list += "$repo\.git=1741064767"
+          }
+          git -C (Join-Path $root "isole") worktree add -q (Join-Path $root "worktree") -b travail
+          $list += "$(Join-Path $root 'worktree')\.git=1741064767"
+          Get-ChildItem (Join-Path $root "pack\.git\objects\pack")
+          "LUMEN_TEST_GIT=$($list -join ';')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Tests du scanner et des règles (parcours, MFT, assistant élevé, dernier accès, git)
         working-directory: src-tauri
-        run: cargo test -p scan -- --nocapture
+        run: cargo test -p scan -p rules -- --nocapture
       - name: Banc d'essai
         working-directory: src-tauri
         shell: pwsh
@@ -157,10 +184,10 @@ jobs:
       - name: Clippy (unwrap, panic et suppressions hors safety/ interdits)
         working-directory: src-tauri
         run: cargo clippy --workspace --all-targets -- -D warnings
-      # Le scanner a son propre job (volume de test monté, administrateur) : pas de double exécution ici.
+      # Le scanner et les règles ont leur propre job (volume de test, dépôts git) : pas de double exécution ici.
       - name: Tests Rust
         working-directory: src-tauri
-        run: cargo test --workspace --exclude scan
+        run: cargo test --workspace --exclude scan --exclude rules
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit

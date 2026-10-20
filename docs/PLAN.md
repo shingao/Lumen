@@ -206,6 +206,12 @@ pub struct Node {
 
 ### 4.2 Règles (`src-tauri/rules/rules.toml`)
 
+> Mise à jour au jalon 4 : crate `src-tauri/rules/`. Le schéma réel est dans `rules/src/schema.rs`
+> (champs `targets`, `scope` = `whole` | `contents` | `older-than` + `min-age-hours`, `action` =
+> `delete` | `command`, `commands`, `gain` = `exact` | `up-to`, `regenerated-by`, `[rule.project]`
+> avec `roots`, `exclude`, `artifacts` { `dir`, `markers`, `requires`, `gitignored` }, `activity`,
+> `inactive-days`) et les zones de classement `[[area]]`. L'exemple ci-dessous est l'ébauche initiale.
+
 ```toml
 [[rule]]
 id          = "npm-cache"
