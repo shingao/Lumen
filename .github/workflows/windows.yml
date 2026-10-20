@@ -13,9 +13,46 @@ permissions:
   contents: read
 
 jobs:
-  # Jalon 2 : un job « safety » (cargo test safety) passera en premier et bloquera tout le reste.
+  # safety/ d'abord : si un de ses tests échoue, est ignoré ou manque, rien d'autre ne tourne
+  # et aucun installeur n'est produit.
+  safety:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Les fixtures 8.3 ont besoin de noms courts sur le volume du dossier temporaire.
+      - name: "Noms courts 8.3 actifs sur C:"
+        run: |
+          fsutil 8dot3name set C: 0
+          fsutil 8dot3name query C:
+          echo "TEMP=$env:TEMP"
+      - name: Tests de safety/ (jonctions, symlinks, 8.3, verrous, SYSTEM, Corbeille…)
+        run: node scripts/check-safety-tests.mjs
+
+  # La partie pure de safety/ doit aussi passer hors de Windows.
+  safety-portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-safety-tests.mjs
 
   front:
+    needs: [safety, safety-portable]
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -31,6 +68,7 @@ jobs:
         run: npm audit --audit-level=high
 
   rust:
+    needs: [safety, safety-portable]
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -49,10 +87,10 @@ jobs:
       - run: npm ci && npm run build
       - name: Clippy (unwrap, panic et suppressions hors safety/ interdits)
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests Rust
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -61,7 +99,7 @@ jobs:
         run: cargo audit
 
   build:
-    needs: [front, rust]
+    needs: [safety, front, rust]
     runs-on: windows-latest
     timeout-minutes: 60
     env:
