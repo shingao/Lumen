@@ -6,6 +6,8 @@
 
 mod analysis;
 mod cleanup;
+#[cfg(all(test, windows))]
+mod e2e;
 mod error;
 mod journal;
 mod scanning;

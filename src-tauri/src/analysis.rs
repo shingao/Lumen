@@ -48,7 +48,7 @@ fn context() -> Option<(rules::Env, safety::denylist::DenyList, Option<String>)>
 }
 
 /// FILETIME actuel.
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     (unix + 11_644_473_600) * 10_000_000
 }
@@ -63,12 +63,24 @@ pub fn apply(scan: &Scan) -> Option<Applied> {
         }
     };
     let (env, deny, profile) = context()?;
-    let ctx = rules::Context { env: &env, deny: &deny, now: now(), read_disk: true };
+    Some(apply_with(set, scan, env, &deny, profile, now()))
+}
+
+/// Règles appliquées avec des variables et une denylist données (machine réelle, ou faux profil
+/// des tests de bout en bout).
+pub(crate) fn apply_with(set: &RuleSet, scan: &Scan, env: rules::Env, deny: &safety::denylist::DenyList, profile: Option<String>, now: i64) -> Applied {
+    let ctx = rules::Context { env: &env, deny, now, read_disk: true };
     let analysis = rules::analyze(set, scan, &ctx);
     for d in &analysis.disabled {
         eprintln!("règle {} : cible {} neutralisée ({})", d.rule, d.target, d.reason);
     }
-    Some(Applied { analysis, env, profile })
+    Applied { analysis, env, profile }
+}
+
+/// Règles livrées (`rules.toml`), validées une fois (tests de bout en bout).
+#[cfg(all(test, windows))]
+pub(crate) fn rules() -> Option<&'static RuleSet> {
+    builtin().as_ref().ok()
 }
 
 #[derive(Debug, Clone, Serialize)]
