@@ -64,7 +64,12 @@ jobs:
       - run: npm ci
       - name: Typecheck, lint, tests (dont contrastes AA des deux thèmes)
         run: npm run check
-      - name: npm audit
+      # Bloquant : ce qui est embarqué dans l'appli.
+      - name: npm audit (dépendances livrées)
+        run: npm audit --omit=dev --audit-level=high
+      # Informatif : outillage de dev (ex. braces via stylelint, sans correctif publié).
+      - name: npm audit (outillage de dev, informatif)
+        continue-on-error: true
         run: npm audit --audit-level=high
 
   rust:
