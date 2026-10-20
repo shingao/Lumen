@@ -148,12 +148,12 @@ pub struct TreeSliceDto {
     pub breadcrumb: Vec<CrumbDto>,
 }
 
-struct Entry {
-    scan: Scan,
+pub(crate) struct Entry {
+    pub(crate) scan: Scan,
     volume: String,
     notice: Option<&'static str>,
     /// Règles appliquées (absent hors de Windows ou si les règles livrées sont invalides).
-    applied: Option<Applied>,
+    pub(crate) applied: Option<Applied>,
 }
 
 #[derive(Default)]
@@ -452,6 +452,10 @@ pub fn scan_cancel(state: State<'_, ScanState>, scan_id: u32) {
 }
 
 fn entry(state: &State<'_, ScanState>, scan_id: u32) -> Result<Arc<Entry>, LumenError> {
+    entry_of(state, scan_id)
+}
+
+pub(crate) fn entry_of(state: &ScanState, scan_id: u32) -> Result<Arc<Entry>, LumenError> {
     state.0.lock().ok().and_then(|i| i.results.get(&scan_id).cloned()).ok_or(LumenError::UnknownScan)
 }
 

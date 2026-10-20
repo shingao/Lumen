@@ -23,6 +23,7 @@ thiserror = "2"
 scan = { path = "scan" }
 rules = { path = "rules" }
 safety = { path = "safety" }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [lints.rust]
 unsafe_code = "deny"

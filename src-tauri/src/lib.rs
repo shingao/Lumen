@@ -1,10 +1,13 @@
 //! Lumen — backend Tauri.
 //!
-//! Jalon 4 : analyse du disque (crate `scan`), règles appliquées (crate `rules` : statuts,
-//! recommandations, KPI) ; `safety` reste en simulation seule jusqu'au jalon 5.
+//! Analyse du disque (crate `scan`), règles appliquées (crate `rules` : statuts,
+//! recommandations, KPI), nettoyage par `safety` (plan, confirmation, recontrôle complet,
+//! exécution) et journal SQLite.
 
 mod analysis;
+mod cleanup;
 mod error;
+mod journal;
 mod scanning;
 
 pub use error::LumenError;
@@ -25,6 +28,8 @@ pub fn helper_entry() -> Option<i32> {
 pub fn run() {
     let result = tauri::Builder::default()
         .manage(scanning::ScanState::default())
+        .manage(cleanup::CleanState::default())
+        .manage(cleanup::JournalState::default())
         .invoke_handler(tauri::generate_handler![
             scanning::app_info,
             scanning::volumes_list,
@@ -35,6 +40,14 @@ pub fn run() {
             scanning::recommendations,
             scanning::recommendation_detail,
             scanning::rule_kpis,
+            cleanup::plan_create,
+            cleanup::plan_script,
+            cleanup::plan_execute,
+            cleanup::plan_cancel,
+            cleanup::journal_list,
+            cleanup::journal_detail,
+            cleanup::journal_script,
+            cleanup::journal_restore,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {
