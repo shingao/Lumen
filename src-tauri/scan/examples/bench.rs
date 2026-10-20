@@ -4,7 +4,9 @@
 //! cargo run --release -p scan --example bench -- generate <dossier> <nombre de fichiers>
 //! cargo run --release -p scan --example bench -- walk <dossier>
 //! cargo run --release -p scan --example bench -- mft <dossier>      (administrateur, Windows)
+//! cargo run --release -p scan --example bench -- compare <dossier>  (administrateur, Windows)
 //! ```
+//! `compare` lance les deux méthodes dans le même processus et liste leurs différences.
 //! Chaque mesure affiche une ligne Markdown : méthode, fichiers, taille allouée, durée, mémoire.
 
 use std::fs::{self, File};
@@ -86,6 +88,11 @@ fn run_walk(dir: &str) -> Result<(), String> {
     let (root, source) = (dir.to_owned(), scan::unix::StdSource);
     let scan = scan::walk(&source, &root, &cancel, &|_: &Progress| {}).map_err(|e| e.to_string())?;
     report("parcours", &scan, started.elapsed().as_secs_f64());
+    #[cfg(windows)]
+    {
+        let (count, ms) = scan::win::compressed_lookups();
+        println!("<!-- GetCompressedFileSizeW : {count} appels, {ms} ms cumulés sur tous les fils -->");
+    }
     Ok(())
 }
 
@@ -96,6 +103,66 @@ fn run_mft(dir: &str) -> Result<(), String> {
     let scan = scan::win::mft::scan_mft(dir, &cancel, &|_: &Progress| {}).map_err(|e| e.to_string())?;
     report("MFT", &scan, started.elapsed().as_secs_f64());
     Ok(())
+}
+
+/// Fichiers comptés (hors dossiers et doublons physiques) : chemin → (taille allouée, attributs).
+#[cfg(windows)]
+fn files_of(scan: &Scan) -> std::collections::HashMap<String, (u64, u32, scan::Kind)> {
+    (0..scan.len() as u32)
+        .filter_map(|i| {
+            let n = scan.node(i)?;
+            let dup = n.flags & scan::model::F_HARDLINK_DUP != 0;
+            (n.kind != scan::Kind::Dir && !dup).then(|| (scan.path(i).to_lowercase(), (n.allocated, n.attributes, n.kind)))
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn run_compare(dir: &str) -> Result<(), String> {
+    let cancel = AtomicBool::new(false);
+    let root = scan::win::long_path(dir);
+    let started = Instant::now();
+    let walked = scan::walk(&scan::win::WinSource::new(&root), &root, &cancel, &|_: &Progress| {}).map_err(|e| e.to_string())?;
+    let walk_s = started.elapsed().as_secs_f64();
+    let (count, ms) = scan::win::compressed_lookups();
+    let started = Instant::now();
+    let read = scan::win::mft::scan_mft(dir, &cancel, &|_: &Progress| {}).map_err(|e| e.to_string())?;
+    let mft_s = started.elapsed().as_secs_f64();
+    println!("parcours {walk_s:.1} s ({} ; GetCompressedFileSizeW : {count} appels, {ms} ms cumulés), MFT {mft_s:.1} s ({})",
+        gib(walked.stats.allocated), gib(read.stats.allocated));
+    println!("erreurs du parcours : {:?}", walked.stats.error_samples);
+
+    let a = files_of(&walked);
+    let b = files_of(&read);
+    let mut only_mft: Vec<(&String, u64)> = b.iter().filter(|(k, _)| !a.contains_key(*k)).map(|(k, v)| (k, v.0)).collect();
+    let mut only_walk: Vec<(&String, u64)> = a.iter().filter(|(k, _)| !b.contains_key(*k)).map(|(k, v)| (k, v.0)).collect();
+    let mut differ: Vec<(&String, u64, u64, u32, scan::Kind)> = a
+        .iter()
+        .filter_map(|(k, v)| b.get(k).filter(|w| w.0 != v.0).map(|w| (k, v.0, w.0, v.1, v.2)))
+        .collect();
+    only_mft.sort_by_key(|e| std::cmp::Reverse(e.1));
+    only_walk.sort_by_key(|e| std::cmp::Reverse(e.1));
+    differ.sort_by_key(|e| std::cmp::Reverse(e.1.abs_diff(e.2)));
+    let sum = |v: &[(&String, u64)]| v.iter().map(|e| e.1).sum::<u64>();
+    println!("seulement dans la MFT : {} fichiers, {}", only_mft.len(), gib(sum(&only_mft)));
+    for (k, v) in only_mft.iter().take(15) {
+        println!("  {} {k}", mib(*v));
+    }
+    println!("seulement dans le parcours : {} fichiers, {}", only_walk.len(), gib(sum(&only_walk)));
+    for (k, v) in only_walk.iter().take(15) {
+        println!("  {} {k}", mib(*v));
+    }
+    let delta: i128 = differ.iter().map(|e| i128::from(e.2) - i128::from(e.1)).sum();
+    println!("tailles différentes : {} fichiers, MFT − parcours = {:.2} Gio", differ.len(), delta as f64 / 1073741824.0);
+    for (k, w, m, attrs, kind) in differ.iter().take(25) {
+        println!("  parcours {} / MFT {} attributs {attrs:#x} {kind:?} {k}", mib(*w), mib(*m));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn run_compare(_dir: &str) -> Result<(), String> {
+    Err("la MFT ne se lit que sous Windows".into())
 }
 
 #[cfg(not(windows))]
@@ -112,7 +179,8 @@ fn main() {
         }
         Some("walk") if args.len() == 3 => run_walk(&args[2]),
         Some("mft") if args.len() == 3 => run_mft(&args[2]),
-        _ => Err("usage : bench generate <dossier> <n> | walk <dossier> | mft <dossier>".into()),
+        Some("compare") if args.len() == 3 => run_compare(&args[2]),
+        _ => Err("usage : bench generate <dossier> <n> | walk <dossier> | mft <dossier> | compare <dossier>".into()),
     };
     if let Err(e) = result {
         eprintln!("{e}");

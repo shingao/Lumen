@@ -87,6 +87,13 @@ jobs:
           "|---|---|---|---|---|" | Out-File -Append $sum
           & $bench walk "C:\" | Tee-Object -Append -FilePath $sum
           & $bench mft "C:\" | Tee-Object -Append -FilePath $sum
+          "" | Out-File -Append $sum
+          "<details><summary>Différences parcours / MFT sur C:\ (fichier par fichier)</summary>" | Out-File -Append $sum
+          "" | Out-File -Append $sum
+          '```' | Out-File -Append $sum
+          & $bench compare "C:\" | Tee-Object -Append -FilePath $sum
+          '```' | Out-File -Append $sum
+          "</details>" | Out-File -Append $sum
 
   front:
     needs: [safety, safety-portable]

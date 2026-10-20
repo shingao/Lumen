@@ -13,6 +13,8 @@ pub mod mft;
 mod tests;
 
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use windows::core::{HSTRING, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
@@ -127,6 +129,15 @@ enum Layout {
 }
 
 /// Source Windows du parcours : métadonnées des listes de dossier uniquement.
+static COMPRESSED_LOOKUPS: AtomicU64 = AtomicU64::new(0);
+static COMPRESSED_NANOS: AtomicU64 = AtomicU64::new(0);
+
+/// Lectures `GetCompressedFileSizeW` faites depuis le lancement du processus : (nombre, durée
+/// cumulée en ms, tous fils confondus). Mesure du banc d'essai.
+pub fn compressed_lookups() -> (u64, u64) {
+    (COMPRESSED_LOOKUPS.load(Ordering::Relaxed), COMPRESSED_NANOS.load(Ordering::Relaxed) / 1_000_000)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct WinSource {
     cluster: u64,
@@ -139,11 +150,15 @@ impl WinSource {
 
     /// Taille réelle sur disque d'un fichier compressé, clairsemé ou WOF (métadonnée seule).
     fn compressed_size(&self, path: &str) -> Option<u64> {
+        let started = Instant::now();
         let name = HSTRING::from(verbatim(path));
         let mut high = 0u32;
         // SAFETY : chaîne et entier possédés.
         let low = unsafe { GetCompressedFileSizeW(&name, Some(&mut high)) };
-        if low == u32::MAX && windows::core::Error::from_thread().code().is_err() {
+        let failed = low == u32::MAX && windows::core::Error::from_thread().code().is_err();
+        COMPRESSED_LOOKUPS.fetch_add(1, Ordering::Relaxed);
+        COMPRESSED_NANOS.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if failed {
             return None;
         }
         Some((u64::from(high) << 32) | u64::from(low))
