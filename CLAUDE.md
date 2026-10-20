@@ -25,7 +25,7 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 - CSS fait main : CSS modules (`*.module.css`) + variables de `tokens.css`. Stylelint interdit hex/rgb/hsl, `ms`/`s`, tailles et graisses en dur hors `src/styles/tokens*.css`.
 - Polices embarquées : Inter (variable) et JetBrains Mono via `@fontsource` (aucun CDN).
 - Treemap squarified maison : `src/core/treemap/squarify.ts` (2 niveaux, gap 3 px).
-- Analyse : crate `src-tauri/scan/` — parcours parallèle maison (rayon) par handle de dossier (`FileIdExtdDirectoryInfo`, aucun fichier ouvert), MFT pour NTFS en administrateur (assistant élevé `--lumen-mft-scan`). À venir : SQLite (rusqlite) dans `%LOCALAPPDATA%\Lumen\`.
+- Analyse : crate `src-tauri/scan/` — parcours parallèle maison (rayon) par handle de dossier (`FileIdExtdDirectoryInfo`, puis chaque fichier ouvert par file ID pour ses attributs seulement), MFT pour NTFS en administrateur (assistant élevé `--lumen-mft-scan`). À venir : SQLite (rusqlite) dans `%LOCALAPPDATA%\Lumen\`.
 
 ## Tokens (résumé — détail dans `src/styles/tokens.css`)
 
@@ -96,7 +96,7 @@ Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `co
 
 ## Analyse (règles)
 
-- **Jamais le contenu d'un fichier** : métadonnées des listes de dossier seulement ; `GetCompressedFileSizeW` pour les seuls fichiers compressés / clairsemés / WOF / dédupliqués. Fichiers cloud (`RECALL_ON_DATA_ACCESS`, `OFFLINE`) jamais ouverts, comptés à part ; dossiers cloud `RECALL_ON_OPEN` jamais énumérés.
+- **Jamais le contenu d'un fichier** : liste des dossiers, puis chaque fichier ouvert par file ID avec `FILE_READ_ATTRIBUTES` et `FILE_FLAG_OPEN_NO_RECALL` pour lire tailles et dates dans son propre enregistrement (la copie de la liste du dossier peut être périmée : autres noms d'un lien physique…) ; `GetCompressedFileSizeW` en plus pour les fichiers compressés / clairsemés / WOF / dédupliqués. Fichiers cloud (`RECALL_ON_DATA_ACCESS`, `OFFLINE`) jamais ouverts, comptés à part ; dossiers cloud `RECALL_ON_OPEN` jamais énumérés.
 - Taille **allouée** par défaut, logique en infobulle. Liens physiques comptés une fois (file ID). Points d'analyse jamais traversés. Erreurs comptées, jamais bloquantes.
 - Chaque entrée garde file ID, tailles, dates (FILETIME) pour l'anti-TOCTOU de `safety`.
 - Parcours et MFT doivent donner les mêmes totaux : même classement (`scan/src/classify.rs`), test Windows `mft_identique_au_parcours`.

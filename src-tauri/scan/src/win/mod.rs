@@ -1,9 +1,13 @@
 //! Partie Windows du scanner. Seul module du crate autorisé à utiliser `unsafe`.
 //!
 //! - [`WinSource`] : liste chaque dossier avec `GetFileInformationByHandleEx(FileIdExtdDirectoryInfo)`,
-//!   qui renvoie pour chaque entrée son file ID, sa taille, sa taille allouée, ses attributs et ses
-//!   dates, **sans ouvrir aucun fichier**. Seuls les fichiers compressés, clairsemés ou WOF font
-//!   l'objet d'une lecture de métadonnée supplémentaire (`GetCompressedFileSizeW`).
+//!   qui renvoie pour chaque entrée son file ID, son type et son étiquette de point d'analyse. Les
+//!   tailles et dates de cette liste sont une copie que NTFS ne tient pas toujours à jour (autres
+//!   noms d'un lien physique, fichiers écrits par certaines API) : chaque fichier est donc ouvert
+//!   **pour ses attributs seulement** (`OpenFileById`, `FILE_READ_ATTRIBUTES`, sans rappel cloud,
+//!   jamais le contenu) et ses tailles et dates sont lues dans son propre enregistrement. Les
+//!   fichiers cloud et les points d'analyse ne sont jamais ouverts. Les fichiers WOF, compressés ou
+//!   clairsemés passent en plus par `GetCompressedFileSizeW`.
 //! - `mft` : lecture directe de la MFT (administrateur), `helper` : assistant élevé.
 #![allow(unsafe_code)]
 
@@ -20,11 +24,12 @@ use windows::core::{HSTRING, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FileIdInfo, GetCompressedFileSizeW, GetDiskFreeSpaceExW, GetDiskFreeSpaceW, GetDriveTypeW,
+    CreateFileW, FileBasicInfo, FileIdInfo, FileStandardInfo, GetCompressedFileSizeW, GetDiskFreeSpaceExW, GetDiskFreeSpaceW, GetDriveTypeW,
     GetFileInformationByHandle, GetFileInformationByHandleEx, GetLogicalDrives, GetLongPathNameW, GetVolumeInformationW,
     GetVolumePathNameW, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_NO_RECALL,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, OpenFileById, ExtendedFileIdType, FileIdType,
+    FILE_BASIC_INFO, FILE_ID_128, FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0, FILE_STANDARD_INFO,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
@@ -129,6 +134,15 @@ enum Layout {
 }
 
 /// Source Windows du parcours : métadonnées des listes de dossier uniquement.
+/// Ce que l'enregistrement du fichier dit de lui-même.
+struct OwnRecord {
+    logical: u64,
+    allocation: u64,
+    attributes: u32,
+    modified: i64,
+    accessed: i64,
+}
+
 static COMPRESSED_LOOKUPS: AtomicU64 = AtomicU64::new(0);
 static COMPRESSED_NANOS: AtomicU64 = AtomicU64::new(0);
 
@@ -164,7 +178,48 @@ impl WinSource {
         Some((u64::from(high) << 32) | u64::from(low))
     }
 
-    fn parse(&self, dir: &str, layout: Layout, buf: &[u8], out: &mut Vec<RawEntry>) {
+    /// Tailles et dates lues dans l'enregistrement du fichier lui-même (et non dans la copie de la
+    /// liste du dossier). Ouverture par file ID pour les attributs seulement : ni contenu, ni rappel.
+    fn own_record(&self, dir: &Handle, layout: Layout, file_id: u128) -> Option<OwnRecord> {
+        let descriptor = FILE_ID_DESCRIPTOR {
+            dwSize: std::mem::size_of::<FILE_ID_DESCRIPTOR>() as u32,
+            Type: if layout == Layout::Extd { ExtendedFileIdType } else { FileIdType },
+            Anonymous: if layout == Layout::Extd {
+                FILE_ID_DESCRIPTOR_0 { ExtendedFileId: FILE_ID_128 { Identifier: file_id.to_le_bytes() } }
+            } else {
+                FILE_ID_DESCRIPTOR_0 { FileId: file_id as u64 as i64 }
+            },
+        };
+        // SAFETY : handle de dossier valide (indique le volume), descripteur possédé.
+        let h = unsafe {
+            OpenFileById(
+                dir.0,
+                &descriptor,
+                FILE_READ_ATTRIBUTES.0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                None,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_OPEN_NO_RECALL,
+            )
+        }
+        .ok()
+        .map(Handle)?;
+        let mut standard = FILE_STANDARD_INFO::default();
+        let mut basic = FILE_BASIC_INFO::default();
+        // SAFETY : handle valide, structures possédées de la taille annoncée.
+        unsafe {
+            GetFileInformationByHandleEx(h.0, FileStandardInfo, &mut standard as *mut _ as *mut c_void, std::mem::size_of::<FILE_STANDARD_INFO>() as u32).ok()?;
+            GetFileInformationByHandleEx(h.0, FileBasicInfo, &mut basic as *mut _ as *mut c_void, std::mem::size_of::<FILE_BASIC_INFO>() as u32).ok()?;
+        }
+        Some(OwnRecord {
+            logical: standard.EndOfFile.max(0) as u64,
+            allocation: standard.AllocationSize.max(0) as u64,
+            attributes: basic.FileAttributes,
+            modified: basic.LastWriteTime,
+            accessed: basic.LastAccessTime,
+        })
+    }
+
+    fn parse(&self, dir: &str, dir_h: &Handle, layout: Layout, buf: &[u8], out: &mut Vec<RawEntry>) {
         let mut off = 0usize;
         loop {
             let e = &buf[off.min(buf.len())..];
@@ -193,7 +248,16 @@ impl WinSource {
             let name = utf16_at(e, name_at, name_len);
             if name != "." && name != ".." {
                 let tag = if attributes & ATTR_REPARSE != 0 { tag } else { 0 };
-                let kind = classify(attributes, tag);
+                let mut kind = classify(attributes, tag);
+                let (mut eof, mut alloc, mut attributes, mut modified, mut accessed) = (eof, alloc, attributes, modified, accessed);
+                if kind == Kind::File {
+                    if let Some(own) = self.own_record(dir_h, layout, file_id) {
+                        (eof, alloc, modified, accessed) = (own.logical, own.allocation, own.modified, own.accessed);
+                        attributes = own.attributes;
+                        // Un fichier devenu cloud entre-temps reste compté à part.
+                        kind = classify(attributes, tag);
+                    }
+                }
                 let allocated = match kind {
                     Kind::File if needs_compressed_size(attributes, tag) => {
                         self.compressed_size(&self.join(dir, &name)).unwrap_or(alloc)
@@ -254,7 +318,7 @@ impl Source for WinSource {
                     first = false;
                     // SAFETY : vue en octets du tampon de u64 possédé.
                     let raw = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, bytes as usize) };
-                    self.parse(path, layout, raw, out);
+                    self.parse(path, &h, layout, raw, out);
                 }
                 Err(e) => {
                     let code = win32_code(&e);

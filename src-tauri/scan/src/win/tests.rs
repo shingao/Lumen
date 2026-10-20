@@ -178,3 +178,32 @@ fn dossier_interdit_compte_sans_bloquer() {
     let mut out = Vec::new();
     assert_eq!(src.read_dir(&format!("{root}\\System Volume Information"), &mut out), Err(DirError::AccessDenied));
 }
+
+#[test]
+fn liste_de_dossier_perimee_corrigee() {
+    // NTFS ne met à jour la copie des tailles que dans l'entrée du nom utilisé pour écrire :
+    // l'autre nom d'un lien physique garde, dans la liste de son dossier, l'ancienne taille.
+    let dir = tempfile::Builder::new().prefix("lumen-perime-").tempdir().unwrap();
+    let r = dir.path();
+    fs::create_dir_all(r.join("a")).unwrap();
+    fs::create_dir_all(r.join("b")).unwrap();
+    File::create(r.join("a\\donnees.bin")).unwrap().write_all(&[1u8; 4096]).unwrap();
+    fs::hard_link(r.join("a\\donnees.bin"), r.join("b\\autre-nom.bin")).unwrap();
+    let mut f = OpenOptions::new().append(true).open(r.join("a\\donnees.bin")).unwrap();
+    f.write_all(&vec![2u8; 1024 * 1024]).unwrap();
+    f.sync_all().unwrap();
+    drop(f);
+    let real = 4096 + 1024 * 1024;
+    let listed = fs::read_dir(r.join("b")).unwrap().next().unwrap().unwrap().metadata().unwrap().len();
+    eprintln!("taille dans la liste du dossier b : {listed} (réelle : {real})");
+
+    let scan = scan_walk(r);
+    for rel in ["a\\donnees.bin", "b\\autre-nom.bin"] {
+        let n = scan.node(scan.find(rel).unwrap()).unwrap().clone();
+        assert_eq!(n.logical, real, "{rel}");
+        assert!(n.allocated >= real, "{rel} : {}", n.allocated);
+    }
+    assert_eq!(scan.stats.files, 1);
+    assert_eq!(scan.stats.hardlink_dups, 1);
+    assert_eq!(scan.stats.logical, real);
+}
