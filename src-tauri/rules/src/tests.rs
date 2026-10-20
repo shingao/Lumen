@@ -100,6 +100,7 @@ fn env(profile: &str, temp: &str) -> Env {
         .set(Var::Temp, wp(temp))
         .set(Var::SystemDrive, wp("C:\\"))
         .set(Var::Documents, wp(&format!("{profile}\\Documents")))
+        .set(Var::Downloads, wp(&format!("{profile}\\Downloads")))
         .set(Var::WinDir, wp("C:\\Windows"))
         .set(Var::ProgramFiles, wp("C:\\Program Files"))
         .set(Var::ProgramFilesX86, wp("C:\\Program Files (x86)"))
@@ -407,4 +408,122 @@ fn analyse_du_seul_profil() {
     let (a, deny) = run(&set, &scan, "C:\\Users\\Arthur", "C:\\Users\\Arthur\\AppData\\Local\\Temp");
     assert_eq!(covered_paths(&a, &scan, &set, "cache-npm"), ["C:\\Users\\Arthur\\AppData\\Local\\npm-cache"]);
     assert_never_denied(&a, &scan, &set, &deny);
+}
+
+/// Secrets et configurations d'outils (liste minimale relue) : jamais couverts par une règle de
+/// suppression, ni à leur place, ni glissés dans un dossier de cache que vise une règle.
+#[test]
+fn aucune_regle_ne_couvre_un_secret() {
+    let set = builtin().unwrap();
+    let p = "Users\\Arthur";
+    let real = [
+        ".gradle\\gradle.properties",
+        ".gradle\\init.d\\entreprise.gradle",
+        ".m2\\settings.xml",
+        ".m2\\settings-security.xml",
+        ".npmrc",
+        ".yarnrc",
+        ".yarnrc.yml",
+        ".cargo\\credentials.toml",
+        ".cargo\\credentials",
+        ".cargo\\config.toml",
+        ".docker\\config.json",
+        ".kube\\config",
+        ".ssh\\id_ed25519",
+        ".aws\\credentials",
+        ".azure\\msal_token_cache.json",
+        ".gnupg\\pubring.kbx",
+        "AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cookies",
+        "AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data",
+        "AppData\\Local\\Google\\Chrome\\User Data\\Default\\Web Data",
+        "AppData\\Local\\Google\\Chrome\\User Data\\Default\\Local Storage\\leveldb\\000003.log",
+        "AppData\\Local\\Google\\Chrome\\User Data\\Default\\IndexedDB\\x.leveldb\\1.log",
+        "AppData\\Local\\Google\\Chrome\\User Data\\Default\\Sessions\\Session_1",
+    ];
+    let mut t = machine();
+    for rel in real {
+        t.file(&format!("{p}\\{rel}"), 4 << 10, 400);
+    }
+    // Les mêmes noms glissés dans chaque dossier que visent les règles de suppression (vieux
+    // fichiers : la règle des 48 h les retiendrait si rien ne les protégeait).
+    let traps = [".npmrc", ".yarnrc.yml", "Cookies", "Login Data", "Web Data", "Local Storage\\x.log", "IndexedDB\\x", "Sessions\\s", "id_rsa", "release.jks"];
+    let local = format!("{p}\\AppData\\Local");
+    let cache_dirs = [
+        format!("{local}\\Temp\\appli-electron"),
+        format!("{local}\\D3DSCache\\abc"),
+        format!("{p}\\.gradle\\caches\\modules-2"),
+        format!("{p}\\.cargo\\registry\\cache"),
+        format!("{p}\\Projets\\actif\\node_modules\\pkg"),
+        format!("{p}\\Projets\\vieux\\target\\debug"),
+    ];
+    for dir in &cache_dirs {
+        for trap in traps {
+            t.file(&format!("{dir}\\{trap}"), 4 << 10, 400);
+        }
+    }
+    let scan = t.build("C:\\");
+    let profile = "C:\\Users\\Arthur";
+    let (a, deny) = run(&set, &scan, profile, &format!("{profile}\\AppData\\Local\\Temp"));
+    assert_never_denied(&a, &scan, &set, &deny);
+
+    // Contrôle indépendant de la denylist : aucun élément couvert (ni rien dessous) n'a un nom ou
+    // un chemin de la liste.
+    let secret_names = [".NPMRC", ".YARNRC", ".YARNRC.YML", "COOKIES", "LOGIN DATA", "WEB DATA", "LOCAL STORAGE", "INDEXEDDB", "SESSIONS", "ID_RSA", "RELEASE.JKS"];
+    let real_paths: Vec<String> = real.iter().map(|r| format!("C:\\{p}\\{r}").to_uppercase()).collect();
+    for reco in a.recos.iter().filter(|r| set.rules[r.rule].action == Action::Delete) {
+        let mut stack = reco.covered.clone();
+        while let Some(n) = stack.pop() {
+            let path = scan.path(n).to_uppercase();
+            let name = scan.name(n).to_uppercase();
+            assert!(!secret_names.contains(&name.as_str()), "{} couvre {path}", set.rules[reco.rule].id);
+            assert!(!real_paths.iter().any(|s| s == &path || s.starts_with(&format!("{path}\\"))), "{} couvre {path}", set.rules[reco.rule].id);
+            stack.extend(scan.children(n));
+        }
+    }
+    // Les caches restent nettoyés autour des pièges : seuls les secrets restent en place.
+    let gradle = covered_paths(&a, &scan, &set, "caches-gradle");
+    assert!(gradle.iter().any(|c| c.ends_with("\\.gradle\\caches\\modules-2\\a.jar")), "{gradle:?}");
+    assert!(!gradle.iter().any(|c| c.ends_with("\\.gradle\\caches") || c.ends_with("\\modules-2")), "dossier contenant un secret jamais pris entier : {gradle:?}");
+    let temp = covered_paths(&a, &scan, &set, "fichiers-temporaires");
+    assert!(temp.iter().any(|c| c.ends_with("\\Temp\\vieux.log")) && !temp.iter().any(|c| c.ends_with("appli-electron")), "{temp:?}");
+}
+
+/// Les règles visent des sous-dossiers de cache explicites, jamais la racine d'un dossier d'outil.
+#[test]
+fn cibles_jamais_a_la_racine_d_un_dossier_d_outil() {
+    let set = builtin().unwrap();
+    for r in &set.rules {
+        for t in &r.targets {
+            match t.rest.first() {
+                // `%USERPROFILE%\.outil` doit être suivi d'au moins un sous-dossier.
+                Some(first) => assert!(!(t.var == Var::UserProfile && first.starts_with('.') && t.rest.len() < 2), "{} : {}", r.id, t.raw),
+                // Une variable seule : uniquement %TEMP%, contenu inchangé depuis 48 h au moins.
+                None => assert!(t.var == Var::Temp && matches!(r.scope, Scope::OlderThan { hours } if hours >= 48), "{} : {}", r.id, t.raw),
+            }
+        }
+    }
+}
+
+#[test]
+fn rien_dans_les_telechargements() {
+    let set = builtin().unwrap();
+    let mut t = machine();
+    let d = "Users\\Arthur\\Downloads";
+    t.file(&format!("{d}\\installeur.exe"), 90 << 20, 400)
+        .file(&format!("{d}\\archive\\package.json"), 1 << 10, 400)
+        .file(&format!("{d}\\archive\\package-lock.json"), 1 << 10, 400)
+        .file(&format!("{d}\\archive\\node_modules\\x\\i.js"), 50 << 20, 400)
+        .file(&format!("{d}\\recent\\package.json"), 1 << 10, 1)
+        .file(&format!("{d}\\recent\\package-lock.json"), 1 << 10, 1)
+        .file(&format!("{d}\\recent\\node_modules\\x\\i.js"), 50 << 20, 1)
+        .file(&format!("{d}\\cache.tmp"), 1 << 20, 400);
+    let scan = t.build("C:\\");
+    let (a, _) = run(&set, &scan, "C:\\Users\\Arthur", "C:\\Users\\Arthur\\AppData\\Local\\Temp");
+    let downloads = scan.find(d).unwrap() as usize;
+    assert_eq!((a.gain_safe[downloads], a.gain_review[downloads]), (0, 0));
+    for reco in &a.recos {
+        for &c in &reco.covered {
+            assert!(!scan.path(c).contains("\\Downloads"), "{} couvre {}", set.rules[reco.rule].id, scan.path(c));
+        }
+    }
 }

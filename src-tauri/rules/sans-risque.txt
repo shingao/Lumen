@@ -60,7 +60,7 @@
 
 [artefacts-projets-actifs] Artefacts de build (node_modules, .next, target…)
   action : suppression (Corbeille par défaut, via safety)
-  projets sous : %USERPROFILE% ; jamais sous : %USERPROFILE%\AppData, %LOCALAPPDATA%, %APPDATA%, %USERPROFILE%\.*, %USERPROFILE%\scoop
+  projets sous : %USERPROFILE% ; jamais sous : %USERPROFILE%\AppData, %LOCALAPPDATA%, %APPDATA%, %USERPROFILE%\.*, %USERPROFILE%\scoop, %DOWNLOADS%
   projets actifs (activité depuis moins de 180 jours)
   artefact : node_modules si package.json et package-lock.json | npm-shrinkwrap.json | yarn.lock | pnpm-lock.yaml | bun.lockb | bun.lock
   artefact : .next si package.json

@@ -31,6 +31,7 @@ all denylist::tests::chaque_entree_de_la_denylist
 all denylist::tests::faits_du_fichier
 all denylist::tests::parents_des_zones_protegees
 all denylist::tests::prefixe_verbatim_et_point_point
+all denylist::tests::secrets_et_configurations_jamais_supprimes
 all denylist::tests::variantes_de_casse
 all denylist::tests::zones_utilisateur_autorisees
 all path::tests::chaine_des_parents

@@ -486,7 +486,8 @@ pub fn load(source: &str) -> Result<RuleSet, LoadError> {
                 }
                 let mut exclude = Vec::new();
                 for t in &p.exclude {
-                    match parse_target(t, |v| v.allowed_for_rules() && v != Var::SystemDrive) {
+                    // Une exclusion ne supprime rien : tous les dossiers connus sont permis.
+                    match parse_target(t, |v| v != Var::SystemDrive) {
                         Ok(t) => exclude.push(t),
                         Err(e) => errors.push(format!("{id} : {e}")),
                     }

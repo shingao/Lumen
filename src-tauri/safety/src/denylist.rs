@@ -42,6 +42,8 @@ pub enum DenyReason {
     GitProject,
     #[error("contenu interne d'un dépôt git (.git)")]
     GitInternals,
+    #[error("identifiants, clés, cookies ou configuration d'un outil : jamais supprimés")]
+    Secret,
 }
 
 /// Emplacements réels de la machine (dossiers connus de Windows), fournis par `safety::win`.
@@ -79,6 +81,40 @@ pub struct DenyList {
 const BOOT_NAMES: &[&str] = &["BOOT", "EFI", "BOOTMGR", "BOOTNXT"];
 const SWAP_FILES: &[&str] = &["PAGEFILE.SYS", "SWAPFILE.SYS", "HIBERFIL.SYS"];
 const HIVE_PREFIXES: &[&str] = &["NTUSER.DAT", "USRCLASS.DAT"];
+
+/// Secrets et configurations, où qu'ils soient (y compris dans un dossier de cache) : jetons,
+/// mots de passe, clés privées, cookies et stockage des navigateurs et des applis Electron.
+const SECRET_NAMES: &[&str] = &[
+    ".NPMRC", ".YARNRC", ".YARNRC.YML", ".GIT-CREDENTIALS", ".NETRC", "_NETRC", ".PGPASS",
+    "COOKIES", "COOKIES-JOURNAL", "LOGIN DATA", "LOGIN DATA-JOURNAL", "LOGIN DATA FOR ACCOUNT", "WEB DATA",
+    "WEB DATA-JOURNAL", "LOCAL STORAGE", "SESSION STORAGE", "INDEXEDDB", "SESSIONS",
+    "COOKIES.SQLITE", "LOGINS.JSON", "KEY3.DB", "KEY4.DB", "CERT9.DB",
+];
+const SECRET_PREFIXES: &[&str] = &["ID_RSA", "ID_ED25519", "ID_ECDSA", "ID_DSA"];
+const SECRET_SUFFIXES: &[&str] = &[".JKS", ".KEYSTORE", ".PFX", ".P12", ".KDBX", ".PPK"];
+
+/// Configurations d'outils dans le profil (chemins relatifs) : `true` = dossier entier.
+const PROFILE_SECRETS: &[(&[&str], bool)] = &[
+    (&[".ssh"], true),
+    (&[".aws"], true),
+    (&[".azure"], true),
+    (&[".kube"], true),
+    (&[".gnupg"], true),
+    (&[".gradle", "init.d"], true),
+    (&[".gradle", "gradle.properties"], false),
+    (&[".m2", "settings.xml"], false),
+    (&[".m2", "settings-security.xml"], false),
+    (&[".docker", "config.json"], false),
+    (&[".android", "adbkey"], false),
+    (&[".android", "adbkey.pub"], false),
+    (&[".android", "debug.keystore"], false),
+];
+/// Fichiers d'un dossier d'outil du profil dont le nom commence par… (`~\.cargo\credentials*`).
+const PROFILE_SECRET_PREFIXES: &[(&str, &str)] = &[(".cargo", "CREDENTIALS"), (".cargo", "CONFIG"), ("", ".YARNRC")];
+
+fn is_secret_name(name: &str) -> bool {
+    SECRET_NAMES.contains(&name) || SECRET_PREFIXES.iter().any(|p| name.starts_with(p)) || SECRET_SUFFIXES.iter().any(|s| name.ends_with(s))
+}
 
 fn literal(raw: &str) -> Option<WinPath> {
     WinPath::parse(raw).ok()
@@ -124,6 +160,16 @@ impl DenyList {
             }
         }
         add(Some(layout.profile.clone()), Exact, ProfileRoot);
+        for (rel, whole) in PROFILE_SECRETS {
+            let p = rel.iter().try_fold(layout.profile.clone(), |acc, c| acc.join(c).ok());
+            add(p, if *whole { Subtree } else { Exact }, Secret);
+        }
+        for (dir, _) in PROFILE_SECRET_PREFIXES {
+            // Le dossier lui-même (supprimé, il emporterait ses secrets) ; son contenu est vérifié par nom.
+            if !dir.is_empty() {
+                add(layout.profile.join(dir).ok(), Exact, Secret);
+            }
+        }
 
         DenyList { zones, users, profile: layout.profile.clone() }
     }
@@ -150,6 +196,7 @@ impl DenyList {
                 "$RECYCLE.BIN" | "RECYCLER" => return Some(RecycleBin),
                 "$EXTEND" => return Some(NtfsMetadata),
                 ".GIT" => return Some(GitInternals),
+                n if is_secret_name(n) => return Some(Secret),
                 "CONFIG" if i > 0 && names[i - 1] == "SYSTEM32" => return Some(RegistryHive),
                 _ => {}
             }
@@ -160,6 +207,16 @@ impl DenyList {
             }
             if HIVE_PREFIXES.iter().any(|h| last.starts_with(h)) {
                 return Some(RegistryHive);
+            }
+        }
+
+        // `~\.cargo\credentials*`, `~\.yarnrc*`… : par préfixe, dans le dossier de l'outil.
+        if let (Some(last), Some(parent)) = (names.last(), path.parent()) {
+            for (dir, prefix) in PROFILE_SECRET_PREFIXES {
+                let base = if dir.is_empty() { Some(self.profile.clone()) } else { self.profile.join(dir).ok() };
+                if base.as_ref() == Some(&parent) && last.starts_with(prefix) {
+                    return Some(Secret);
+                }
             }
         }
 
@@ -273,6 +330,67 @@ mod tests {
         ];
         for (raw, reason) in cases {
             assert_eq!(deny(raw), Some(*reason), "{raw}");
+        }
+    }
+
+    #[test]
+    fn secrets_et_configurations_jamais_supprimes() {
+        let p = "C:\\Users\\Arthur";
+        for rel in [
+            ".gradle\\gradle.properties",
+            ".gradle\\init.d",
+            ".gradle\\init.d\\entreprise.gradle",
+            ".m2\\settings.xml",
+            ".m2\\settings-security.xml",
+            ".npmrc",
+            ".yarnrc",
+            ".yarnrc.yml",
+            ".cargo\\credentials",
+            ".cargo\\credentials.toml",
+            ".cargo\\config",
+            ".cargo\\config.toml",
+            ".docker\\config.json",
+            ".kube",
+            ".kube\\config",
+            ".ssh",
+            ".ssh\\id_ed25519",
+            ".aws\\credentials",
+            ".azure\\msal_token_cache.json",
+            ".gnupg\\private-keys-v1.d\\x.key",
+            ".android\\adbkey",
+            ".android\\debug.keystore",
+            // Parents qui emporteraient ces fichiers : refusés aussi.
+            ".gradle",
+            ".m2",
+            ".cargo",
+            ".docker",
+            ".android",
+        ] {
+            assert_eq!(deny(&format!("{p}\\{rel}")), Some(Secret), "{rel}");
+        }
+        // Navigateurs et applis Electron : stockage, cookies, mots de passe, sessions — même dans un cache.
+        let chrome = format!("{p}\\AppData\\Local\\Google\\Chrome\\User Data\\Default");
+        for rel in ["Cookies", "Network\\Cookies", "Login Data", "Local Storage\\leveldb\\000003.log", "IndexedDB", "Sessions\\Session_1", "Web Data", "Session Storage"] {
+            assert_eq!(deny(&format!("{chrome}\\{rel}")), Some(Secret), "{rel}");
+        }
+        assert_eq!(deny(&format!("{p}\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\x.default\\logins.json")), Some(Secret));
+        assert_eq!(deny(&format!("{p}\\AppData\\Roaming\\discord\\Local Storage")), Some(Secret));
+        assert_eq!(deny(&format!("{p}\\AppData\\Local\\Temp\\paquet\\.npmrc")), Some(Secret));
+        assert_eq!(deny(&format!("{p}\\AppData\\Local\\npm-cache\\.npmrc")), Some(Secret));
+        assert_eq!(deny(&format!("{p}\\Projets\\app\\release.jks")), Some(Secret));
+        assert_eq!(deny(&format!("{p}\\Documents\\coffre.kdbx")), Some(Secret));
+        // Les sous-dossiers de cache, eux, restent autorisés.
+        for rel in [
+            ".gradle\\caches\\modules-2\\x.jar",
+            ".gradle\\wrapper\\dists\\gradle-8",
+            ".m2\\repository\\org\\x.jar",
+            ".cargo\\registry\\cache\\x.crate",
+            ".android\\avd\\Pixel.avd",
+            "AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache\\Cache_Data\\f_000001",
+            "AppData\\Local\\Google\\Chrome\\User Data\\Default\\Code Cache\\js\\x",
+            "AppData\\Local\\npm-cache\\_cacache\\content-v2",
+        ] {
+            assert_eq!(deny(&format!("{p}\\{rel}")), None, "{rel}");
         }
     }
 

@@ -118,7 +118,7 @@ explanation = { fr = "Ces dossiers sont régénérés par npm, Next.js, Cargo, G
 regenerated-by = { fr = "Le prochain npm install (fichier de verrouillage présent), next build, cargo build, gradle build ou dotnet build.", en = "The next npm install (lockfile present), next build, cargo build, gradle build or dotnet build." }
 [rule.project]
 roots = ['%USERPROFILE%']
-exclude = ['%USERPROFILE%\AppData', '%LOCALAPPDATA%', '%APPDATA%', '%USERPROFILE%\.*', '%USERPROFILE%\scoop']
+exclude = ['%USERPROFILE%\AppData', '%LOCALAPPDATA%', '%APPDATA%', '%USERPROFILE%\.*', '%USERPROFILE%\scoop', '%DOWNLOADS%']
 activity = "active"
 inactive-days = 180
 artifacts = [
@@ -210,7 +210,7 @@ name = { fr = "Artefacts de projets inactifs (+ de 6 mois)", en = "Artifacts of 
 explanation = { fr = "Dépendances et builds de projets sans activité depuis plus de 6 mois : un npm install ou un build les recrée si tu y reviens, à condition que les versions soient encore disponibles.", en = "Dependencies and builds of projects idle for over 6 months: npm install or a build recreates them if you come back, as long as the versions are still available." }
 [rule.project]
 roots = ['%USERPROFILE%']
-exclude = ['%USERPROFILE%\AppData', '%LOCALAPPDATA%', '%APPDATA%', '%USERPROFILE%\.*', '%USERPROFILE%\scoop']
+exclude = ['%USERPROFILE%\AppData', '%LOCALAPPDATA%', '%APPDATA%', '%USERPROFILE%\.*', '%USERPROFILE%\scoop', '%DOWNLOADS%']
 activity = "inactive"
 inactive-days = 180
 artifacts = [
