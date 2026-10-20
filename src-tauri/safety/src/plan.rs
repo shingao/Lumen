@@ -1,19 +1,16 @@
 //! Plan d'action : la liste exacte de ce qui sera fait, validée élément par élément, avec une
-//! empreinte BLAKE3. Une exécution n'est acceptée qu'avec la confirmation de cette empreinte.
-//!
-//! Jalon 2 : seule la simulation est disponible. `execute` refuse toute exécution réelle
-//! (`REAL_EXECUTION_ENABLED = false`) ; elle sera branchée au jalon 5.
+//! empreinte BLAKE3 (éléments, contenu attendu de chaque dossier, commandes). Une exécution
+//! n'est acceptée qu'avec la confirmation de cette empreinte, et tout est recontrôlé au moment
+//! de l'action (voir [`crate::exec`]).
+
+use std::sync::atomic::AtomicBool;
 
 use crate::bin::recycle_allowed;
-use crate::check::{Checker, Refusal, SkipReason, Target, Validated, Verdict};
+use crate::check::{Checker, ExpectedNode, Refusal, SkipReason, Target, Validated, Verdict};
+use crate::commands::OfficialCommand;
+use crate::exec::{Effects, Event, Report};
 use crate::path::WinPath;
 use crate::probe::Probe;
-
-/// Interrupteur unique de l'exécution réelle. Reste à `false` tant que le jalon 5 n'est pas validé.
-pub const REAL_EXECUTION_ENABLED: bool = false;
-
-// Garde-fou de compilation : passer l'interrupteur à `true` exige de retirer cette ligne (jalon 5).
-const _: () = assert!(!REAL_EXECUTION_ENABLED, "exécution réelle interdite avant le jalon 5");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteMode {
@@ -23,10 +20,29 @@ pub enum DeleteMode {
     Permanent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandRole {
+    /// Lancée avant les suppressions (ex. `gradle --stop` avant de toucher aux caches Gradle).
+    Prerequisite,
+    /// La commande est l'action elle-même (ex. `npm cache clean --force`).
+    Action,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedCommand {
+    pub command: OfficialCommand,
+    pub role: CommandRole,
+    /// Dossier dont la commande libère l'espace : son volume est mesuré avant et après.
+    pub measured: Option<WinPath>,
+    /// Taille estimée par le scan.
+    pub bytes: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct Plan {
     mode: DeleteMode,
     items: Vec<Validated>,
+    commands: Vec<PlannedCommand>,
     skipped: Vec<(WinPath, SkipReason)>,
     refused: Vec<(String, Refusal)>,
     fingerprint: [u8; 32],
@@ -60,8 +76,22 @@ impl Plan {
                 Verdict::Refused { path, refusal } => refused.push((path, refusal)),
             }
         }
-        let fingerprint = fingerprint(mode, &items);
-        Plan { mode, items, skipped, refused, fingerprint }
+        let mut plan = Plan { mode, items, commands: Vec::new(), skipped, refused, fingerprint: [0; 32] };
+        plan.fingerprint = fingerprint(&plan);
+        plan
+    }
+
+    /// Ajoute les commandes officielles (prérequis et actions) ; l'empreinte les couvre.
+    pub fn with_commands(mut self, commands: Vec<PlannedCommand>) -> Plan {
+        for c in commands {
+            if !self.commands.iter().any(|k| k.command == c.command) {
+                self.commands.push(c);
+            }
+        }
+        // Prérequis d'abord, dans l'ordre donné.
+        self.commands.sort_by_key(|c| c.role != CommandRole::Prerequisite);
+        self.fingerprint = fingerprint(&self);
+        self
     }
 
     pub fn mode(&self) -> DeleteMode {
@@ -72,6 +102,10 @@ impl Plan {
         &self.items
     }
 
+    pub fn commands(&self) -> &[PlannedCommand] {
+        &self.commands
+    }
+
     pub fn skipped(&self) -> &[(WinPath, SkipReason)] {
         &self.skipped
     }
@@ -80,8 +114,10 @@ impl Plan {
         &self.refused
     }
 
+    /// Total affiché : éléments du plan et estimation des commandes qui sont des actions.
     pub fn total_bytes(&self) -> u64 {
-        self.items.iter().map(|i| i.bytes).sum()
+        self.items.iter().map(|i| i.bytes).sum::<u64>()
+            + self.commands.iter().filter(|c| c.role == CommandRole::Action).map(|c| c.bytes).sum::<u64>()
     }
 
     pub fn fingerprint(&self) -> [u8; 32] {
@@ -89,8 +125,16 @@ impl Plan {
     }
 
     pub fn fingerprint_hex(&self) -> String {
-        self.fingerprint.iter().map(|b| format!("{b:02x}")).collect()
+        hex(&self.fingerprint)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty() && self.commands.is_empty()
+    }
+}
+
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn recycle_ready<P: Probe>(probe: &P, v: &Validated) -> Result<(), Refusal> {
@@ -101,22 +145,60 @@ fn recycle_ready<P: Probe>(probe: &P, v: &Validated) -> Result<(), Refusal> {
     Ok(())
 }
 
-fn fingerprint(mode: DeleteMode, items: &[Validated]) -> [u8; 32] {
+fn hash_str(h: &mut blake3::Hasher, s: &str) {
+    h.update(&(s.len() as u64).to_le_bytes());
+    h.update(s.as_bytes());
+}
+
+fn hash_nodes(h: &mut blake3::Hasher, nodes: &[ExpectedNode]) {
+    h.update(&(nodes.len() as u64).to_le_bytes());
+    for n in nodes {
+        hash_str(h, &n.name);
+        h.update(&n.expected.file_id.volume_serial.to_le_bytes());
+        h.update(&n.expected.file_id.id.to_le_bytes());
+        h.update(&[u8::from(n.expected.directory)]);
+        h.update(&n.expected.size.to_le_bytes());
+        h.update(&n.expected.modified.to_le_bytes());
+        h.update(&n.bytes.to_le_bytes());
+        hash_nodes(h, &n.children);
+    }
+}
+
+fn fingerprint(plan: &Plan) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
-    h.update(b"lumen-plan-v1");
-    h.update(&[match mode {
+    h.update(b"lumen-plan-v2");
+    h.update(&[match plan.mode {
         DeleteMode::Trash => 0,
         DeleteMode::Permanent => 1,
     }]);
-    for i in items {
-        let path = i.path.verbatim();
-        h.update(&(path.len() as u64).to_le_bytes());
-        h.update(path.as_bytes());
+    h.update(&(plan.items.len() as u64).to_le_bytes());
+    for i in &plan.items {
+        hash_str(&mut h, &i.path.verbatim());
+        hash_str(&mut h, &i.requested.verbatim());
         h.update(&i.facts.file_id.volume_serial.to_le_bytes());
         h.update(&i.facts.file_id.id.to_le_bytes());
         h.update(&i.facts.size.to_le_bytes());
         h.update(&i.facts.modified.to_le_bytes());
         h.update(&i.bytes.to_le_bytes());
+        match &i.contents {
+            Some(nodes) => {
+                h.update(&[1]);
+                hash_nodes(&mut h, nodes);
+            }
+            None => {
+                h.update(&[0]);
+            }
+        }
+    }
+    h.update(&(plan.commands.len() as u64).to_le_bytes());
+    for c in &plan.commands {
+        hash_str(&mut h, c.command.program().binary());
+        for a in c.command.args() {
+            hash_str(&mut h, &a);
+        }
+        h.update(&[u8::from(c.role == CommandRole::Prerequisite)]);
+        hash_str(&mut h, &c.measured.as_ref().map(WinPath::verbatim).unwrap_or_default());
+        h.update(&c.bytes.to_le_bytes());
     }
     *h.finalize().as_bytes()
 }
@@ -137,7 +219,9 @@ pub fn simulate(plan: &Plan) -> DryRun {
         DeleteMode::Trash => "irait à la Corbeille",
         DeleteMode::Permanent => "serait supprimé définitivement",
     };
-    let mut lines: Vec<String> = plan.items.iter().map(|i| format!("{} — {verb}", i.path)).collect();
+    let mut lines: Vec<String> =
+        plan.commands.iter().map(|c| format!("{} {} — serait lancé", c.command.program().binary(), c.command.args().join(" "))).collect();
+    lines.extend(plan.items.iter().map(|i| format!("{} — {verb}", i.path)));
     lines.extend(plan.skipped.iter().map(|(p, _)| format!("{p} — ignoré : ouvert par un autre programme")));
     lines.extend(plan.refused.iter().map(|(p, r)| format!("{p} — refusé : {r}")));
     DryRun {
@@ -165,31 +249,40 @@ pub enum ExecError {
     PermanentNotAcknowledged,
     #[error("rien à faire")]
     EmptyPlan,
-    #[error("l'exécution réelle n'est pas encore activée : seule la simulation est disponible")]
-    RealExecutionDisabled,
 }
 
-/// Point d'entrée unique de l'exécution réelle. Au jalon 2, il vérifie la confirmation puis refuse.
-pub fn execute(plan: &Plan, confirmation: &Confirmation) -> Result<(), ExecError> {
+/// Vérifie qu'une confirmation porte sur ce plan précis (empreinte, seconde confirmation).
+pub fn verify(plan: &Plan, confirmation: &Confirmation) -> Result<(), ExecError> {
     if confirmation.fingerprint != plan.fingerprint {
         return Err(ExecError::FingerprintMismatch);
     }
     if plan.mode == DeleteMode::Permanent && !confirmation.permanent_acknowledged {
         return Err(ExecError::PermanentNotAcknowledged);
     }
-    if plan.items.is_empty() {
+    if plan.is_empty() {
         return Err(ExecError::EmptyPlan);
     }
-    // REAL_EXECUTION_ENABLED est une constante vérifiée à la compilation : ni le front ni une
-    // configuration ne peuvent activer l'exécution réelle. Le jalon 5 branchera safety::win ici.
-    Err(ExecError::RealExecutionDisabled)
+    Ok(())
+}
+
+/// Point d'entrée unique de l'exécution réelle : confirmation vérifiée, puis recontrôle complet
+/// de chaque élément au moment de l'action ; tout ce qui a changé est sauté et signalé.
+pub fn execute<P: Probe, E: Effects>(
+    plan: &Plan,
+    confirmation: &Confirmation,
+    checker: &Checker<'_, P>,
+    effects: &E,
+    cancel: &AtomicBool,
+    on_event: impl FnMut(Event),
+) -> Result<Report, ExecError> {
+    verify(plan, confirmation)?;
+    Ok(crate::exec::run(plan, checker, effects, cancel, on_event))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::allow::{Allowlist, Authority, RuleGrant, Scope};
-    use crate::check::Expected;
     use crate::denylist::{test_layout, DenyList};
     use crate::probe::memory::MemoryProbe;
 
@@ -211,8 +304,7 @@ mod tests {
     }
 
     fn target(probe: &MemoryProbe, raw: &str) -> Target {
-        let facts = probe.facts(&WinPath::parse(raw).unwrap()).unwrap();
-        Target { path: raw.into(), authority: Authority::Rule("cache".into()), expected: Expected::from_facts(&facts), bytes: facts.size }
+        probe.target(raw, Authority::Rule("cache".into()))
     }
 
     fn plan_of(raws: &[&str], mode: DeleteMode) -> Plan {
@@ -254,12 +346,43 @@ mod tests {
     }
 
     #[test]
-    fn execution_reelle_desactivee_au_jalon_2() {
+    fn confirmation_de_l_empreinte_exigee() {
         let plan = plan_of(&["C:\\Users\\Arthur\\cache\\a.bin"], DeleteMode::Trash);
-        let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false };
-        assert_eq!(execute(&plan, &ok), Err(ExecError::RealExecutionDisabled));
+        assert_eq!(verify(&plan, &Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false }), Ok(()));
         let wrong = Confirmation { fingerprint: [0; 32], permanent_acknowledged: true };
-        assert_eq!(execute(&plan, &wrong), Err(ExecError::FingerprintMismatch));
+        assert_eq!(verify(&plan, &wrong), Err(ExecError::FingerprintMismatch));
+        let empty = plan_of(&[], DeleteMode::Trash);
+        assert_eq!(verify(&empty, &Confirmation { fingerprint: empty.fingerprint(), permanent_acknowledged: false }), Err(ExecError::EmptyPlan));
+    }
+
+    #[test]
+    fn dossier_sans_contenu_connu_refuse() {
+        let (probe, deny, allow) = setup();
+        let checker = Checker { probe: &probe, deny: &deny, allow: &allow, now: i64::MAX };
+        let mut t = target(&probe, "C:\\Users\\Arthur\\cache\\sous");
+        t.contents = None;
+        let plan = Plan::build(&checker, &[t], DeleteMode::Trash);
+        assert_eq!(plan.refused()[0].1, Refusal::ContentsUnknown);
+    }
+
+    #[test]
+    fn empreinte_couvre_contenu_et_commandes() {
+        use crate::commands::OfficialCommand;
+        let (probe, deny, allow) = setup();
+        let checker = Checker { probe: &probe, deny: &deny, allow: &allow, now: i64::MAX };
+        let t = target(&probe, "C:\\Users\\Arthur\\cache\\sous");
+        let a = Plan::build(&checker, std::slice::from_ref(&t), DeleteMode::Trash);
+        let mut changed = t.clone();
+        changed.contents.as_mut().unwrap()[0].expected.size += 1;
+        let b = Plan::build(&checker, &[changed], DeleteMode::Trash);
+        assert_ne!(a.fingerprint(), b.fingerprint());
+        let cmd = PlannedCommand { command: OfficialCommand::GradleStop, role: CommandRole::Prerequisite, measured: None, bytes: 0 };
+        let action = PlannedCommand { command: OfficialCommand::NpmCacheClean, role: CommandRole::Action, measured: None, bytes: 7 };
+        let c = Plan::build(&checker, &[t], DeleteMode::Trash).with_commands(vec![action.clone(), cmd.clone(), cmd]);
+        assert_ne!(a.fingerprint(), c.fingerprint());
+        // Prérequis en tête, sans doublon ; l'action compte dans le total.
+        assert_eq!(c.commands().iter().map(|k| k.role).collect::<Vec<_>>(), [CommandRole::Prerequisite, CommandRole::Action]);
+        assert_eq!(c.total_bytes(), a.total_bytes() + 7);
     }
 
     #[test]
@@ -297,6 +420,6 @@ mod tests {
     fn definitif_exige_une_seconde_confirmation() {
         let plan = plan_of(&["C:\\Users\\Arthur\\cache\\a.bin"], DeleteMode::Permanent);
         let once = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false };
-        assert_eq!(execute(&plan, &once), Err(ExecError::PermanentNotAcknowledged));
+        assert_eq!(verify(&plan, &once), Err(ExecError::PermanentNotAcknowledged));
     }
 }

@@ -152,7 +152,7 @@ mod tests {
                 let raw = format!("C:\\Users\\Arthur\\cache\\{n}");
                 let path = probe.file(&raw, 14_388_265_779);
                 let facts = probe.facts(&path).unwrap();
-                Target { path: raw, authority: Authority::Rule("cache".into()), expected: Expected::from_facts(&facts), bytes: facts.size }
+                Target { path: raw, authority: Authority::Rule("cache".into()), expected: Expected::from_facts(&facts), bytes: facts.size, contents: None }
             })
             .collect();
         let checker = Checker { probe: &probe, deny: &deny, allow: &allow, now: i64::MAX };
