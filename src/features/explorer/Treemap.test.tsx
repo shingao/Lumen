@@ -9,8 +9,9 @@ describe("Treemap", () => {
   it("dessine les tuiles du dossier, hachure les sans risque et estompe hors sélection", async () => {
     useStore.setState({ locale: "fr", colorMode: "category" });
     backend.setLocale("fr");
-    const { root } = await backend.tree("C:", null);
-    const recos = await backend.recommendations("C:");
+    const scanId = await backend.startScan({ kind: "userProfile" }, "auto");
+    const { root } = await backend.tree(scanId, null);
+    const recos = await backend.recommendations(scanId);
     const npm = recos.find((r) => r.id === "npm");
     render(<Treemap root={root} highlight={npm?.highlight ?? null} onCopyPath={() => {}} onUnavailable={() => {}} />);
 

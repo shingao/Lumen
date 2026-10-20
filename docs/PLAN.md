@@ -382,6 +382,10 @@ Décision : l'original est supprimé **définitivement** (la Corbeille du même 
 
 ## 7. Scanner
 
+> Mise à jour au jalon 3 : le parcours est un parcours parallèle maison (rayon) qui lit chaque
+> dossier par `GetFileInformationByHandleEx(FileIdExtdDirectoryInfo)` — file ID et taille allouée
+> sans ouvrir aucun fichier, ce que jwalk (`std::fs::read_dir`) ne permet pas. Crate `src-tauri/scan/`.
+
 - **Walk** (défaut, non élevé) : `jwalk` parallèle (rayon), `FindFirstFileExW` avec `FIND_FIRST_EX_LARGE_FETCH` pour les métadonnées, taille sur disque via `GetCompressedFileSizeW` seulement pour les fichiers compressés/clairsemés. Ne suit jamais les reparse points. Annulable (drapeau atomique vérifié à chaque répertoire).
 - **MFT** (élevé, NTFS uniquement) : lecture brute de `$MFT` via `\\.\C:` dans l'assistant élevé, analyse des enregistrements FILE (`$STANDARD_INFORMATION`, `$FILE_NAME`, `$DATA` résident/non résident, `$ATTRIBUTE_LIST`), reconstruction de l'arbre par FRN parent ; arène transmise au processus normal. Repli automatique sur Walk en cas d'erreur.
 - **Progression** : événements à 10 Hz max, agrégats partiels du niveau 1 pour que la treemap se remplisse pendant le scan.

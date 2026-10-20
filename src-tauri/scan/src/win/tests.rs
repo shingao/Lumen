@@ -1,0 +1,175 @@
+//! Tests Windows du scanner, sur une vraie arborescence de fixtures : liens physiques, fichiers
+//! clairsemés et compressés, jonction, lien symbolique, petits fichiers résidents, flux nommé,
+//! chemin long Unicode, fichier hors ligne, fichier verrouillé. Le parcours et la MFT doivent
+//! donner exactement les mêmes totaux.
+
+use std::collections::BTreeMap;
+use std::ffi::c_void;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
+use std::os::windows::fs::OpenOptionsExt;
+use std::os::windows::io::AsRawHandle;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+
+use windows::core::HSTRING;
+use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_OFFLINE};
+use windows::Win32::System::Ioctl::{FSCTL_SET_COMPRESSION, FSCTL_SET_SPARSE};
+use windows::Win32::System::IO::DeviceIoControl;
+
+use super::{is_elevated, long_path, mft::scan_mft, WinSource};
+use crate::model::{Kind, Scan};
+use crate::walk::{walk, DirError, Progress, Source};
+
+fn s(p: &Path) -> String {
+    p.to_str().unwrap().to_owned()
+}
+
+fn ioctl(file: &File, code: u32, input: &[u8]) {
+    let mut returned = 0u32;
+    // SAFETY : handle valide pendant l'appel, tampon d'entrée possédé.
+    unsafe {
+        DeviceIoControl(
+            HANDLE(file.as_raw_handle()),
+            code,
+            (!input.is_empty()).then_some(input.as_ptr() as *const c_void),
+            input.len() as u32,
+            None,
+            0,
+            Some(&mut returned),
+            None,
+        )
+    }
+    .unwrap();
+}
+
+/// Arborescence de test. Fichiers comptés (une fois) : 0 o, 1 o, 700 o (résident), 5 000 o,
+/// 70 000 o, 1 Mio (+ 2 liens physiques), clairsemé, compressé, Unicode long, verrouillé = 10.
+fn fixtures() -> tempfile::TempDir {
+    let dir = tempfile::Builder::new().prefix("lumen-scan-").tempdir().unwrap();
+    let r = dir.path();
+    fs::create_dir_all(r.join("Projets\\app\\node_modules\\pkg")).unwrap();
+    fs::create_dir_all(r.join("Vidéos")).unwrap();
+    fs::create_dir_all(r.join("vide")).unwrap();
+    for (name, size) in [("zero.txt", 0usize), ("un.txt", 1), ("resident.txt", 700), ("Projets\\app\\main.rs", 5000), ("Projets\\app\\node_modules\\pkg\\index.js", 70_000)] {
+        File::create(r.join(name)).unwrap().write_all(&vec![7u8; size]).unwrap();
+    }
+    File::create(r.join("Vidéos\\film é.mkv")).unwrap().write_all(&vec![3u8; 1024 * 1024]).unwrap();
+    fs::hard_link(r.join("Vidéos\\film é.mkv"), r.join("Projets\\film-lien.mkv")).unwrap();
+    fs::hard_link(r.join("Vidéos\\film é.mkv"), r.join("Vidéos\\film-copie.mkv")).unwrap();
+
+    // Clairsemé : 64 Mio logiques, 4 Kio écrits à 1 Mio.
+    let mut sparse = OpenOptions::new().create(true).truncate(true).read(true).write(true).open(r.join("clairseme.bin")).unwrap();
+    ioctl(&sparse, FSCTL_SET_SPARSE, &[]);
+    sparse.set_len(64 * 1024 * 1024).unwrap();
+    sparse.seek(SeekFrom::Start(1024 * 1024)).unwrap();
+    sparse.write_all(&[9u8; 4096]).unwrap();
+    drop(sparse);
+
+    // Compressé NTFS : 2 Mio de zéros.
+    let mut compressed = OpenOptions::new().create(true).truncate(true).read(true).write(true).open(r.join("compresse.bin")).unwrap();
+    ioctl(&compressed, FSCTL_SET_COMPRESSION, &1u16.to_le_bytes());
+    compressed.write_all(&vec![0u8; 2 * 1024 * 1024]).unwrap();
+    drop(compressed);
+
+    // Flux nommé : ignoré par les deux méthodes, comme par l'Explorateur.
+    File::create(r.join("un.txt:secret")).unwrap().write_all(&[1u8; 50_000]).unwrap();
+
+    // Chemin long Unicode (> 260 caractères).
+    let mut long = PathBuf::from(format!("\\\\?\\{}", s(r)));
+    for _ in 0..9 {
+        long.push("dossier très long é 漢字 🙂 avec espaces");
+    }
+    fs::create_dir_all(&long).unwrap();
+    File::create(long.join("profond.txt")).unwrap().write_all(&[5u8; 9000]).unwrap();
+
+    File::create(r.join("verrouille.log")).unwrap().write_all(&[1u8; 8192]).unwrap();
+
+    // Hors ligne (comme un fichier cloud non téléchargé) : compté à part, jamais ouvert.
+    File::create(r.join("cloud.docx")).unwrap().write_all(&[1u8; 20_000]).unwrap();
+    // SAFETY : chaîne possédée.
+    unsafe { SetFileAttributesW(&HSTRING::from(s(&r.join("cloud.docx"))), FILE_ATTRIBUTE_OFFLINE) }.unwrap();
+
+    // Liens : jamais traversés.
+    junction::create(std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()), r.join("jonction-windows")).unwrap();
+    std::os::windows::fs::symlink_file(r.join("un.txt"), r.join("lien.txt")).unwrap();
+    dir
+}
+
+fn scan_walk(root: &Path) -> Scan {
+    let root = long_path(&s(root));
+    walk(&WinSource::new(&root), &root, &AtomicBool::new(false), &|_: &Progress| {}).unwrap()
+}
+
+fn sizes(scan: &Scan) -> BTreeMap<String, (Kind, u64, u64, u32)> {
+    (0..scan.len() as u32)
+        .filter_map(|i| {
+            let n = scan.node(i)?;
+            let dup = n.flags & crate::model::F_HARDLINK_DUP != 0;
+            (n.kind != Kind::Dir && !dup).then(|| (scan.path(i).to_lowercase(), (n.kind, n.logical, n.allocated, n.files)))
+        })
+        .collect()
+}
+
+#[test]
+fn parcours_sur_les_fixtures() {
+    let d = fixtures();
+    // Fichier ouvert en exclusivité : listé quand même (rien n'est ouvert), sans erreur.
+    let _held = OpenOptions::new().read(true).share_mode(0).open(d.path().join("verrouille.log")).unwrap();
+    let scan = scan_walk(d.path());
+    let st = &scan.stats;
+    assert_eq!(st.files, 10, "{:#?}", sizes(&scan));
+    assert_eq!(st.hardlink_dups, 2);
+    assert_eq!(st.links, 2);
+    assert_eq!(st.cloud_files, 1);
+    assert_eq!(st.cloud_bytes, 20_000);
+    assert_eq!(st.errors(), 0, "{:?}", st.error_samples);
+
+    let node = |rel: &str| scan.node(scan.find(rel).unwrap()).unwrap().clone();
+    assert_eq!(node("verrouille.log").logical, 8192);
+    assert_eq!(node("resident.txt").allocated, 0, "petit fichier résident");
+    let sparse = node("clairseme.bin");
+    assert_eq!(sparse.logical, 64 * 1024 * 1024);
+    assert!(sparse.allocated < 1024 * 1024, "clairsemé : {}", sparse.allocated);
+    let compressed = node("compresse.bin");
+    assert!(compressed.allocated < compressed.logical, "compressé : {}", compressed.allocated);
+    assert_eq!(node("un.txt").logical, 1, "flux nommé ignoré");
+    let j = scan.find("jonction-windows").unwrap();
+    assert_eq!(scan.node(j).unwrap().kind, Kind::Link);
+    assert_eq!(scan.children(j).len(), 0, "jonction non traversée");
+    assert_eq!(node("cloud.docx").kind, Kind::CloudFile);
+    // File ID et date de modification enregistrés pour safety.
+    let film = scan.find("Vidéos\\film é.mkv").unwrap();
+    assert_ne!(scan.file_id(film), 0);
+    assert!(scan.node(film).unwrap().modified > 0);
+    assert_ne!(scan.volume_serial, 0);
+}
+
+#[test]
+fn mft_identique_au_parcours() {
+    if !is_elevated() {
+        assert!(std::env::var("CI").is_err(), "la CI doit lancer ce test en administrateur");
+        eprintln!("ignoré : test de la MFT à lancer en administrateur");
+        return;
+    }
+    let d = fixtures();
+    let walked = scan_walk(d.path());
+    let read = scan_mft(&long_path(&s(d.path())), &AtomicBool::new(false), &|_: &Progress| {}).unwrap();
+    let (a, b) = (&walked.stats, &read.stats);
+    assert_eq!(sizes(&walked), sizes(&read), "détail fichier par fichier");
+    assert_eq!((a.files, a.allocated, a.logical), (b.files, b.allocated, b.logical));
+    assert_eq!((a.hardlink_dups, a.links, a.cloud_files, a.cloud_bytes), (b.hardlink_dups, b.links, b.cloud_files, b.cloud_bytes));
+    // Mêmes identités : safety pourra comparer indifféremment.
+    let film = "Vidéos\\film é.mkv";
+    assert_eq!(walked.file_id(walked.find(film).unwrap()), read.file_id(read.find(film).unwrap()));
+    assert_eq!(walked.volume_serial, read.volume_serial);
+}
+
+#[test]
+fn dossier_interdit_compte_sans_bloquer() {
+    let root = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+    let src = WinSource::new(&format!("{root}\\"));
+    let mut out = Vec::new();
+    assert_eq!(src.read_dir(&format!("{root}\\System Volume Information"), &mut out), Err(DirError::AccessDenied));
+}

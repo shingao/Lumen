@@ -1,0 +1,105 @@
+.full,
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 72px;
+}
+
+.overlay {
+  pointer-events: none;
+}
+
+.live {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  opacity: var(--tile-dim);
+}
+
+.card {
+  position: relative;
+  width: min(360px, 100% - 32px);
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.title {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.phase {
+  font-size: var(--fs-11-5);
+  color: var(--text-label);
+}
+
+.counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+
+.track {
+  position: relative;
+  height: 3px;
+  border-radius: var(--r-bar);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  border-radius: var(--r-bar);
+  background: var(--text-label);
+  animation: sweep var(--dur-sweep) var(--ease) infinite;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(340%);
+  }
+}
+
+.idle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-pop);
+  background: var(--bg-app);
+  font-size: var(--fs-12-5);
+  color: var(--text-label);
+  text-align: center;
+  padding: 24px;
+}
+
+.stats {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-label);
+}

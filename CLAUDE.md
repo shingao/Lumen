@@ -25,7 +25,7 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 - CSS fait main : CSS modules (`*.module.css`) + variables de `tokens.css`. Stylelint interdit hex/rgb/hsl, `ms`/`s`, tailles et graisses en dur hors `src/styles/tokens*.css`.
 - Polices embarquées : Inter (variable) et JetBrains Mono via `@fontsource` (aucun CDN).
 - Treemap squarified maison : `src/core/treemap/squarify.ts` (2 niveaux, gap 3 px).
-- À venir : scan jwalk / MFT, SQLite (rusqlite) dans `%LOCALAPPDATA%\Lumen\`, BLAKE3.
+- Analyse : crate `src-tauri/scan/` — parcours parallèle maison (rayon) par handle de dossier (`FileIdExtdDirectoryInfo`, aucun fichier ouvert), MFT pour NTFS en administrateur (assistant élevé `--lumen-mft-scan`). À venir : SQLite (rusqlite) dans `%LOCALAPPDATA%\Lumen\`.
 
 ## Tokens (résumé — détail dans `src/styles/tokens.css`)
 
@@ -85,14 +85,22 @@ src/
   components/      Segmented, Button, Toggle, Menu, Toast, StatusDot, icônes, style des popovers
   features/        titlebar, kpi, explorer (treemap, légende), recommendations, detail, screens, settings, palette
   core/            logique pure testée : format, squarify, fuzzy, contrast
-  ipc/             backend.ts (contrat), client.ts (seul contact Tauri), mock/ (données de la maquette), types.ts
+  ipc/             backend.ts (contrat), client.ts + tauri.ts (seuls contacts Tauri), mock/ (données de la maquette, analyse simulée), types.ts
   i18n/            fr.ts, en.ts
   styles/          tokens.css, fonts.css, global.css (+ contrast.test.ts)
-src-tauri/         Rust (workspace) : lib.rs, error.rs ; safety/ (crate garde-fou) ; scan/, rules/… arrivent jalon par jalon
+src-tauri/         Rust (workspace) : lib.rs, error.rs, scanning.rs (commandes de l'analyse) ; safety/ (crate garde-fou) ; scan/ (crate d'analyse) ; rules/… arrivent jalon par jalon
 scripts/           captures.mjs, make-icon.mjs, check-safety-tests.mjs
 ```
 
-Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `components/`, `app/` ; seul `ipc/client.ts` importe `@tauri-apps/*`.
+Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `components/`, `app/` ; seuls `ipc/client.ts` et `ipc/tauri.ts` importent `@tauri-apps/*`.
+
+## Analyse (règles)
+
+- **Jamais le contenu d'un fichier** : métadonnées des listes de dossier seulement ; `GetCompressedFileSizeW` pour les seuls fichiers compressés / clairsemés / WOF / dédupliqués. Fichiers cloud (`RECALL_ON_DATA_ACCESS`, `OFFLINE`) jamais ouverts, comptés à part ; dossiers cloud `RECALL_ON_OPEN` jamais énumérés.
+- Taille **allouée** par défaut, logique en infobulle. Liens physiques comptés une fois (file ID). Points d'analyse jamais traversés. Erreurs comptées, jamais bloquantes.
+- Chaque entrée garde file ID, tailles, dates (FILETIME) pour l'anti-TOCTOU de `safety`.
+- Parcours et MFT doivent donner les mêmes totaux : même classement (`scan/src/classify.rs`), test Windows `mft_identique_au_parcours`.
+- Le front ne reçoit que des tranches agrégées (`Scan::slice`) ; jamais d'UAC au démarrage ; MFT seulement si déjà élevé ou après « Scan rapide (admin) ».
 
 ## Commandes
 
@@ -107,6 +115,7 @@ npm run build            # build du front
 npm run tauri build      # installeur NSIS (src-tauri/target/release/bundle/nsis/)
 npm run icon             # icônes depuis design/app-icon.svg
 node scripts/check-safety-tests.mjs   # tests de safety/ : présents, exécutés, aucun ignoré (tous sous Windows)
+cd src-tauri && cargo run --release -p scan --example bench -- generate <dossier> 200000   # puis walk <dossier>, mft <dossier>
 cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo audit
 cd src-tauri && cargo clippy -p safety --target x86_64-pc-windows-msvc --all-targets   # depuis Linux : vérifie safety::win (blake3 en feature « pure » le temps de la commande)
 ```

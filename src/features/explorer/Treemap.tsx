@@ -13,7 +13,8 @@ import styles from "./Treemap.module.css";
 
 const GAP = 3;
 const TOOLTIP_W = 268;
-const PHANTOM = -1;
+// Place du reste du dossier (jamais dessinée) ; les regroupements « autres » ont des id négatifs.
+const PHANTOM = Number.MIN_SAFE_INTEGER;
 
 interface Props {
   root: TreeNode;
@@ -38,6 +39,11 @@ function deltaText(node: TreeNode, t: Translator): string | null {
   const delta = formatDelta(-node.gain, t.locale);
   if (node.gainUpTo) return t("explorer.upTo", { delta });
   return node.gainStatus === "review" ? `${delta} ?` : delta;
+}
+
+/** Nom affiché : celui de l'élément, ou « 12 autres éléments » pour un regroupement. */
+function label(node: TreeNode, t: Translator): string {
+  return node.othersCount !== null ? t.plural("explorer.others", node.othersCount, { n: node.othersCount }) : node.name;
 }
 
 /** Opacité de la maquette : estompe tout sauf les tuiles concernées (et l'intérieur des parents estompés). */
@@ -147,7 +153,7 @@ export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
         <Menu
           x={menu.x}
           y={menu.y}
-          label={t("menu.label", { name: menu.node.name })}
+          label={t("menu.label", { name: label(menu.node, t) })}
           items={menuItems(menu.node)}
           onClose={() => setMenu(null)}
         />
@@ -188,7 +194,7 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
       style={{ ...style, "--tile-bg": fill.bg } as CSSProperties}
       tabIndex={0}
       role="button"
-      aria-label={t("explorer.tileLabel", { name: node.name, size })}
+      aria-label={t("explorer.tileLabel", { name: label(node, t), size })}
       onClick={() => onActivate(node)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -208,7 +214,7 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
     >
       {width >= 36 && height >= 22 && (
         <div className={styles.head}>
-          <span className={styles.name}>{node.name}</span>
+          <span className={styles.name}>{label(node, t)}</span>
           {delta && (
             <span className={styles.delta} data-status={node.gainStatus}>
               {delta}
@@ -238,7 +244,7 @@ function Children({ node, hoverId, highlight, now, mode, t, onActivate, onMenu }
         if (item.id === PHANTOM) return null;
         const fill = tileFill(item, mode, now);
         const delta = deltaText(item, t);
-        const label = rect.w >= 34 && rect.h >= 18;
+        const showLabel = rect.w >= 34 && rect.h >= 18;
         return (
           <div
             key={item.id}
@@ -261,9 +267,9 @@ function Children({ node, hoverId, highlight, now, mode, t, onActivate, onMenu }
               onMenu(item, e.clientX, e.clientY);
             }}
           >
-            {label && (
+            {showLabel && (
               <>
-                <span className={styles.childName}>{item.name}</span>
+                <span className={styles.childName}>{label(item, t)}</span>
                 {delta ? (
                   <span className={styles.delta} data-status={item.gainStatus}>
                     {delta}
@@ -298,11 +304,15 @@ function TileTooltip({ node, x, y, width, height, now, t }: TooltipProps) {
   if (top + 150 > height) top = Math.max(0, y - 162);
   return (
     <div role="tooltip" className={`${pop.pop} ${styles.tooltip}`} style={{ left: Math.round(left), top: Math.round(top) }}>
-      <span className={styles.tipPath}>{node.path}</span>
+      <span className={styles.tipPath}>{node.othersCount !== null ? `${node.path} · ${label(node, t)}` : node.path}</span>
       <div className={styles.tipGrid}>
         <div className={styles.tipCell}>
           <span className={styles.tipLabel}>{t("tooltip.size")}</span>
           <span className={styles.tipMono}>{formatBytes(node.size, t.locale)}</span>
+        </div>
+        <div className={styles.tipCell}>
+          <span className={styles.tipLabel}>{t("tooltip.logical")}</span>
+          <span className={styles.tipMono}>{formatBytes(node.logical, t.locale)}</span>
         </div>
         <div className={styles.tipCell}>
           <span className={styles.tipLabel}>{t("tooltip.files")}</span>

@@ -1,41 +1,48 @@
 import { useMemo, useState } from "react";
 import { copyText } from "../../app/clipboard";
 import { useRecommendations, useTree, useVolumes } from "../../app/data";
+import { startScan } from "../../app/scanning";
 import { type ColorMode, useStore } from "../../app/store";
+import { Button } from "../../components/Button";
 import { ChevronDownIcon } from "../../components/icons";
-import { Menu } from "../../components/Menu";
+import { Menu, type MenuItem } from "../../components/Menu";
 import { Segmented } from "../../components/Segmented";
 import { formatBytes } from "../../core/format";
 import { currentT, useT } from "../../i18n";
 import type { Category, TreeNode } from "../../ipc/types";
+import { FastScanConfirm } from "./FastScanConfirm";
 import { Legend } from "./Legend";
+import { ScanProgressPanel, ScanStats } from "./ScanPanel";
 import { Treemap } from "./Treemap";
 import styles from "./Explorer.module.css";
 
 function presentCategories(root: TreeNode): Set<Category> {
   const set = new Set<Category>();
   for (const c of root.children) {
+    if (c.othersCount !== null) continue;
     set.add(c.category);
-    for (const g of c.children) set.add(g.category);
+    for (const g of c.children) if (g.othersCount === null) set.add(g.category);
   }
   return set;
 }
 
 export function Explorer() {
   const t = useT();
-  const volume = useStore((s) => s.volume);
+  const target = useStore((s) => s.target);
+  const scan = useStore((s) => s.scan);
+  const elevated = useStore((s) => s.appInfo?.elevated ?? false);
   const node = useStore((s) => s.node);
   const zoom = useStore((s) => s.zoom);
-  const setVolume = useStore((s) => s.setVolume);
   const colorMode = useStore((s) => s.colorMode);
   const setColorMode = useStore((s) => s.setColorMode);
   const hoverReco = useStore((s) => s.hoverReco);
   const openReco = useStore((s) => s.openReco);
   const showToast = useStore((s) => s.showToast);
-  const tree = useTree(volume, node);
-  const recos = useRecommendations(volume);
+  const tree = useTree(node);
+  const recos = useRecommendations();
   const volumes = useVolumes();
   const [driveMenu, setDriveMenu] = useState<{ x: number; y: number } | null>(null);
+  const [fastAnchor, setFastAnchor] = useState<{ x: number; y: number } | null>(null);
 
   const focus = hoverReco ?? openReco;
   const highlight = useMemo(() => recos?.find((r) => r.id === focus)?.highlight ?? null, [recos, focus]);
@@ -50,7 +57,22 @@ export function Explorer() {
   const crumbs = tree?.breadcrumb ?? [];
   const [drive, ...rest] = crumbs;
   const rootCrumb = crumbs.find((c) => c.id !== null)?.id ?? null;
-  const isUserRoot = volume === "C:";
+  const isUserRoot = target.kind === "userProfile";
+  const running = scan.status === "running";
+  const targetLetter = target.kind === "volume" ? target.letter : (scan.summary?.volume ?? "C:");
+  const targetVolume = volumes?.find((v) => v.letter.toUpperCase() === targetLetter.toUpperCase());
+  // Scan rapide : NTFS local, et seulement si l'appli n'est pas déjà administrateur (sinon automatique).
+  const canFastScan = !elevated && (targetVolume?.mftCapable ?? false);
+
+  const targetItems: MenuItem[] = [
+    { label: t("explorer.target.user"), onSelect: () => void startScan({ kind: "userProfile" }) },
+    ...(volumes ?? []).map((v, i) => ({
+      label: t("explorer.target.volume", { letter: v.letter, label: v.label || t(`explorer.volumeKind.${v.kind}`) }),
+      hint: t("explorer.driveFree", { free: formatBytes(v.free, t.locale), total: formatBytes(v.total, t.locale) }),
+      separatorBefore: i === 0,
+      onSelect: () => void startScan({ kind: "volume", letter: v.letter }),
+    })),
+  ];
 
   return (
     <section aria-label={t("explorer.title")} className={styles.explorer}>
@@ -69,13 +91,13 @@ export function Explorer() {
             className={styles.drive}
             aria-haspopup="menu"
             aria-expanded={driveMenu !== null}
-            aria-label={t("explorer.drive", { drive: volume })}
+            aria-label={t("explorer.drive", { drive: targetLetter })}
             onClick={(e) => {
               const box = e.currentTarget.getBoundingClientRect();
               setDriveMenu({ x: box.left, y: box.bottom + 4 });
             }}
           >
-            {drive?.label ?? volume}
+            {drive?.label ?? targetLetter}
             <ChevronDownIcon />
           </button>
           {rest.map((c, i) => {
@@ -98,34 +120,58 @@ export function Explorer() {
             );
           })}
         </nav>
-        <span className={styles.total}>{tree ? formatBytes(tree.root.size, t.locale) : ""}</span>
+        <div className={styles.crumbEnd}>
+          {!running && (
+            <>
+              <Button variant="link" className={styles.scanLink} onClick={() => void startScan(target)}>
+                {t("explorer.rescan")}
+              </Button>
+              {canFastScan && (
+                <Button
+                  variant="link"
+                  className={styles.scanLink}
+                  aria-haspopup="dialog"
+                  onClick={(e) => {
+                    const box = e.currentTarget.getBoundingClientRect();
+                    setFastAnchor({ x: box.right, y: box.bottom + 6 });
+                  }}
+                >
+                  {t("explorer.fastScan")}
+                </Button>
+              )}
+            </>
+          )}
+          <span className={styles.total}>{tree ? formatBytes(tree.root.size, t.locale) : ""}</span>
+        </div>
       </div>
 
-      {tree && (
-        <Treemap
-          root={tree.root}
-          highlight={highlight}
-          onCopyPath={(n) => {
-            void copyText(n.path).then((ok) => ok && showToast(currentT()("preview.pathCopied")));
-          }}
-          onUnavailable={(n) => showToast(currentT()("preview.later", { n }))}
-        />
-      )}
+      <div className={styles.mapArea}>
+        {tree && (
+          <Treemap
+            root={tree.root}
+            highlight={highlight}
+            onCopyPath={(n) => {
+              void copyText(n.path).then((ok) => ok && showToast(currentT()("preview.pathCopied")));
+            }}
+            onUnavailable={(n) => showToast(currentT()("preview.later", { n }))}
+          />
+        )}
+        {(running || !tree) && <ScanProgressPanel overlay={Boolean(tree)} />}
+      </div>
 
       <Legend mode={colorMode} categories={categories} />
+      <ScanStats />
 
-      {driveMenu && volumes && (
-        <Menu
-          x={driveMenu.x}
-          y={driveMenu.y}
-          label={t("explorer.drives")}
-          onClose={() => setDriveMenu(null)}
-          items={volumes.map((v) => ({
-            label: `${v.letter}  ${v.label}`,
-            hint: t("explorer.driveFree", { free: formatBytes(v.free, t.locale), total: formatBytes(v.total, t.locale) }),
-            disabled: v.kind === "network",
-            onSelect: () => setVolume(v.id),
-          }))}
+      {driveMenu && <Menu x={driveMenu.x} y={driveMenu.y} label={t("explorer.targets")} onClose={() => setDriveMenu(null)} items={targetItems} />}
+      {fastAnchor && (
+        <FastScanConfirm
+          x={fastAnchor.x}
+          y={fastAnchor.y}
+          onCancel={() => setFastAnchor(null)}
+          onConfirm={() => {
+            setFastAnchor(null);
+            void startScan(target, "fast");
+          }}
         />
       )}
     </section>

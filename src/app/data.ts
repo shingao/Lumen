@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useState } from "react";
 import { backend } from "../ipc/client";
+import { targetKey } from "../ipc/backend";
 import type { Kpis, NodeId, Recommendation, RecommendationDetail, TreeSlice, Volume } from "../ipc/types";
 import { useStore } from "./store";
 
@@ -29,18 +30,27 @@ export function useVolumes(): Volume[] | undefined {
   return useResource(`volumes:${locale}`, () => backend.volumes());
 }
 
-export function useKpis(volume: string): Kpis | undefined {
-  return useResource(`kpis:${volume}`, () => backend.kpis(volume));
+/** Analyse terminée affichée (null tant qu'aucune n'est prête). */
+function useDoneScanId(): number | null {
+  return useStore((s) => s.scan.summary?.scanId ?? null);
 }
 
-export function useTree(volume: string, node: NodeId | null): TreeSlice | undefined {
-  const locale = useStore((s) => s.locale);
-  return useResource(`tree:${volume}:${node ?? "root"}:${locale}`, () => backend.tree(volume, node));
+export function useKpis(): Kpis | undefined {
+  const target = useStore((s) => s.target);
+  const summary = useStore((s) => s.scan.summary);
+  return useResource(`kpis:${targetKey(target)}:${summary?.scanId ?? "none"}`, () => backend.kpis(target, summary));
 }
 
-export function useRecommendations(volume: string): Recommendation[] | undefined {
+export function useTree(node: NodeId | null): TreeSlice | undefined {
   const locale = useStore((s) => s.locale);
-  return useResource(`recos:${volume}:${locale}`, () => backend.recommendations(volume));
+  const scanId = useDoneScanId();
+  return useResource(scanId === null ? null : `tree:${scanId}:${node ?? "root"}:${locale}`, () => backend.tree(scanId ?? 0, node));
+}
+
+export function useRecommendations(): Recommendation[] | undefined {
+  const locale = useStore((s) => s.locale);
+  const scanId = useDoneScanId();
+  return useResource(scanId === null ? null : `recos:${scanId}:${locale}`, () => backend.recommendations(scanId ?? 0));
 }
 
 export function useRecommendation(id: string | null): RecommendationDetail | undefined {

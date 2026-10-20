@@ -51,6 +51,43 @@ jobs:
           node-version: 22
       - run: node scripts/check-safety-tests.mjs
 
+  # Scanner : tests Windows (dont MFT = parcours sur les fixtures, en administrateur), banc
+  # sur 200 000 fichiers générés et mémoire mesurée sur le scan de C:, résumés dans le run.
+  scan:
+    needs: [safety, safety-portable]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Tests du scanner (parcours, MFT, liens physiques, clairsemés, compressés, cloud)
+        working-directory: src-tauri
+        run: cargo test -p scan -- --nocapture
+      - name: Banc d'essai
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          cargo build --release -p scan --example bench
+          $bench = "target\release\examples\bench.exe"
+          $sum = $env:GITHUB_STEP_SUMMARY
+          $dir = Join-Path $env:RUNNER_TEMP "lumen-bench"
+          "## Scanner : banc d'essai" | Out-File -Append $sum
+          "| mesure | volume | taille allouée | durée | mémoire |" | Out-File -Append $sum
+          "|---|---|---|---|---|" | Out-File -Append $sum
+          & $bench generate $dir 200000 | Tee-Object -Append -FilePath $sum
+          & $bench walk $dir | Tee-Object -Append -FilePath $sum
+          & $bench mft $dir | Tee-Object -Append -FilePath $sum
+          "" | Out-File -Append $sum
+          "**Scan de C:\ complet** (un processus par méthode, mémoire = pic de l'ensemble de travail)" | Out-File -Append $sum
+          "" | Out-File -Append $sum
+          "| mesure | volume | taille allouée | durée | mémoire |" | Out-File -Append $sum
+          "|---|---|---|---|---|" | Out-File -Append $sum
+          & $bench walk "C:\" | Tee-Object -Append -FilePath $sum
+          & $bench mft "C:\" | Tee-Object -Append -FilePath $sum
+
   front:
     needs: [safety, safety-portable]
     runs-on: windows-latest
@@ -104,7 +141,7 @@ jobs:
         run: cargo audit
 
   build:
-    needs: [safety, front, rust]
+    needs: [safety, scan, front, rust]
     runs-on: windows-latest
     timeout-minutes: 60
     env:

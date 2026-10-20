@@ -1,12 +1,13 @@
-// Seul point de contact avec Tauri. Les écrans passent par `backend` et `appWindow`.
+// Point de contact avec Tauri (avec ipc/tauri.ts). Les écrans passent par `backend` et `appWindow`.
 
 import type { Backend } from "./backend";
 import { createMockBackend } from "./mock";
+import { createTauriBackend } from "./tauri";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-// Jalon 1 : données de la maquette, y compris dans l'appli. Le backend Rust arrive au jalon 3.
-export const backend: Backend = createMockBackend();
+// Dans l'appli : analyse réelle (Rust). Dans le navigateur (npm run dev) : données de la maquette.
+export const backend: Backend = isTauri ? createTauriBackend() : createMockBackend();
 
 type TauriWindow = Awaited<ReturnType<typeof loadWindow>>;
 
