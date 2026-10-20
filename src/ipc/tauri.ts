@@ -3,8 +3,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { categoryOf } from "../core/categories";
-import type { Locale } from "../core/format";
+import { formatBytes, formatCount, formatRelative, type Locale } from "../core/format";
+import { currentT } from "../i18n";
 import type { Backend } from "./backend";
 import { DEFAULT_SETTINGS } from "./mock";
 import type {
@@ -12,6 +12,11 @@ import type {
   Category,
   Kpis,
   NodeKind,
+  Recommendation,
+  RecommendationDetail,
+  RecoStatus,
+  ScriptLine,
+  Status,
   ScanEvent,
   ScanProgress,
   ScanSummary,
@@ -33,7 +38,53 @@ interface TreeNodeDto {
   lastOpened: number;
   others: number | null;
   hasChildren: boolean;
+  status: Status;
+  category: Category;
+  reco: string | null;
+  gain: number;
+  gainStatus: RecoStatus | null;
+  gainUpTo: boolean;
   children: TreeNodeDto[];
+}
+
+interface Text {
+  fr: string;
+  en: string;
+}
+
+interface RecoDto {
+  id: string;
+  status: RecoStatus;
+  category: Category;
+  name: Text;
+  path: string;
+  size: number;
+  logical: number;
+  files: number;
+  dirs: number;
+  lastUsed: number;
+  upTo: boolean;
+  action: "delete" | "command";
+  projects: number;
+  lastActivity: number;
+  /** Éléments couverts. */
+  covered: number;
+  highlight: number[];
+}
+
+interface RecoDetailDto extends RecoDto {
+  explanation: Text;
+  regeneratedBy: Text | null;
+  fileList: { path: string; size: number }[];
+  commands: { line: string; explanation: string }[];
+  projectList: { path: string; lastActivity: number; source: "git" | "files" }[];
+}
+
+interface RuleKpisDto {
+  safeBytes: number;
+  safeCount: number;
+  reviewBytes: number;
+  reviewCount: number;
 }
 
 interface VolumeDto {
@@ -48,8 +99,8 @@ interface VolumeDto {
 
 const SETTINGS_KEY = "lumen-settings";
 
-function toNode(dto: TreeNodeDto, inherited: Category): TreeNode {
-  const category = dto.others !== null ? inherited : categoryOf(dto.name, inherited);
+function toNode(dto: TreeNodeDto): TreeNode {
+  // Statut, catégorie et gains viennent du moteur de règles (rules.toml), jamais du nom.
   return {
     id: dto.id,
     name: dto.name,
@@ -60,16 +111,49 @@ function toNode(dto: TreeNodeDto, inherited: Category): TreeNode {
     othersCount: dto.others,
     files: dto.files,
     lastOpened: dto.lastOpened,
-    category,
-    // Statuts, recommandations et gains : moteur de règles (jalon 4).
-    status: "keep",
-    reco: null,
-    gain: 0,
-    gainStatus: null,
-    gainUpTo: false,
+    category: dto.category,
+    status: dto.status,
+    reco: dto.reco,
+    gain: dto.gain,
+    gainStatus: dto.gainStatus,
+    gainUpTo: dto.gainUpTo,
     hasChildren: dto.hasChildren,
-    children: dto.children.map((c) => toNode(c, category)),
+    children: dto.children.map(toNode),
   };
+}
+
+const pick = (text: Text, locale: Locale) => (locale === "en" ? text.en : text.fr);
+
+function toReco(dto: RecoDto, locale: Locale): Recommendation {
+  return { id: dto.id, status: dto.status, name: pick(dto.name, locale), path: dto.path, size: dto.size, highlight: dto.highlight };
+}
+
+/** « 412 380 fichiers · 3 dossiers · dernière utilisation il y a 2 jours ». */
+function metaOf(dto: RecoDto): string {
+  const t = currentT();
+  const n = (v: number) => formatCount(v, t.locale);
+  const parts = [t.plural("reco.meta.files", dto.files, { n: n(dto.files) })];
+  if (dto.dirs > 1) parts.push(t.plural("reco.meta.folders", dto.dirs, { n: n(dto.dirs) }));
+  if (dto.projects > 0) {
+    parts.push(t.plural("reco.meta.projects", dto.projects, { n: n(dto.projects) }));
+    if (dto.lastActivity > 0) parts.push(t("reco.meta.lastActivity", { when: formatRelative(dto.lastActivity, t.locale) }));
+  } else if (dto.lastUsed > 0) {
+    parts.push(t("reco.meta.lastUsed", { when: formatRelative(dto.lastUsed, t.locale) }));
+  }
+  if (dto.upTo) parts.push(t("reco.meta.upTo"));
+  return parts.join(" · ");
+}
+
+/** Aperçu des commandes ; le script complet, simulé par safety, arrive au jalon 5. */
+function scriptOf(dto: RecoDetailDto): ScriptLine[] {
+  const t = currentT();
+  const line = (text: string): ScriptLine => ({ text, whatIfAt: null });
+  const out = [line(t("detail.script.header", { name: pick(dto.name, t.locale), size: formatBytes(dto.size, t.locale) }))];
+  for (const c of dto.commands) {
+    out.push(line(`# ${c.explanation}`), line(c.line));
+  }
+  if (dto.action === "delete") out.push(line(t.plural("detail.script.delete", dto.covered, { n: formatCount(dto.covered, t.locale) })));
+  return out;
 }
 
 function readSettings(): Settings {
@@ -85,6 +169,9 @@ function readSettings(): Settings {
 export function createTauriBackend(): Backend {
   let settings = readSettings();
   let volumes: Volume[] = [];
+  let locale: Locale = "fr";
+  // Analyse affichée : les détails de recommandation s'y rapportent.
+  let lastScanId = 0;
 
   const loadVolumes = async (): Promise<Volume[]> => {
     const list = await invoke<VolumeDto[]>("volumes_list");
@@ -102,7 +189,9 @@ export function createTauriBackend(): Backend {
   };
 
   return {
-    setLocale(_locale: Locale) {},
+    setLocale(next: Locale) {
+      locale = next;
+    },
 
     appInfo: () => invoke<AppInfo>("app_info"),
 
@@ -124,12 +213,12 @@ export function createTauriBackend(): Backend {
     },
 
     async tree(scanId, node) {
+      lastScanId = scanId;
       const slice = await invoke<{ root: TreeNodeDto; breadcrumb: { label: string; id: number | null }[] }>("scan_tree", {
         scanId,
         node,
       });
-      const inherited = slice.breadcrumb.reduce<Category>((cat, c) => categoryOf(c.label, cat), "tools");
-      const result: TreeSlice = { root: toNode(slice.root, inherited), breadcrumb: slice.breadcrumb };
+      const result: TreeSlice = { root: toNode(slice.root), breadcrumb: slice.breadcrumb };
       return result;
     },
 
@@ -139,14 +228,16 @@ export function createTauriBackend(): Backend {
       const vol = list.find((v) => v.letter.toUpperCase() === letter.toUpperCase());
       const free = vol?.free ?? 0;
       const used = vol ? vol.total - vol.free : 0;
+      const rules = summary ? await invoke<RuleKpisDto | null>("rule_kpis", { scanId: summary.scanId }) : null;
       const k: Kpis = {
-        rulesReady: false,
+        rulesReady: rules !== null,
         freeNow: free,
-        freeAfter: free,
-        safeBytes: 0,
-        safeCount: 0,
-        reviewBytes: 0,
-        reviewCount: 0,
+        // Après nettoyage des éléments sans risque (cochés par défaut).
+        freeAfter: free + (rules?.safeBytes ?? 0),
+        safeBytes: rules?.safeBytes ?? 0,
+        safeCount: rules?.safeCount ?? 0,
+        reviewBytes: rules?.reviewBytes ?? 0,
+        reviewCount: rules?.reviewCount ?? 0,
         // Ce que l'analyse n'a pas couvert sur ce disque : système, applis, autres dossiers.
         unanalyzed: summary ? Math.max(0, used - summary.allocated) : 0,
         trend7d: 0,
@@ -154,10 +245,27 @@ export function createTauriBackend(): Backend {
       return k;
     },
 
-    recommendations: () => Promise.resolve([]),
+    async recommendations(scanId) {
+      lastScanId = scanId;
+      const list = await invoke<RecoDto[]>("recommendations", { scanId });
+      return list.map((r) => toReco(r, locale));
+    },
 
-    recommendation: (id) => Promise.reject(new Error(`recommandation inconnue : ${id}`)),
+    async recommendation(id) {
+      const dto = await invoke<RecoDetailDto>("recommendation_detail", { scanId: lastScanId, id });
+      const t = currentT();
+      const detail: RecommendationDetail = {
+        ...toReco(dto, locale),
+        explanation: pick(dto.explanation, locale),
+        meta: metaOf(dto),
+        files: dto.fileList,
+        script: scriptOf(dto),
+        note: t(dto.status === "safe" ? "reco.note.safe" : "reco.note.review"),
+      };
+      return detail;
+    },
 
+    // Script complet généré par safety : jalon 5.
     script: () => Promise.resolve(""),
 
     // Recherche dans l'index du scan : jalon 9.

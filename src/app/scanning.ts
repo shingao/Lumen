@@ -1,6 +1,6 @@
 // Analyse : lancement, annulation, suivi des événements du backend.
 
-import { backend } from "../ipc/client";
+import { backend, isTauri } from "../ipc/client";
 import type { ScanMethod, ScanTarget } from "../ipc/types";
 import { useStore } from "./store";
 
@@ -19,6 +19,13 @@ function subscribe(): void {
       if (!ours(e.summary.scanId)) return;
       useStore.setState({ node: null });
       setScan({ id: e.summary.scanId, status: "done", summary: e.summary, progress: null, message: null });
+      // Cochés par défaut : les éléments sans risque seulement (un « À vérifier » ne l'est jamais).
+      if (isTauri) {
+        void backend
+          .recommendations(e.summary.scanId)
+          .then((recos) => useStore.getState().setChecked(recos.filter((r) => r.status === "safe").map((r) => r.id)))
+          .catch((err: unknown) => console.error("recommandations :", err));
+      }
     } else if (ours(e.scanId)) {
       // Annulée ou en échec : on garde l'analyse précédente si elle existe.
       setScan({ status: scan.summary ? "done" : "failed", progress: null, message: e.cancelled ? null : e.message });

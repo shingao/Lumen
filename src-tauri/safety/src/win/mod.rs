@@ -17,15 +17,16 @@ use windows::core::{GUID, HSTRING};
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FileIdInfo, GetFileAttributesW, GetFileInformationByHandle, GetFileInformationByHandleEx,
-    GetFinalPathNameByHandleW, GetShortPathNameW, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY,
+    GetFinalPathNameByHandleW, GetShortPathNameW, GetTempPathW, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY,
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     FILE_ID_INFO, FILE_NAME_NORMALIZED, GETFINALPATHNAMEBYHANDLE_FLAGS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_NONE,
     FILE_SHARE_READ, FILE_SHARE_WRITE, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, VOLUME_NAME_DOS,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Shell::{
+    FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_LocalAppData, FOLDERID_Music, FOLDERID_Pictures,
     FOLDERID_Profile, FOLDERID_ProgramData, FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, FOLDERID_Public,
-    FOLDERID_UserProfiles, FOLDERID_Windows, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
+    FOLDERID_RoamingAppData, FOLDERID_UserProfiles, FOLDERID_Videos, FOLDERID_Windows, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
 };
 
 use crate::bin::VolumeFacts;
@@ -221,6 +222,40 @@ pub fn system_layout() -> Result<SystemLayout, ProbeError> {
         public: known_folder(&FOLDERID_Public)?,
         other_profiles,
     })
+}
+
+/// Valeurs des variables des règles (`%LOCALAPPDATA%`, `%TEMP%`…) : dossiers connus de Windows
+/// en chemins longs, jamais lus dans l'environnement du processus (sauf `%TEMP%`, qui n'a pas de
+/// dossier connu : `GetTempPathW`, puis vérifié par la denylist comme toute cible).
+pub fn rule_variables() -> Vec<(&'static str, WinPath)> {
+    let folders: [(&str, &GUID); 13] = [
+        ("USERPROFILE", &FOLDERID_Profile),
+        ("LOCALAPPDATA", &FOLDERID_LocalAppData),
+        ("APPDATA", &FOLDERID_RoamingAppData),
+        ("DOCUMENTS", &FOLDERID_Documents),
+        ("PICTURES", &FOLDERID_Pictures),
+        ("VIDEOS", &FOLDERID_Videos),
+        ("MUSIC", &FOLDERID_Music),
+        ("DESKTOP", &FOLDERID_Desktop),
+        ("DOWNLOADS", &FOLDERID_Downloads),
+        ("WINDIR", &FOLDERID_Windows),
+        ("PROGRAMFILES", &FOLDERID_ProgramFiles),
+        ("PROGRAMFILESX86", &FOLDERID_ProgramFilesX86),
+        ("PROGRAMDATA", &FOLDERID_ProgramData),
+    ];
+    let mut out: Vec<(&'static str, WinPath)> = folders.into_iter().filter_map(|(n, id)| known_folder(id).ok().map(|p| (n, p))).collect();
+    let mut buf = vec![0u16; 1024];
+    // SAFETY : tampon possédé.
+    let n = unsafe { GetTempPathW(Some(&mut buf)) } as usize;
+    if n > 0 && n < buf.len() {
+        if let Ok(p) = WinPath::parse(&long_path(String::from_utf16_lossy(&buf[..n]).trim_end_matches('\\'))) {
+            out.push(("TEMP", p));
+        }
+    }
+    if let Ok(w) = known_folder(&FOLDERID_Windows) {
+        out.push(("SYSTEMDRIVE", w.volume_root()));
+    }
+    out
 }
 
 /// Nom court 8.3 d'un élément existant (identique au nom long si le volume n'en génère pas).

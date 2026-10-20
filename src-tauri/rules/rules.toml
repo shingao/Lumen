@@ -1,0 +1,298 @@
+# Règles de Lumen — validées au chargement (schéma strict : src/schema.rs).
+#
+# - Une cible commence toujours par une variable connue : %USERPROFILE%, %LOCALAPPDATA%,
+#   %APPDATA%, %TEMP% (et %SYSTEMDRIVE% pour une commande officielle seulement). Aucun chemin
+#   absolu écrit en dur.
+# - « safe » (Sans risque) : uniquement des données régénérables ; `regenerated-by` dit qui les
+#   recrée. La liste complète est relue dans `sans-risque.txt` (un test la tient à jour).
+# - « review » (À vérifier) n'est jamais coché par défaut.
+# - Ordre important : un élément n'est couvert que par la première règle qui le revendique.
+# - Aucune règle ne peut couvrir une zone de la denylist de `safety` (vérifié au chargement des
+#   éléments et par les tests).
+version = 1
+
+# --- Sans risque -------------------------------------------------------------------------------
+
+[[rule]]
+id = "cache-npm"
+status = "safe"
+category = "packages"
+name = { fr = "Cache npm", en = "npm cache" }
+explanation = { fr = "Le cache npm ne contient que des copies de paquets déjà publiés : npm les retélécharge à la demande.", en = "The npm cache only holds copies of published packages: npm downloads them again when needed." }
+regenerated-by = { fr = "npm retélécharge les paquets à la prochaine installation.", en = "npm downloads the packages again on the next install." }
+targets = ['%LOCALAPPDATA%\npm-cache']
+action = "command"
+commands = ["npm-cache-clean", "npm-cache-verify"]
+
+[[rule]]
+id = "cache-yarn"
+status = "safe"
+category = "packages"
+name = { fr = "Cache Yarn", en = "Yarn cache" }
+explanation = { fr = "Copies des paquets téléchargés par Yarn, vidées par sa propre commande.", en = "Copies of packages downloaded by Yarn, cleared by its own command." }
+regenerated-by = { fr = "Yarn retélécharge les paquets à la prochaine installation.", en = "Yarn downloads the packages again on the next install." }
+targets = ['%LOCALAPPDATA%\Yarn\Cache']
+action = "command"
+commands = ["yarn-cache-clean"]
+
+[[rule]]
+id = "store-pnpm"
+status = "safe"
+category = "packages"
+name = { fr = "Store pnpm (paquets inutilisés)", en = "pnpm store (unused packages)" }
+explanation = { fr = "pnpm store prune ne retire que les paquets qu'aucun projet ne référence : le gain réel peut être inférieur à la taille du store.", en = "pnpm store prune only removes packages no project references: the actual gain may be smaller than the store." }
+regenerated-by = { fr = "pnpm retélécharge un paquet retiré si un projet en a de nouveau besoin.", en = "pnpm downloads a removed package again if a project needs it." }
+targets = ['%LOCALAPPDATA%\pnpm\store']
+action = "command"
+commands = ["pnpm-store-prune"]
+gain = "up-to"
+
+[[rule]]
+id = "caches-nuget"
+status = "safe"
+category = "packages"
+name = { fr = "Caches NuGet", en = "NuGet caches" }
+explanation = { fr = "Paquets .NET mis en cache par NuGet, vidés par la commande officielle de dotnet.", en = ".NET packages cached by NuGet, cleared by the official dotnet command." }
+regenerated-by = { fr = "dotnet restore retélécharge les paquets au prochain build.", en = "dotnet restore downloads the packages again on the next build." }
+targets = ['%USERPROFILE%\.nuget\packages', '%LOCALAPPDATA%\NuGet\v3-cache', '%LOCALAPPDATA%\NuGet\plugins-cache']
+action = "command"
+commands = ["nuget-locals-clear"]
+
+[[rule]]
+id = "caches-gradle"
+status = "safe"
+category = "packages"
+name = { fr = "Caches Gradle", en = "Gradle caches" }
+explanation = { fr = "Gradle recrée ses caches et retélécharge les dépendances au prochain build, qui sera simplement plus long.", en = "Gradle rebuilds its caches and downloads dependencies again on the next build, which will just take longer." }
+regenerated-by = { fr = "Gradle recrée ses caches et ses distributions au prochain build (démons arrêtés avant : gradle --stop).", en = "Gradle rebuilds its caches and distributions on the next build (daemons stopped first: gradle --stop)." }
+targets = ['%USERPROFILE%\.gradle\caches', '%USERPROFILE%\.gradle\wrapper\dists']
+commands = ["gradle-stop"]
+
+[[rule]]
+id = "cache-pip"
+status = "safe"
+category = "packages"
+name = { fr = "Cache pip", en = "pip cache" }
+explanation = { fr = "Téléchargements mis en cache par pip, vidés par sa propre commande.", en = "Downloads cached by pip, cleared by its own command." }
+regenerated-by = { fr = "pip retélécharge les paquets à la prochaine installation.", en = "pip downloads the packages again on the next install." }
+targets = ['%LOCALAPPDATA%\pip\Cache']
+action = "command"
+commands = ["pip-cache-purge"]
+
+[[rule]]
+id = "cache-uv"
+status = "safe"
+category = "packages"
+name = { fr = "Cache uv", en = "uv cache" }
+explanation = { fr = "Cache de paquets Python d'uv, vidé par sa propre commande.", en = "uv's Python package cache, cleared by its own command." }
+regenerated-by = { fr = "uv retélécharge les paquets à la prochaine installation.", en = "uv downloads the packages again on the next install." }
+targets = ['%LOCALAPPDATA%\uv\cache']
+action = "command"
+commands = ["uv-cache-clean"]
+
+[[rule]]
+id = "caches-shaders"
+status = "safe"
+category = "tools"
+name = { fr = "Caches de shaders (DirectX, NVIDIA, AMD)", en = "Shader caches (DirectX, NVIDIA, AMD)" }
+explanation = { fr = "Windows et les pilotes graphiques reconstruisent ces caches au lancement des jeux, au prix de quelques saccades la première fois.", en = "Windows and the graphics drivers rebuild these caches when games start, with a little stutter the first time." }
+regenerated-by = { fr = "Windows et les pilotes NVIDIA / AMD recompilent les shaders au prochain lancement.", en = "Windows and the NVIDIA / AMD drivers compile the shaders again on the next launch." }
+targets = [
+  '%LOCALAPPDATA%\D3DSCache',
+  '%LOCALAPPDATA%\NVIDIA\DXCache',
+  '%LOCALAPPDATA%\NVIDIA\GLCache',
+  '%LOCALAPPDATA%\NVIDIA Corporation\NV_Cache',
+  '%LOCALAPPDATA%\AMD\DxCache',
+  '%LOCALAPPDATA%\AMD\DxcCache',
+  '%LOCALAPPDATA%\AMD\VkCache',
+  '%LOCALAPPDATA%\AMD\GLCache',
+]
+scope = "contents"
+
+[[rule]]
+id = "artefacts-projets-actifs"
+status = "safe"
+category = "code"
+name = { fr = "Artefacts de build (node_modules, .next, target…)", en = "Build artifacts (node_modules, .next, target…)" }
+explanation = { fr = "Ces dossiers sont régénérés par npm, Next.js, Cargo, Gradle ou dotnet au prochain build : aucun fichier source n'est touché.", en = "npm, Next.js, Cargo, Gradle or dotnet rebuild these folders on the next build: no source file is touched." }
+regenerated-by = { fr = "Le prochain npm install (fichier de verrouillage présent), next build, cargo build, gradle build ou dotnet build.", en = "The next npm install (lockfile present), next build, cargo build, gradle build or dotnet build." }
+[rule.project]
+roots = ['%USERPROFILE%']
+exclude = ['%USERPROFILE%\AppData', '%LOCALAPPDATA%', '%APPDATA%', '%USERPROFILE%\.*', '%USERPROFILE%\scoop', '%DOWNLOADS%']
+activity = "active"
+inactive-days = 180
+artifacts = [
+  { dir = "node_modules", markers = ["package.json"], requires = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock"] },
+  { dir = ".next", markers = ["package.json"] },
+  { dir = ".nuxt", markers = ["package.json"] },
+  { dir = ".svelte-kit", markers = ["package.json"] },
+  { dir = ".turbo", markers = ["package.json"] },
+  { dir = ".parcel-cache", markers = ["package.json"] },
+  { dir = "dist", markers = ["package.json"], gitignored = true },
+  { dir = "target", markers = ["Cargo.toml"] },
+  { dir = "build", markers = ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"] },
+  { dir = ".gradle", markers = ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"] },
+  { dir = "obj", markers = ["*.csproj", "*.fsproj", "*.vbproj"] },
+  { dir = "bin", markers = ["*.csproj", "*.fsproj", "*.vbproj"], gitignored = true },
+]
+
+[[rule]]
+id = "fichiers-temporaires"
+status = "safe"
+category = "tools"
+name = { fr = "Fichiers temporaires", en = "Temporary files" }
+explanation = { fr = "Fichiers laissés par des installations et des applis ; seuls ceux qui n'ont pas changé depuis 48 h sont comptés, et ceux en cours d'utilisation seront ignorés.", en = "Files left behind by installers and apps; only those unchanged for 48 h are counted, and the ones in use will be skipped." }
+regenerated-by = { fr = "Les applis recréent leurs fichiers temporaires à la demande ; rien n'est compté s'il a changé depuis 48 h.", en = "Apps create their temporary files again when needed; nothing changed in the last 48 h is counted." }
+targets = ['%TEMP%']
+scope = "older-than"
+min-age-hours = 48
+
+# --- À vérifier --------------------------------------------------------------------------------
+
+[[rule]]
+id = "registre-cargo"
+status = "review"
+category = "packages"
+name = { fr = "Registre Cargo (crates téléchargées)", en = "Cargo registry (downloaded crates)" }
+explanation = { fr = "Sources et archives des crates Rust : Cargo les retélécharge, mais sans commande officielle de nettoyage et avec un index long à reconstruire.", en = "Sources and archives of Rust crates: Cargo downloads them again, but there is no official cleanup command and the index takes long to rebuild." }
+targets = ['%USERPROFILE%\.cargo\registry']
+scope = "contents"
+
+[[rule]]
+id = "depot-maven"
+status = "review"
+category = "packages"
+name = { fr = "Dépôt Maven local (.m2)", en = "Local Maven repository (.m2)" }
+explanation = { fr = "Dépendances Java téléchargées ; il peut aussi contenir des artefacts installés à la main (mvn install) qui ne se retéléchargent pas.", en = "Downloaded Java dependencies; it may also hold artifacts installed by hand (mvn install) that cannot be downloaded again." }
+targets = ['%USERPROFILE%\.m2\repository']
+scope = "contents"
+
+[[rule]]
+id = "android-sdk"
+status = "review"
+category = "android"
+name = { fr = "Android SDK : images système et plateformes", en = "Android SDK: system images and platforms" }
+explanation = { fr = "Images système et plateformes peut-être inutiles ; vérifie qu'aucun projet actif ne cible encore ces API.", en = "System images and platforms you may not need; check that no active project still targets these APIs." }
+targets = ['%LOCALAPPDATA%\Android\Sdk\system-images', '%LOCALAPPDATA%\Android\Sdk\platforms']
+scope = "contents"
+
+[[rule]]
+id = "emulateurs-android"
+status = "review"
+category = "android"
+name = { fr = "Émulateurs Android (AVD)", en = "Android emulators (AVD)" }
+explanation = { fr = "Chaque émulateur garde ses données (applis installées, comptes) : à supprimer seulement s'il ne sert plus.", en = "Each emulator keeps its data (installed apps, accounts): delete it only if you no longer use it." }
+targets = ['%USERPROFILE%\.android\avd']
+scope = "contents"
+
+[[rule]]
+id = "modeles-ollama"
+status = "review"
+category = "ai"
+name = { fr = "Modèles Ollama", en = "Ollama models" }
+explanation = { fr = "Modèles locaux téléchargés pour Ollama ; ils se retéléchargent avec ollama pull si tu en as de nouveau besoin.", en = "Local models downloaded for Ollama; ollama pull downloads them again if you need them later." }
+targets = ['%USERPROFILE%\.ollama\models']
+
+[[rule]]
+id = "modeles-hugging-face"
+status = "review"
+category = "ai"
+name = { fr = "Modèles Hugging Face (cache)", en = "Hugging Face models (cache)" }
+explanation = { fr = "Modèles et jeux de données téléchargés par les bibliothèques Hugging Face ; ils se retéléchargent à la prochaine utilisation.", en = "Models and datasets downloaded by the Hugging Face libraries; they are downloaded again on next use." }
+targets = ['%USERPROFILE%\.cache\huggingface\hub']
+scope = "contents"
+
+[[rule]]
+id = "artefacts-projets-inactifs"
+status = "review"
+category = "code"
+name = { fr = "Artefacts de projets inactifs (+ de 6 mois)", en = "Artifacts of inactive projects (6+ months)" }
+explanation = { fr = "Dépendances et builds de projets sans activité depuis plus de 6 mois : un npm install ou un build les recrée si tu y reviens, à condition que les versions soient encore disponibles.", en = "Dependencies and builds of projects idle for over 6 months: npm install or a build recreates them if you come back, as long as the versions are still available." }
+[rule.project]
+roots = ['%USERPROFILE%']
+exclude = ['%USERPROFILE%\AppData', '%LOCALAPPDATA%', '%APPDATA%', '%USERPROFILE%\.*', '%USERPROFILE%\scoop', '%DOWNLOADS%']
+activity = "inactive"
+inactive-days = 180
+artifacts = [
+  { dir = "node_modules", markers = ["package.json"] },
+  { dir = ".next", markers = ["package.json"] },
+  { dir = ".nuxt", markers = ["package.json"] },
+  { dir = "target", markers = ["Cargo.toml"] },
+  { dir = "build", markers = ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"] },
+  { dir = ".gradle", markers = ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"] },
+  { dir = "obj", markers = ["*.csproj", "*.fsproj", "*.vbproj"] },
+]
+
+[[rule]]
+id = "rapports-de-plantage"
+status = "review"
+category = "tools"
+name = { fr = "Rapports de plantage", en = "Crash dumps" }
+explanation = { fr = "Copies mémoire écrites quand une appli plante : inutiles au quotidien, mais parfois demandées par un support technique.", en = "Memory dumps written when an app crashes: useless day to day, but sometimes requested by technical support." }
+targets = ['%LOCALAPPDATA%\CrashDumps']
+scope = "contents"
+
+[[rule]]
+id = "windows-old"
+status = "review"
+category = "system"
+name = { fr = "Windows.old (outil Windows officiel)", en = "Windows.old (official Windows tool)" }
+explanation = { fr = "Copie de ton ancienne installation de Windows, gardée pour revenir en arrière : à supprimer uniquement via l'outil Windows.", en = "A copy of your previous Windows installation, kept to roll back: remove it only with the Windows tool." }
+targets = ['%SYSTEMDRIVE%\Windows.old']
+action = "command"
+commands = ["disk-cleanup-system-drive"]
+
+# --- Classement (couleur de la légende, aucune action) ----------------------------------------
+
+[[area]]
+id = "systeme"
+category = "system"
+targets = ['%WINDIR%', '%PROGRAMFILES%', '%PROGRAMFILESX86%', '%PROGRAMDATA%']
+
+[[area]]
+id = "jeux"
+category = "games"
+targets = [
+  '%PROGRAMFILESX86%\Steam',
+  '%PROGRAMFILES%\Steam',
+  '%PROGRAMFILES%\Epic Games',
+  '%PROGRAMFILESX86%\GOG Galaxy',
+  '%PROGRAMFILESX86%\Ubisoft',
+  '%PROGRAMFILES%\EA Games',
+]
+
+[[area]]
+id = "documents-medias"
+category = "media"
+targets = ['%DOCUMENTS%', '%PICTURES%', '%VIDEOS%', '%MUSIC%', '%DESKTOP%', '%DOWNLOADS%']
+
+[[area]]
+id = "projets"
+category = "code"
+project-markers = [".git", "package.json", "Cargo.toml", "pyproject.toml", "go.mod", "pom.xml", "build.gradle", "build.gradle.kts", "*.sln", "*.csproj", "composer.json", "Gemfile", "CMakeLists.txt"]
+
+[[area]]
+id = "caches-de-paquets"
+category = "packages"
+targets = [
+  '%USERPROFILE%\.nuget',
+  '%USERPROFILE%\.m2',
+  '%USERPROFILE%\.cargo',
+  '%USERPROFILE%\.gradle',
+  '%LOCALAPPDATA%\npm-cache',
+  '%LOCALAPPDATA%\pnpm',
+  '%LOCALAPPDATA%\Yarn',
+  '%LOCALAPPDATA%\pip',
+  '%LOCALAPPDATA%\uv',
+  '%LOCALAPPDATA%\NuGet',
+]
+
+[[area]]
+id = "android"
+category = "android"
+targets = ['%LOCALAPPDATA%\Android', '%USERPROFILE%\.android']
+
+[[area]]
+id = "modeles-ia"
+category = "ai"
+targets = ['%USERPROFILE%\.ollama', '%USERPROFILE%\.cache\huggingface', '%USERPROFILE%\.lmstudio', '%USERPROFILE%\.cache\lm-studio']

@@ -1,8 +1,9 @@
 //! Lumen — backend Tauri.
 //!
-//! Jalon 3 : analyse du disque (crate `scan`) exposée par des commandes typées ; `safety` reste
-//! en simulation seule. Les modules suivants arrivent jalon par jalon : rules/ et reco/ (4)…
+//! Jalon 4 : analyse du disque (crate `scan`), règles appliquées (crate `rules` : statuts,
+//! recommandations, KPI) ; `safety` reste en simulation seule jusqu'au jalon 5.
 
+mod analysis;
 mod error;
 mod scanning;
 
@@ -31,6 +32,9 @@ pub fn run() {
             scanning::scan_cancel,
             scanning::scan_summary,
             scanning::scan_tree,
+            scanning::recommendations,
+            scanning::recommendation_detail,
+            scanning::rule_kpis,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {

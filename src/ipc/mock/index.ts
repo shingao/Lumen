@@ -226,8 +226,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
 
   const notes = {
     safe: {
-      fr: "Suppression définitive : ces fichiers ne passent pas par la Corbeille.",
-      en: "Permanent deletion: these files do not go to the Recycle Bin.",
+      fr: "Corbeille par défaut : rien n'est supprimé définitivement sans ta double confirmation.",
+      en: "Recycle Bin by default: nothing is permanently deleted without your double confirmation.",
     },
     review: {
       fr: "Rien ne part sans ta confirmation. Relis la liste avant de lancer le script.",

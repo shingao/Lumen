@@ -3,7 +3,6 @@ import { cancelScan } from "../../app/scanning";
 import { useStore } from "../../app/store";
 import { Button } from "../../components/Button";
 import pop from "../../components/Popover.module.css";
-import { categoryOf } from "../../core/categories";
 import { formatBytes, formatCount } from "../../core/format";
 import { type MessageKey, useT } from "../../i18n";
 import type { TopProgress, TreeNode } from "../../ipc/types";
@@ -26,7 +25,8 @@ function liveRoot(tops: TopProgress[]): TreeNode {
     othersCount: null,
     files: t.files,
     lastOpened: Date.now(),
-    category: categoryOf(t.name, "tools"),
+    // Pendant l'analyse, aucune règle n'est encore appliquée : couleur neutre.
+    category: "system",
     status: "keep",
     reco: null,
     gain: 0,

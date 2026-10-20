@@ -31,6 +31,7 @@ all denylist::tests::chaque_entree_de_la_denylist
 all denylist::tests::faits_du_fichier
 all denylist::tests::parents_des_zones_protegees
 all denylist::tests::prefixe_verbatim_et_point_point
+all denylist::tests::secrets_et_configurations_jamais_supprimes
 all denylist::tests::variantes_de_casse
 all denylist::tests::zones_utilisateur_autorisees
 all path::tests::chaine_des_parents
@@ -74,4 +75,5 @@ windows win::tests::fixture_prefixe_verbatim_et_casse
 windows win::tests::fixture_profils_du_registre
 windows win::tests::fixture_progra_1_vers_program_files_refuse
 windows win::tests::fixture_simulation_ne_touche_a_rien
+windows win::tests::fixture_variables_des_regles
 windows win::tests::fixture_volume_fixe_avec_corbeille

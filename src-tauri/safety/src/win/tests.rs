@@ -19,7 +19,7 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::UI::Shell::{SHQueryRecycleBinW, SHQUERYRBINFO};
 
-use super::{long_path, profile_list, recycle, short_path, system_layout, volume_facts, WinProbe};
+use super::{long_path, profile_list, recycle, rule_variables, short_path, system_layout, volume_facts, WinProbe};
 use crate::bin::{DriveKind, RecycleBlock};
 use crate::allow::{Allowlist, Authority, RuleGrant, Scope};
 use crate::check::{Change, Checker, Expected, Refusal, SkipReason, Target, Verdict};
@@ -512,4 +512,24 @@ fn fixture_profils_du_registre() {
     let deny = DenyList::new(&other_layout);
     let checker = Checker { probe: &WinProbe, deny: &deny, allow: &f.allow, now: i64::MAX };
     assert_eq!(checker.check(&f.target(&s(&p))).refusal(), Some(&Refusal::Denied(DenyReason::OtherProfile)));
+}
+
+#[test]
+fn fixture_variables_des_regles() {
+    // Variables des règles (jalon 4) : dossiers connus réels, cohérents avec la disposition
+    // utilisée par la denylist.
+    let vars = rule_variables();
+    let get = |n: &str| vars.iter().find(|(k, _)| *k == n).map(|(_, p)| p.clone()).unwrap_or_else(|| panic!("{n} absente"));
+    let layout = system_layout().unwrap();
+    assert_eq!(get("USERPROFILE"), layout.profile);
+    assert_eq!(get("WINDIR"), layout.windows);
+    assert_eq!(get("SYSTEMDRIVE"), layout.windows.volume_root());
+    for n in ["USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "WINDIR", "PROGRAMFILES", "PROGRAMDATA"] {
+        assert!(Path::new(&get(n).display_string()).is_dir(), "{n}");
+    }
+    // Les dossiers de l'utilisateur ne sont jamais dans la denylist (le profil lui-même l'est).
+    let deny = DenyList::new(&layout);
+    for n in ["LOCALAPPDATA", "APPDATA", "TEMP"] {
+        assert_eq!(deny.check(&get(n).join("lumen-sonde").unwrap()), None, "{n}");
+    }
 }

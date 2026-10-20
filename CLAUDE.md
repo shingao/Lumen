@@ -17,7 +17,7 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 
 - Avancer **jalon par jalon** (liste dans `PROGRESS.md`), s'arrêter après chacun pour que l'utilisateur teste. Ne pas démarrer le suivant sans son accord.
 - Fin de jalon : `npm run check` vert, `cargo clippy --workspace --all-targets -- -D warnings` et `cargo test --workspace` verts, captures comparées à la maquette (`npm run captures`), `PROGRESS.md` à jour (fait / reste / décisions / écarts), checklist de test manuel, commit, push, **PR vers `main`**. Un jalon n'est terminé qu'avec la CI Windows verte.
-- Branche de travail : `claude/bold-mayer-llad39`, PR vers `main`. Commits en anglais, `milestone N: …`.
+- **Une branche et une PR par jalon** (depuis le jalon 4 : `claude/jalon-4-regles`…), PR vers `main`. Commits en anglais, `milestone N: …`.
 
 ## Stack
 
@@ -67,7 +67,7 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 - Avant chaque action, dans l'ordre : canonisation (`\\?\`, 8.3, casse, `..`) → liste blanche (règle ou sélection Dormants/Doublons) → denylist → aucun reparse point sur le chemin ni ses parents → anti-TOCTOU (file ID, taille, date de modif identiques au scan) → fichier non verrouillé (sinon ignoré et compté).
 - Corbeille par défaut (`IFileOperation`, annulable). Suppression définitive : option désactivée par défaut, double confirmation (taille + nombre). Commande officielle préférée à `Remove-Item`. Simulation par défaut ; exécution réelle après confirmation montrant total et liste. Un « À vérifier » n'est jamais coché par défaut.
 - Scripts générés : `-WhatIf` par défaut, chemins absolus validés par `safety/` uniquement, commentés.
-- Denylist codée en dur : `C:\Windows`, `Program Files`, `Program Files (x86)`, `ProgramData` (seules les commandes officielles des gouffres système y touchent) ; racines de volumes, EFI, `\Boot`, `\EFI`, `bootmgr`, `BOOTNXT` ; `System Volume Information`, `$Recycle.Bin`, `$Extend`, tout `$*` NTFS ; `pagefile.sys`, `swapfile.sys`, `hiberfil.sys` ; ruches (`NTUSER.DAT*`, `UsrClass.dat*`, `System32\config`) ; profils `Default`, `Public` et autres utilisateurs ; attribut SYSTEM ; un dossier contenant `.git` n'est jamais supprimé en entier.
+- Denylist codée en dur : `C:\Windows`, `Program Files`, `Program Files (x86)`, `ProgramData` (seules les commandes officielles des gouffres système y touchent) ; racines de volumes, EFI, `\Boot`, `\EFI`, `bootmgr`, `BOOTNXT` ; `System Volume Information`, `$Recycle.Bin`, `$Extend`, tout `$*` NTFS ; `pagefile.sys`, `swapfile.sys`, `hiberfil.sys` ; ruches (`NTUSER.DAT*`, `UsrClass.dat*`, `System32\config`) ; profils `Default`, `Public` et autres utilisateurs ; attribut SYSTEM ; un dossier contenant `.git` n'est jamais supprimé en entier ; **secrets et configurations**, où qu'ils soient (même dans un cache) : `.npmrc`, `.yarnrc*`, `.git-credentials`, `.netrc`, clés `id_rsa*`/`id_ed25519*`, `*.jks`/`*.keystore`/`*.pfx`/`*.p12`/`*.kdbx`/`*.ppk`, stockage des navigateurs et applis Electron (`Cookies`, `Login Data`, `Web Data`, `Local Storage`, `Session Storage`, `IndexedDB`, `Sessions`, `logins.json`, `key4.db`…), et dans le profil `~\.ssh`, `~\.aws`, `~\.azure`, `~\.kube`, `~\.gnupg`, `~\.gradle\gradle.properties`, `~\.gradle\init.d`, `~\.m2\settings*.xml`, `~\.cargo\credentials*`, `~\.cargo\config*`, `~\.docker\config.json`, `~\.android\adbkey*` (et leurs dossiers parents).
 - Déplacement intelligent : copie → vérification **BLAKE3 obligatoire** → jonction créée **et testée** (lecture d'un fichier à travers elle) → suppression **définitive** de l'original, annoncée comme telle ; rollback possible avant la suppression ; « Annuler le déplacement » recopie depuis la cible et retire la jonction.
 - Sans droits admin par défaut ; élévation (assistant séparé) seulement pour le scan MFT et les actions système, expliquée en une phrase.
 - Assistant élevé (`scan/src/win/helper.rs`) **muet et éphémère** : une seule mission (lire la MFT d'un volume désigné par sa lettre, disque fixe NTFS), aucun chemin ni commande en entrée ; tube créé par Lumen non élevé (nom aléatoire, première instance, DACL utilisateur, client en `SECURITY_IDENTIFICATION`) ; PID et exécutable du pair vérifiés des deux côtés ; jetons à usage unique ; arrêt seul après 10 s sans échange, à la fermeture de Lumen et après le scan. Exécutable vérifié avant lancement (`trust.rs` : sous Program Files, non modifiable sans droits admin) ; installeur `perMachine`. Tout nouveau processus élevé suit les mêmes règles.
@@ -89,7 +89,7 @@ src/
   ipc/             backend.ts (contrat), client.ts + tauri.ts (seuls contacts Tauri), mock/ (données de la maquette, analyse simulée), types.ts
   i18n/            fr.ts, en.ts
   styles/          tokens.css, fonts.css, global.css (+ contrast.test.ts)
-src-tauri/         Rust (workspace) : lib.rs, error.rs, scanning.rs (commandes de l'analyse) ; safety/ (crate garde-fou) ; scan/ (crate d'analyse) ; rules/… arrivent jalon par jalon
+src-tauri/         Rust (workspace) : lib.rs, error.rs, scanning.rs (commandes de l'analyse), analysis.rs (règles → DTO) ; safety/ (crate garde-fou) ; scan/ (crate d'analyse) ; rules/ (moteur de règles, rules.toml, sans-risque.txt)
 scripts/           captures.mjs, make-icon.mjs, check-safety-tests.mjs
 ```
 
@@ -105,6 +105,14 @@ Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `co
 - Parcours et MFT doivent donner les mêmes totaux : même classement (`scan/src/classify.rs`), test Windows `mft_identique_au_parcours`.
 - Le front ne reçoit que des tranches agrégées (`Scan::slice`) ; jamais d'UAC au démarrage ; MFT seulement si déjà élevé ou après « Scan rapide (admin) ».
 
+## Règles (`src-tauri/rules/`)
+
+- Données dans `rules/rules.toml` (embarqué), schéma strict (`schema.rs`) : une cible commence toujours par une variable connue, jamais un chemin absolu ; textes fr (référence) + en ; commandes de la liste fermée de `safety` seulement.
+- « Sans risque » = uniquement des données **régénérables** (`regenerated-by` obligatoire). `rules/sans-risque.txt` est généré par un test et relu à chaque changement (`LUMEN_UPDATE_RULE_LISTS=1 cargo test -p rules`). Un « À vérifier » n'est jamais coché par défaut.
+- Le moteur ne couvre jamais un élément de la denylist (vérifié pour chaque élément et son contenu), donc jamais un secret ; une règle vise un sous-dossier de cache explicite, jamais la racine d'un dossier d'outil (test) ; rien dans Téléchargements ; règles « commande » = mesure seulement ; un élément = une seule règle (la première du fichier).
+- Plus aucune catégorie devinée par nom côté front : catégories, statuts et gains viennent du moteur.
+- `.git` lu sans lancer git (`git.rs`), fichiers lus à date de dernier accès gelée (`fsread.rs`).
+
 ## Commandes
 
 ```bash
@@ -118,6 +126,7 @@ npm run build            # build du front
 npm run tauri build      # installeur NSIS (src-tauri/target/release/bundle/nsis/)
 npm run icon             # icônes depuis design/app-icon.svg
 node scripts/check-safety-tests.mjs   # tests de safety/ : présents, exécutés, aucun ignoré (tous sous Windows)
+cd src-tauri && LUMEN_UPDATE_RULE_LISTS=1 cargo test -p rules   # régénère rules/sans-risque.txt après un changement de règle « Sans risque »
 cd src-tauri && cargo run --release -p scan --example bench -- generate <dossier> 200000   # puis walk <dossier>, mft <dossier>
 cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo audit
 cd src-tauri && cargo clippy -p safety --target x86_64-pc-windows-msvc --all-targets   # depuis Linux : vérifie safety::win (blake3 en feature « pure » le temps de la commande)

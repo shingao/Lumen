@@ -1814,6 +1814,8 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 name = "lumen"
 version = "0.1.0"
 dependencies = [
+ "rules",
+ "safety",
  "scan",
  "serde",
  "serde_json",
@@ -2599,6 +2601,20 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+]
+
+[[package]]
+name = "rules"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide 0.8.9",
+ "safety",
+ "scan",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.8+spec-1.1.0",
+ "windows",
 ]
 
 [[package]]
