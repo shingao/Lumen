@@ -6,6 +6,9 @@
 mod recycle;
 #[cfg(test)]
 mod tests;
+mod volume;
+
+pub use volume::{long_path, profile_list, volume_facts};
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -25,6 +28,7 @@ use windows::Win32::UI::Shell::{
     FOLDERID_UserProfiles, FOLDERID_Windows, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
 };
 
+use crate::bin::VolumeFacts;
 use crate::denylist::SystemLayout;
 use crate::path::WinPath;
 use crate::probe::{Attributes, Facts, FileId, Probe, ProbeError};
@@ -112,7 +116,8 @@ impl Probe for WinProbe {
             }
             buf.resize(n + 1, 0);
         }
-        let real = from_utf16(&buf)?;
+        // Le chemin final est déjà en noms longs ; GetLongPathNameW le confirme (aucun 8.3 restant).
+        let real = long_path(&from_utf16(&buf)?);
         WinPath::parse(&real).map_err(|e| ProbeError::BadPath(format!("{real} : {e}")))
     }
 
@@ -174,6 +179,10 @@ impl Probe for WinProbe {
     }
 
     /// Ouverture sans aucun partage : échoue si un autre programme a l'élément ouvert.
+    fn volume_facts(&self, path: &WinPath) -> Result<VolumeFacts, ProbeError> {
+        volume_facts(path)
+    }
+
     fn is_locked(&self, path: &WinPath) -> Result<bool, ProbeError> {
         match open(path, GENERIC_READ.0, FILE_SHARE_NONE) {
             Ok(_) => Ok(false),
@@ -189,7 +198,7 @@ fn known_folder(id: &GUID) -> Result<WinPath, ProbeError> {
         let p = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).map_err(|e| probe_error(&e))?;
         let s = p.to_string();
         CoTaskMemFree(Some(p.0 as *const c_void));
-        let s = s.map_err(|_| ProbeError::BadPath("dossier connu illisible".into()))?;
+        let s = long_path(&s.map_err(|_| ProbeError::BadPath("dossier connu illisible".into()))?);
         WinPath::parse(&s).map_err(|e| ProbeError::BadPath(format!("{s} : {e}")))
     }
 }
@@ -200,13 +209,17 @@ pub fn system_layout() -> Result<SystemLayout, ProbeError> {
     if let Ok(x86) = known_folder(&FOLDERID_ProgramFilesX86) {
         program_files.push(x86);
     }
+    // Profil courant et autres profils comparés en chemins longs résolus, jamais par leur nom.
+    let profile = known_folder(&FOLDERID_Profile)?;
+    let other_profiles = profile_list()?.into_iter().filter(|p| p != &profile).collect();
     Ok(SystemLayout {
         windows: known_folder(&FOLDERID_Windows)?,
         program_files,
         program_data: known_folder(&FOLDERID_ProgramData)?,
         users: known_folder(&FOLDERID_UserProfiles)?,
-        profile: known_folder(&FOLDERID_Profile)?,
+        profile,
         public: known_folder(&FOLDERID_Public)?,
+        other_profiles,
     })
 }
 

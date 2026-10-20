@@ -2,6 +2,7 @@
 //! L'implémentation réelle est `safety::win::WinProbe` (Win32) ; les tests portables utilisent
 //! une sonde en mémoire pour vérifier la logique du pipeline.
 
+use crate::bin::VolumeFacts;
 use crate::path::WinPath;
 
 /// Identité NTFS d'un fichier : numéro de série du volume + file ID 128 bits.
@@ -51,13 +52,16 @@ pub trait Probe {
     fn facts(&self, path: &WinPath) -> Result<Facts, ProbeError>;
     /// Un autre programme a l'élément ouvert.
     fn is_locked(&self, path: &WinPath) -> Result<bool, ProbeError>;
+    /// Type de lecteur et état de la Corbeille du volume qui porte `path`.
+    fn volume_facts(&self, path: &WinPath) -> Result<VolumeFacts, ProbeError>;
 }
 
 /// Sonde en mémoire pour les tests portables de la logique (pas pour les tests Windows).
 #[cfg(test)]
 pub(crate) mod memory {
     use super::*;
-    use crate::path::fold;
+    use crate::bin::DriveKind;
+    use crate::path::{fold, Prefix};
     use std::cell::RefCell;
     use std::collections::HashMap;
 
@@ -75,6 +79,8 @@ pub(crate) mod memory {
         /// Alias 8.3 → nom long, par dossier parent.
         short_names: HashMap<String, String>,
         next_id: RefCell<u128>,
+        /// État de volume par lettre de lecteur (disque fixe avec Corbeille par défaut).
+        volumes: HashMap<char, VolumeFacts>,
     }
 
     fn key(p: &WinPath) -> String {
@@ -112,6 +118,10 @@ pub(crate) mod memory {
 
         pub fn junction(&self, raw: &str, target: &str) -> WinPath {
             self.insert(raw, true, 0, Some(target))
+        }
+
+        pub fn volume(&mut self, drive: char, facts: VolumeFacts) {
+            self.volumes.insert(drive, facts);
         }
 
         pub fn short_name(&mut self, short: &str, long: &str) {
@@ -173,6 +183,14 @@ pub(crate) mod memory {
         fn is_locked(&self, path: &WinPath) -> Result<bool, ProbeError> {
             let real = self.resolve(path)?;
             Ok(self.entries.borrow().get(&key(&real)).ok_or(ProbeError::NotFound)?.locked)
+        }
+
+        fn volume_facts(&self, path: &WinPath) -> Result<VolumeFacts, ProbeError> {
+            let fixed = VolumeFacts { kind: DriveKind::Fixed, subst: false, recycle_disabled: false, max_bytes: None };
+            Ok(match path.prefix() {
+                Prefix::Drive(d) => self.volumes.get(d).copied().unwrap_or(fixed),
+                Prefix::Unc { .. } => VolumeFacts { kind: DriveKind::Remote, ..fixed },
+            })
         }
     }
 }

@@ -4,6 +4,7 @@
 //! Jalon 2 : seule la simulation est disponible. `execute` refuse toute exécution réelle
 //! (`REAL_EXECUTION_ENABLED = false`) ; elle sera branchée au jalon 5.
 
+use crate::bin::recycle_allowed;
 use crate::check::{Checker, Refusal, SkipReason, Target, Validated, Verdict};
 use crate::path::WinPath;
 use crate::probe::Probe;
@@ -40,6 +41,14 @@ impl Plan {
         for t in targets {
             match checker.check(t) {
                 Verdict::Accepted(v) => {
+                    // Corbeille : pré-contrôle du volume du chemin réel ET de celui demandé (un
+                    // lecteur SUBST ou réseau n'a pas de Corbeille). Sinon refus, jamais destruction.
+                    if mode == DeleteMode::Trash {
+                        if let Err(refusal) = recycle_ready(checker.probe, &v) {
+                            refused.push((t.path.clone(), refusal));
+                            continue;
+                        }
+                    }
                     // Un même élément ne figure qu'une fois, et jamais en plus d'un de ses parents.
                     if items.iter().any(|i: &Validated| v.path.starts_with(&i.path)) {
                         continue;
@@ -82,6 +91,14 @@ impl Plan {
     pub fn fingerprint_hex(&self) -> String {
         self.fingerprint.iter().map(|b| format!("{b:02x}")).collect()
     }
+}
+
+fn recycle_ready<P: Probe>(probe: &P, v: &Validated) -> Result<(), Refusal> {
+    for p in [&v.path, &v.requested] {
+        let facts = probe.volume_facts(p).map_err(|e| Refusal::Probe(e.to_string()))?;
+        recycle_allowed(&facts, v.bytes).map_err(Refusal::NoRecycleBin)?;
+    }
+    Ok(())
 }
 
 fn fingerprint(mode: DeleteMode, items: &[Validated]) -> [u8; 32] {
@@ -243,6 +260,37 @@ mod tests {
         assert_eq!(execute(&plan, &ok), Err(ExecError::RealExecutionDisabled));
         let wrong = Confirmation { fingerprint: [0; 32], permanent_acknowledged: true };
         assert_eq!(execute(&plan, &wrong), Err(ExecError::FingerprintMismatch));
+    }
+
+    #[test]
+    fn corbeille_indisponible_refusee_jamais_detruite() {
+        use crate::bin::{DriveKind, RecycleBlock, VolumeFacts};
+        let mut probe = MemoryProbe::new();
+        for d in ["E:\\Clé", "Z:\\Partage"] {
+            probe.dir(d);
+        }
+        probe.file("E:\\Clé\\a.bin", 10);
+        probe.file("Z:\\Partage\\b.bin", 10);
+        let fixed = VolumeFacts { kind: DriveKind::Fixed, subst: false, recycle_disabled: false, max_bytes: None };
+        probe.volume('E', VolumeFacts { kind: DriveKind::Removable, ..fixed });
+        probe.volume('Z', VolumeFacts { subst: true, ..fixed });
+        let mut allow = Allowlist::new();
+        for root in ["E:\\Clé", "Z:\\Partage"] {
+            allow.grant(RuleGrant { rule_id: "cache".into(), root: WinPath::parse(root).unwrap(), scope: Scope::Contents, min_age_secs: None });
+        }
+        let deny = DenyList::new(&test_layout());
+        let checker = Checker { probe: &probe, deny: &deny, allow: &allow, now: i64::MAX };
+        let targets: Vec<Target> = ["E:\\Clé\\a.bin", "Z:\\Partage\\b.bin"].iter().map(|r| target(&probe, r)).collect();
+
+        let trash = Plan::build(&checker, &targets, DeleteMode::Trash);
+        assert!(trash.items().is_empty());
+        let reasons: Vec<&Refusal> = trash.refused().iter().map(|(_, r)| r).collect();
+        assert_eq!(
+            reasons,
+            [&Refusal::NoRecycleBin(RecycleBlock::NotFixed(DriveKind::Removable)), &Refusal::NoRecycleBin(RecycleBlock::Subst)]
+        );
+        // La suppression définitive, elle, est un choix explicite : pas de pré-contrôle de Corbeille.
+        assert_eq!(Plan::build(&checker, &targets, DeleteMode::Permanent).items().len(), 2);
     }
 
     #[test]

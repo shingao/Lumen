@@ -14,6 +14,7 @@ use windows::Win32::UI::Shell::{
     FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING,
 };
 
+use crate::bin::{recycle_allowed, RecycleBlock};
 use crate::path::WinPath;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -24,6 +25,10 @@ pub enum RecycleError {
     Aborted,
     #[error("le fil de la Corbeille s'est arrêté inopinément")]
     Thread,
+    #[error("Corbeille indisponible : {0}")]
+    NoRecycleBin(RecycleBlock),
+    #[error("état du volume illisible : {0}")]
+    Volume(String),
 }
 
 impl From<windows::core::Error> for RecycleError {
@@ -64,7 +69,14 @@ fn recycle_on_this_thread(path: &str) -> Result<(), RecycleError> {
 }
 
 /// Envoie un élément déjà validé par `safety` à la Corbeille.
-pub(crate) fn recycle(path: &WinPath) -> Result<(), RecycleError> {
+///
+/// Deux protections contre une destruction silencieuse : le pré-contrôle explicite du volume
+/// (type de lecteur, SUBST, Corbeille active, taille maximale), refait ici juste avant l'appel,
+/// puis FOF_WANTNUKEWARNING, qui l'emporte sur FOF_NOCONFIRMATION si Windows devait malgré tout
+/// supprimer définitivement. FOF_NOCONFIRMATION n'est jamais utilisé seul.
+pub(crate) fn recycle(path: &WinPath, bytes: u64) -> Result<(), RecycleError> {
+    let facts = super::volume_facts(path).map_err(|e| RecycleError::Volume(e.to_string()))?;
+    recycle_allowed(&facts, bytes).map_err(RecycleError::NoRecycleBin)?;
     let display = path.display_string();
     // COM est initialisé sur un fil dédié pour ne jamais dépendre de l'appartement de l'appelant.
     std::thread::spawn(move || recycle_on_this_thread(&display)).join().map_err(|_| RecycleError::Thread)?

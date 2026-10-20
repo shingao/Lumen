@@ -10,6 +10,7 @@
 //! Le premier échec arrête le contrôle. Un fichier verrouillé est ignoré et compté, pas refusé.
 
 use crate::allow::{Allowlist, Authority};
+use crate::bin::RecycleBlock;
 use crate::denylist::{DenyList, DenyReason};
 use crate::path::{PathError, WinPath};
 use crate::probe::{Facts, FileId, Probe, ProbeError};
@@ -69,6 +70,8 @@ pub enum Refusal {
     Changed(Change),
     #[error("trop récent pour cette règle")]
     TooRecent,
+    #[error("Corbeille indisponible : {0}")]
+    NoRecycleBin(RecycleBlock),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +82,10 @@ pub enum SkipReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Validated {
+    /// Chemin réel (canonique), celui sur lequel on agit.
     pub path: WinPath,
+    /// Chemin tel que demandé (peut passer par un lecteur SUBST, un nom 8.3…).
+    pub requested: WinPath,
     pub facts: Facts,
     pub authority: Authority,
     pub bytes: u64,
@@ -204,7 +210,13 @@ impl<P: Probe> Checker<'_, P> {
             return Ok(Verdict::Skipped { path: canonical, reason: SkipReason::Locked });
         }
 
-        Ok(Verdict::Accepted(Validated { path: canonical, facts, authority: target.authority.clone(), bytes: target.bytes }))
+        Ok(Verdict::Accepted(Validated {
+            path: canonical,
+            requested: lexical,
+            facts,
+            authority: target.authority.clone(),
+            bytes: target.bytes,
+        }))
     }
 }
 

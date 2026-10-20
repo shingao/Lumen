@@ -13,10 +13,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::core::HSTRING;
-use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_SYSTEM};
+use windows::Win32::Storage::FileSystem::{
+    DefineDosDeviceW, GetLogicalDrives, SetFileAttributesW, DDD_REMOVE_DEFINITION, DEFINE_DOS_DEVICE_FLAGS,
+    FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_SYSTEM,
+};
 use windows::Win32::UI::Shell::{SHQueryRecycleBinW, SHQUERYRBINFO};
 
-use super::{recycle, short_path, system_layout, WinProbe};
+use super::{long_path, profile_list, recycle, short_path, system_layout, volume_facts, WinProbe};
+use crate::bin::{DriveKind, RecycleBlock};
 use crate::allow::{Allowlist, Authority, RuleGrant, Scope};
 use crate::check::{Change, Checker, Expected, Refusal, SkipReason, Target, Verdict};
 use crate::denylist::{DenyList, DenyReason};
@@ -411,7 +415,101 @@ fn fixture_corbeille_ifileoperation() {
     let path = canonical(&p);
     let drive = format!("{}\\", &path.display_string()[..2]);
     let before = recycle_bin_items(&drive);
-    recycle(&path).unwrap();
+    recycle(&path, 5).unwrap();
     assert!(!p.exists(), "le fichier doit avoir quitté son dossier");
     assert_eq!(recycle_bin_items(&drive), before + 1, "le fichier doit être dans la Corbeille, pas détruit");
+}
+
+#[test]
+fn fixture_volume_fixe_avec_corbeille() {
+    let f = Fixture::new("volume");
+    let p = f.file("a.txt", b"x");
+    let facts = volume_facts(&canonical(&p)).unwrap();
+    assert_eq!(facts.kind, DriveKind::Fixed);
+    assert!(!facts.subst);
+    assert!(!facts.recycle_disabled, "Corbeille désactivée sur le volume du dossier temporaire ?");
+}
+
+/// Lecteur SUBST temporaire (session courante), retiré à la fin du test.
+struct Subst {
+    drive: char,
+    target: String,
+}
+
+impl Subst {
+    fn new(target: &Path) -> Subst {
+        // SAFETY : appel sans paramètre.
+        let used = unsafe { GetLogicalDrives() };
+        let drive = ('H'..='Y').rev().find(|d| used & (1 << (*d as u32 - 'A' as u32)) == 0).unwrap();
+        let target = s(target);
+        // SAFETY : chaînes possédées.
+        unsafe { DefineDosDeviceW(DEFINE_DOS_DEVICE_FLAGS(0), &HSTRING::from(format!("{drive}:")), &HSTRING::from(target.as_str())) }
+            .unwrap();
+        Subst { drive, target }
+    }
+}
+
+impl Drop for Subst {
+    fn drop(&mut self) {
+        // SAFETY : retire exactement la définition créée par `new`.
+        unsafe {
+            let _ = DefineDosDeviceW(
+                DDD_REMOVE_DEFINITION,
+                &HSTRING::from(format!("{}:", self.drive)),
+                &HSTRING::from(self.target.as_str()),
+            );
+        }
+    }
+}
+
+#[test]
+fn adversarial_lecteur_subst_sans_corbeille() {
+    let f = Fixture::new("subst");
+    let p = f.file("via-subst.txt", b"precieux");
+    let subst = Subst::new(&f.cache);
+    let via = format!("{}:\\via-subst.txt", subst.drive);
+    assert!(Path::new(&via).exists(), "lecteur SUBST non créé");
+
+    // Pré-contrôle : le lecteur demandé est un SUBST, sans Corbeille.
+    let facts = volume_facts(&wp(&via)).unwrap();
+    assert!(facts.subst, "{facts:?}");
+
+    // Le contrôle de sécurité passe (le chemin réel est dans la zone autorisée)…
+    let t = f.target(&via);
+    assert!(f.check(&t).is_accepted());
+    // … mais l'envoi à la Corbeille est refusé, et rien n'est supprimé.
+    let plan = Plan::build(&f.checker(), std::slice::from_ref(&t), DeleteMode::Trash);
+    assert!(plan.items().is_empty());
+    assert_eq!(plan.refused()[0].1, Refusal::NoRecycleBin(RecycleBlock::Subst));
+    assert!(matches!(recycle(&wp(&via), 8), Err(super::recycle::RecycleError::NoRecycleBin(RecycleBlock::Subst))));
+    assert_eq!(fs::read(&p).unwrap(), b"precieux");
+}
+
+#[test]
+fn fixture_profils_du_registre() {
+    let layout = system_layout().unwrap();
+    let profiles = profile_list().unwrap();
+    // Le profil courant figure dans ProfileList, comparé en chemin long résolu.
+    assert!(profiles.contains(&layout.profile), "{} absent de {profiles:?}", layout.profile);
+    // Tous les autres profils du registre sont refusés, où qu'ils soient.
+    let deny = DenyList::new(&layout);
+    for other in profiles.iter().filter(|p| **p != layout.profile) {
+        assert!(deny.check(other).is_some(), "{other}");
+        assert!(deny.check(&other.join("AppData").unwrap()).is_some(), "{other}");
+    }
+
+    // Le nom court 8.3 du profil courant résout vers le même chemin long : pas « un autre profil ».
+    let short = short_path(&layout.profile).unwrap();
+    assert_eq!(wp(&long_path(&short)), layout.profile, "{short}");
+    let temp = canonical(&std::env::temp_dir());
+    assert_eq!(deny.check(&temp.join("x.tmp").unwrap()), None);
+
+    // Un dossier au nom anodin, déclaré comme profil d'un autre compte : refusé par le pipeline.
+    let f = Fixture::new("profil");
+    let p = f.file("notes.txt", b"x");
+    let mut other_layout = layout.clone();
+    other_layout.other_profiles.push(canonical(&f.cache));
+    let deny = DenyList::new(&other_layout);
+    let checker = Checker { probe: &WinProbe, deny: &deny, allow: &f.allow, now: i64::MAX };
+    assert_eq!(checker.check(&f.target(&s(&p))).refusal(), Some(&Refusal::Denied(DenyReason::OtherProfile)));
 }

@@ -52,9 +52,12 @@ pub struct SystemLayout {
     pub program_data: WinPath,
     /// Dossier des profils (`C:\Users`).
     pub users: WinPath,
-    /// Profil de l'utilisateur courant.
+    /// Profil de l'utilisateur courant (chemin long résolu).
     pub profile: WinPath,
     pub public: WinPath,
+    /// Profils des autres comptes, lus dans le registre (ProfileList) et résolus en chemins
+    /// longs : protégés où qu'ils soient, quel que soit leur nom.
+    pub other_profiles: Vec<WinPath>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +116,13 @@ impl DenyList {
             }
         }
         add(Some(layout.public.clone()), Subtree, SharedProfile);
+        for other in &layout.other_profiles {
+            // Un profil listé dans le registre qui contiendrait le profil courant (configuration
+            // anormale) ne doit pas bloquer celui-ci : on ne garde que les profils distincts.
+            if !layout.profile.starts_with(other) {
+                add(Some(other.clone()), Subtree, OtherProfile);
+            }
+        }
         add(Some(layout.profile.clone()), Exact, ProfileRoot);
 
         DenyList { zones, users, profile: layout.profile.clone() }
@@ -200,6 +210,7 @@ pub(crate) fn test_layout() -> SystemLayout {
         users: p("C:\\Users"),
         profile: p("C:\\Users\\Arthur"),
         public: p("C:\\Users\\Public"),
+        other_profiles: vec![p("C:\\Users\\Bob"), p("D:\\Comptes\\claire.DOMAINE")],
     }
 }
 
@@ -320,6 +331,23 @@ mod tests {
         ] {
             assert_eq!(deny(raw), None, "{raw}");
         }
+    }
+
+    #[test]
+    fn autres_profils_du_registre_quel_que_soit_leur_nom() {
+        // Profil d'un autre compte hors de C:\Users : protégé parce qu'il est dans ProfileList,
+        // pas à cause de son nom.
+        assert_eq!(deny("D:\\Comptes\\claire.DOMAINE\\Documents\\x.docx"), Some(OtherProfile));
+        assert_eq!(deny("d:\\comptes\\CLAIRE.domaine"), Some(OtherProfile));
+        assert_eq!(deny("D:\\Comptes"), Some(OtherProfile));
+        assert_eq!(deny("D:\\Comptes\\claire.DOMAINE2\\x"), None);
+        // Le profil courant n'est jamais traité comme un autre profil, même au nom proche.
+        let layout = SystemLayout {
+            profile: WinPath::parse("D:\\Comptes\\claire.DOMAINE\\arthur").unwrap(),
+            ..test_layout()
+        };
+        let list = DenyList::new(&layout);
+        assert_eq!(list.check(&WinPath::parse("D:\\Comptes\\claire.DOMAINE\\arthur\\AppData\\x").unwrap()), None);
     }
 
     #[test]
