@@ -1,0 +1,126 @@
+.bar {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-left: 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-app);
+  user-select: none;
+}
+
+.brand {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.name {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-title);
+}
+
+.search {
+  flex: 0 1 420px;
+  min-width: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-field);
+  background: var(--bg-container);
+  cursor: text;
+  text-align: left;
+}
+
+.searchIcon {
+  display: inline-flex;
+  color: var(--text-label);
+}
+
+.placeholder {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-12-5);
+  color: var(--text-label);
+}
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-10-5);
+  color: var(--text-label);
+  border: 1px solid var(--border);
+  border-radius: var(--r-kbd);
+  padding: 1px 5px;
+  background: var(--bg-app);
+  white-space: nowrap;
+}
+
+.end {
+  flex: 1 1 0;
+  align-self: stretch;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.tools {
+  display: flex;
+  gap: 2px;
+}
+
+.tool {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--r-ghost);
+  background: transparent;
+  color: var(--text-label);
+}
+
+.tool:hover,
+.tool[aria-pressed="true"] {
+  background: var(--bg-sunken);
+  color: var(--text-1);
+}
+
+.window {
+  align-self: stretch;
+  display: flex;
+}
+
+.win {
+  width: 46px;
+  border: 0;
+  background: transparent;
+  color: var(--win-btn-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.win:hover {
+  background: var(--win-btn-hover);
+}
+
+.close:hover {
+  background: var(--win-close-hover);
+  color: var(--win-close-fg);
+}
+
+.win:focus-visible {
+  outline-offset: -2px;
+}

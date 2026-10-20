@@ -1,0 +1,30 @@
+.root {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+}
+
+.item {
+  border: 0;
+  border-radius: var(--r-seg-btn);
+  padding: 5px 12px;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  background: transparent;
+  color: var(--text-label-sunken);
+  white-space: nowrap;
+}
+
+.item:hover {
+  color: var(--text-1);
+}
+
+.item[data-on] {
+  background: var(--bg-container);
+  color: var(--text-1);
+  box-shadow: var(--shadow-seg);
+}

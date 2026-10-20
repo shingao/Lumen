@@ -1,0 +1,129 @@
+.panel {
+  flex: 1 1 auto;
+  background: var(--bg-container);
+  border: 1px solid var(--border);
+  border-radius: var(--r-container);
+  padding: 12px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -8px;
+  border: 0;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: var(--r-ghost);
+  font-size: var(--fs-12-5);
+  font-weight: var(--fw-medium);
+  color: var(--text-4);
+}
+
+.back:hover {
+  background: var(--bg-sunken);
+  color: var(--text-1);
+}
+
+.title {
+  font-size: var(--fs-15);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-title);
+}
+
+.version {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-label);
+}
+
+.columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 24px;
+}
+
+.column {
+  flex: 1 1 440px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.groupTitle {
+  padding: 0 2px;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
+}
+
+.rows {
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 12px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border-soft);
+}
+
+.rowText {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowLabel {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.rowHint {
+  font-size: var(--fs-11-5);
+  color: var(--text-label);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+}
+
+.rowControl {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.value {
+  font-size: var(--fs-12-5);
+  color: var(--text-1);
+}

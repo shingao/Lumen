@@ -1,0 +1,76 @@
+/* Conteneur principal de la maquette : fond blanc, bord, rayon 16. */
+.panel {
+  flex: 1 1 auto;
+  background: var(--bg-container);
+  border: 1px solid var(--border);
+  border-radius: var(--r-container);
+  overflow: hidden;
+}
+
+.split {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.aside {
+  flex: 1 1 400px;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.stub {
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.heading {
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--fs-15);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-title);
+  color: var(--text-1);
+}
+
+.subtitle {
+  margin-top: 3px;
+  font-size: var(--fs-12-5);
+  color: var(--text-label);
+}
+
+.empty {
+  flex: 1 1 auto;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-pop);
+  background: var(--bg-app);
+  padding: 24px;
+  text-align: center;
+  font-size: var(--fs-12-5);
+  color: var(--text-label);
+}
+
+.milestone {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-label);
+}

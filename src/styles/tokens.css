@@ -1,0 +1,206 @@
+/*
+ * Lumen — design tokens.
+ * Seul fichier (avec la liste de stylelint) autorisé à contenir des couleurs, tailles et durées en dur.
+ * Clair = :root ; sombre = [data-theme="dark"] (même structure, valeurs transposées).
+ * Source : brief + design/lumen-mockup.html.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg-app: #FAFAF9;
+  --bg-container: #FFFFFF;
+  --bg-sunken: #F5F5F4;          /* fond du contrôle segmenté, survol de ligne, piste des barres */
+  --border: #E7E5E4;
+  --border-soft: #F0EEEC;        /* séparateurs internes des listes */
+  --underline: #D6D3D1;          /* soulignement des liens-boutons */
+
+  /* Texte */
+  --text-1: #1C1917;
+  --text-2: #292524;             /* titres de tuiles, chemins listés */
+  --text-3: #44403C;             /* titres de groupes, noms de sous-tuiles, liens-boutons */
+  --text-4: #57534E;             /* tailles sur les tuiles, texte secondaire fort */
+  --text-label: #78716C;         /* labels Inter 11–13 px */
+  --text-faint: #A8A29E;         /* séparateurs de chemin, numéros de ligne (décoratif) */
+  --text-label-sunken: #6B655F;  /* labels sur --bg-sunken : #78716C n'y atteint que 4,4:1 */
+
+  /* Catégories */
+  --cat-media: #DCD6F7;          /* Documents & médias */
+  --cat-code: #F8D7DA;           /* Projets de code */
+  --cat-packages: #CDEBE0;       /* Caches de paquets */
+  --cat-tools: #FBE3CF;          /* Outils dev & autres */
+  --cat-android: #D6E6F5;        /* SDK Android / émulateurs */
+  --cat-ai: #E2E8F0;             /* Modèles IA */
+  --cat-games: #F3E8C9;          /* Jeux */
+
+  /* Statuts */
+  --st-safe: #D3ECDF;
+  --st-safe-dot: #2F9E6E;
+  --st-review: #F7E2B4;
+  --st-review-dot: #D98A1C;
+  --st-keep: #EEECE9;
+  --st-keep-dot: #A8A29E;
+
+  /* Gains affichés sur les tuiles et barres de proportion (maquette) */
+  --delta-safe: #166534;
+  --delta-review: #92400E;
+  --bar-safe: #4FA57F;
+  --bar-review: #D98A1C;
+
+  /* Mode Âge : dégradé neutre, du plus récent (0) au plus ancien (4) */
+  --age-0: #F5F5F4;
+  --age-1: #E7E5E4;
+  --age-2: #D6D3D1;
+  --age-3: #C2BCB6;
+  --age-4: #ADA69F;
+
+  /* Boutons */
+  --btn-primary-bg: #1C1917;
+  --btn-primary-fg: #FFFFFF;
+  --btn-clean-bg: #15803D;
+  --btn-clean-fg: #FFFFFF;
+  --check-accent: #1C1917;
+  --toggle-on: #1C1917;
+  --toggle-off: #D6D3D1;
+  --toggle-thumb: #FFFFFF;
+
+  /* Signature : hachures « sans risque » */
+  --hatch-line: rgba(28, 25, 23, 0.17);
+  --hatch: repeating-linear-gradient(135deg, var(--hatch-line) 0 1px, transparent 1px 6px);
+
+  /* Tuiles */
+  --tile-veil: rgba(255, 255, 255, 0.45);   /* éclaircit les sous-tuiles */
+  --tile-ring: #1C1917;
+  --tile-dim: 0.26;                          /* opacité des tuiles estompées */
+  --swatch-border: rgba(28, 25, 23, 0.08);
+
+  /* Contrôles de fenêtre (Windows 11) */
+  --win-btn-fg: #44403C;
+  --win-btn-hover: rgba(28, 25, 23, 0.06);
+  --win-close-hover: #C42B1C;
+  --win-close-fg: #FFFFFF;
+
+  /* Ombres (légères uniquement) */
+  --shadow-pop: 0 6px 20px rgba(28, 25, 23, 0.08);
+  --shadow-seg: 0 0 0 1px var(--border);
+  --scrim: rgba(28, 25, 23, 0.18);
+  --focus-ring: #1C1917;
+
+  /* Typographie */
+  --font-sans: "Inter Variable", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --fs-10-5: 10.5px;
+  --fs-11: 11px;
+  --fs-11-5: 11.5px;
+  --fs-12: 12px;
+  --fs-12-5: 12.5px;
+  --fs-13: 13px;
+  --fs-13-5: 13.5px;
+  --fs-15: 15px;
+  --fs-17: 17px;
+  --fs-18: 18px;
+  --fs-24: 24px;
+  --fs-26: 26px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --ls-tight: -0.02em;
+  --ls-title: -0.01em;
+  --ls-heading: -0.015em;
+
+  /* Rayons */
+  --r-container: 16px;
+  --r-tile: 6px;
+  --r-tile-child: 5px;
+  --r-tile-tiny: 4px;
+  --r-seg: 9px;
+  --r-seg-btn: 6px;
+  --r-field: 8px;
+  --r-btn: 8px;
+  --r-pop: 10px;
+  --r-row: 10px;
+  --r-ghost: 7px;
+  --r-kbd: 5px;
+  --r-swatch: 3px;
+  --r-bar: 2px;
+  --r-pill: 999px;
+
+  /* Espacements de la treemap */
+  --tile-gap: 3px;
+
+  /* Mouvement */
+  --dur-theme: 150ms;
+  --dur-fast: 150ms;
+  --dur-tile: 200ms;
+  --dur-flash: 1600ms;
+  --ease: ease;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-app: #0C0C0B;
+  --bg-container: #161615;
+  --bg-sunken: #1F1E1C;
+  --border: #2A2826;
+  --border-soft: #22211F;
+  --underline: #57534E;
+
+  --text-1: #EDEBE8;
+  --text-2: #E7E5E4;
+  --text-3: #D6D3D1;
+  --text-4: #C4BFBA;
+  --text-label: #A8A29E;
+  --text-faint: #78716C;
+  --text-label-sunken: #A8A29E;
+
+  --cat-media: #34304A;
+  --cat-code: #452A2E;
+  --cat-packages: #1E3A31;
+  --cat-tools: #45342A;
+  --cat-android: #22344A;
+  --cat-ai: #2A3039;
+  --cat-games: #3F3823;
+
+  --st-safe: #173528;
+  --st-safe-dot: #3FBF87;
+  --st-review: #43351A;
+  --st-review-dot: #F0A33A;
+  --st-keep: #22211F;
+  --st-keep-dot: #78716C;
+
+  --delta-safe: #6FCF9E;
+  --delta-review: #F0B45A;
+  --bar-safe: #3FBF87;
+  --bar-review: #F0A33A;
+
+  --age-0: #232220;
+  --age-1: #2F2D2A;
+  --age-2: #3E3B37;
+  --age-3: #504C47;
+  --age-4: #645F59;
+
+  /* « Copier le script » s'inverse, « Nettoyer » reste vert */
+  --btn-primary-bg: #EDEBE8;
+  --btn-primary-fg: #0C0C0B;
+  --btn-clean-bg: #15803D;
+  --btn-clean-fg: #FFFFFF;
+  --check-accent: #EDEBE8;
+  --toggle-on: #EDEBE8;
+  --toggle-off: #44403C;
+  --toggle-thumb: #FFFFFF;
+
+  --hatch-line: rgba(237, 235, 232, 0.14);
+
+  --tile-veil: rgba(22, 22, 21, 0.45);       /* assombrit les sous-tuiles vers le conteneur */
+  --tile-ring: #EDEBE8;
+  --swatch-border: rgba(237, 235, 232, 0.12);
+
+  --win-btn-fg: #D6D3D1;
+  --win-btn-hover: rgba(237, 235, 232, 0.08);
+
+  --shadow-pop: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --scrim: rgba(0, 0, 0, 0.45);
+  --focus-ring: #EDEBE8;
+}

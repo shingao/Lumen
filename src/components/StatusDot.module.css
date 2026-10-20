@@ -1,0 +1,22 @@
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dot[data-status="safe"] {
+  background: var(--st-safe-dot);
+}
+
+.dot[data-status="review"] {
+  background: var(--st-review-dot);
+}
+
+.dot[data-status="keep"] {
+  background: var(--st-keep-dot);
+}
+
+.dot[data-status="outline"] {
+  border: 1px solid var(--text-faint);
+}

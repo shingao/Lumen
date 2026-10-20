@@ -1,0 +1,15 @@
+# Toute suppression, tout déplacement et tout lancement de processus passe par le module safety/
+# (jalon 2) : ces appels sont interdits partout ailleurs. Seul safety/ pourra porter
+# #[allow(clippy::disallowed_methods)], ce qu'un test vérifiera.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+disallowed-methods = [
+  { path = "std::fs::remove_file", reason = "passer par safety/" },
+  { path = "std::fs::remove_dir", reason = "passer par safety/" },
+  { path = "std::fs::remove_dir_all", reason = "passer par safety/" },
+  { path = "std::fs::rename", reason = "passer par safety/" },
+  { path = "std::fs::copy", reason = "passer par safety/" },
+  { path = "std::process::Command::new", reason = "passer par safety/ (liste fermée de binaires)" },
+]

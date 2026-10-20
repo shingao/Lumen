@@ -1,0 +1,230 @@
+.map {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 520px;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  animation: appear var(--dur-fast) var(--ease);
+}
+
+@keyframes appear {
+  from {
+    opacity: 0.4;
+  }
+}
+
+/* Tuile de premier niveau (maquette : rayon 6, padding 8/9/7, gap 5). */
+.tile {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 9px 7px;
+  border-radius: var(--r-tile);
+  overflow: hidden;
+  background: var(--tile-bg);
+  transition:
+    opacity var(--dur-tile) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.tile[data-small] {
+  gap: 2px;
+  padding: 6px 8px;
+}
+
+.tile[data-hatch],
+.child[data-hatch] {
+  background: var(--hatch), var(--tile-bg);
+}
+
+.tile[data-clickable] {
+  cursor: pointer;
+}
+
+.tile[data-hover],
+.child[data-hover] {
+  box-shadow: 0 0 0 1.5px var(--tile-ring);
+}
+
+.tile[data-dim],
+.child[data-dim] {
+  opacity: var(--tile-dim);
+}
+
+.tile:focus-visible {
+  outline-offset: -2px;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1px 8px;
+  min-width: 0;
+}
+
+.name {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+
+.tile[data-small] .name {
+  font-size: var(--fs-11-5);
+}
+
+.delta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-10-5);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.delta[data-status="safe"] {
+  color: var(--delta-safe);
+}
+
+.delta[data-status="review"] {
+  color: var(--delta-review);
+}
+
+.foot {
+  margin-top: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sous-tuiles (maquette : rayon 5, padding 5/7, voile clair sur la couleur). */
+.children {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.child {
+  position: absolute;
+  display: flex;
+  flex-wrap: wrap;
+  place-content: flex-start space-between;
+  align-items: baseline;
+  gap: 1px 6px;
+  padding: 5px 7px;
+  border-radius: var(--r-tile-child);
+  overflow: hidden;
+  background: linear-gradient(var(--tile-veil), var(--tile-veil)), var(--tile-bg);
+  transition:
+    opacity var(--dur-tile) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.child[data-tiny] {
+  border-radius: var(--r-tile-tiny);
+}
+
+.childName {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+
+.childSize {
+  font-family: var(--font-mono);
+  font-size: var(--fs-10-5);
+  color: var(--text-4);
+  white-space: nowrap;
+}
+
+/* Paliers anciens du mode Âge (fonds plus marqués) : textes au ton fort pour rester AA. */
+.tile[data-deep] .foot,
+.child[data-deep] .childName,
+.child[data-deep] .childSize {
+  color: var(--text-2);
+}
+
+.tile[data-deep] .delta,
+.child[data-deep] .delta {
+  color: var(--text-1);
+}
+
+.empty {
+  padding: 24px;
+  font-size: var(--fs-12-5);
+  color: var(--text-label);
+}
+
+/* Infobulle (maquette : 268 px, rayon 10, padding 11/12/12). */
+.tooltip {
+  position: absolute;
+  z-index: 5;
+  width: 268px;
+  padding: 11px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  pointer-events: none;
+}
+
+.tipPath {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  color: var(--text-1);
+  word-break: break-all;
+}
+
+.tipGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.tipCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tipLabel {
+  font-size: var(--fs-11);
+  color: var(--text-label);
+}
+
+.tipMono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+
+.tipText {
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+
+.tipStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}

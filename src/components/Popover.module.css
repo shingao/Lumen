@@ -1,0 +1,52 @@
+/* Style commun des surfaces flottantes : infobulle de la treemap, menus, palette, toast, astuces. */
+.pop {
+  background: var(--bg-container);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  box-shadow: var(--shadow-pop);
+}
+
+.menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 220px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 0;
+  border-radius: var(--r-seg-btn);
+  padding: 7px 10px;
+  background: transparent;
+  text-align: left;
+  font-size: var(--fs-12-5);
+  color: var(--text-1);
+}
+
+.menuItem:disabled {
+  color: var(--text-label);
+  cursor: default;
+}
+
+.menuItem:hover:not(:disabled),
+.menuItem[data-active] {
+  background: var(--bg-sunken);
+}
+
+.menuHint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-label);
+}
+
+.separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft);
+}

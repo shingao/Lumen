@@ -1,0 +1,33 @@
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-11-5);
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-swatch);
+  border: 1px solid var(--swatch-border);
+  background: var(--tile-bg);
+}
+
+.swatch[data-hatch] {
+  background: var(--hatch), var(--tile-bg);
+}
+
+.note {
+  font-size: var(--fs-11-5);
+  font-style: italic;
+  color: var(--text-label);
+}

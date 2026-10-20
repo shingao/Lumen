@@ -1,0 +1,114 @@
+/* Maquette : section flex 999 / 600 px, padding 18/20/16, gap 12. */
+.explorer {
+  flex: 999 1 600px;
+  min-width: 0;
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.heading {
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--fs-15);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-title);
+  color: var(--text-1);
+}
+
+.subtitle {
+  margin-top: 3px;
+  font-size: var(--fs-12-5);
+  color: var(--text-label);
+}
+
+.crumbBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  background: var(--bg-app);
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-label);
+}
+
+.crumbItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sep {
+  color: var(--text-faint);
+}
+
+.drive,
+.crumbLink {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+.drive {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: -3px -2px -3px -5px;
+  padding: 3px 4px 3px 5px;
+  border-radius: var(--r-seg-btn);
+}
+
+.drive:hover,
+.drive[aria-expanded="true"] {
+  background: var(--bg-sunken);
+  color: var(--text-1);
+}
+
+.crumbLink:hover {
+  color: var(--text-1);
+  text-decoration: underline;
+  text-decoration-color: var(--underline);
+  text-underline-offset: 3px;
+}
+
+.current {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.total {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+  white-space: nowrap;
+}

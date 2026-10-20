@@ -1,0 +1,86 @@
+{
+  "extends": [
+    "stylelint-config-standard"
+  ],
+  "rules": {
+    "color-no-hex": true,
+    "color-named": "never",
+    "function-disallowed-list": [
+      "rgb",
+      "rgba",
+      "hsl",
+      "hsla",
+      "cubic-bezier"
+    ],
+    "unit-disallowed-list": [
+      "ms",
+      "s"
+    ],
+    "declaration-property-value-allowed-list": {
+      "font-size": [
+        "/^var\\(/",
+        "/em$/",
+        "inherit"
+      ],
+      "font-weight": [
+        "/^var\\(/",
+        "inherit"
+      ],
+      "border-radius": [
+        "/var\\(/",
+        "0",
+        "50%",
+        "inherit"
+      ]
+    },
+    "selector-class-pattern": null,
+    "custom-property-pattern": null,
+    "value-keyword-case": [
+      "lower",
+      {
+        "camelCaseSvgKeywords": true,
+        "ignoreKeywords": [
+          "currentColor"
+        ]
+      }
+    ],
+    "selector-pseudo-class-no-unknown": [
+      true,
+      {
+        "ignorePseudoClasses": [
+          "global"
+        ]
+      }
+    ],
+    "import-notation": "string"
+  },
+  "overrides": [
+    {
+      "files": [
+        "src/styles/tokens*.css"
+      ],
+      "rules": {
+        "color-no-hex": null,
+        "color-named": null,
+        "function-disallowed-list": null,
+        "unit-disallowed-list": null,
+        "declaration-property-value-allowed-list": null,
+        "color-hex-length": null,
+        "declaration-block-single-line-max-declarations": null,
+        "alpha-value-notation": null,
+        "color-function-notation": null,
+        "color-function-alias-notation": null,
+        "number-max-precision": null,
+        "comment-empty-line-before": null,
+        "custom-property-empty-line-before": null,
+        "selector-not-notation": null,
+        "font-family-name-quotes": null,
+        "shorthand-property-no-redundant-values": null,
+        "length-zero-no-unit": null,
+        "rule-empty-line-before": null,
+        "declaration-empty-line-before": null,
+        "value-keyword-case": null
+      }
+    }
+  ]
+}
