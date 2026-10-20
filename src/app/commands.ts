@@ -1,5 +1,6 @@
 // Commandes nommées, utilisées par la palette (Ctrl K) et les raccourcis globaux.
 
+import { openCleanup } from "./cleaning";
 import { copyText } from "./clipboard";
 import { backend } from "../ipc/client";
 import { currentT, type Translator } from "../i18n";
@@ -42,12 +43,21 @@ export function commandList(): Command[] {
     })),
     { id: "settings", label: t("cmd.settings"), run: () => store.setSettingsOpen(true) },
     {
+      id: "clean",
+      label: t("cmd.clean"),
+      run: () => {
+        store.go("analyse");
+        openCleanup(useStore.getState().checked);
+      },
+    },
+    {
       id: "copy-script",
       label: t("cmd.copyScript"),
       run: () => {
-        const { checked } = useStore.getState();
+        const { checked, scan } = useStore.getState();
+        if (!scan.summary) return;
         void backend
-          .script(checked, true)
+          .script(scan.summary.scanId, checked)
           .then(copyText)
           .then((ok) => ok && store.showToast(t("preview.scriptCopied")));
       },

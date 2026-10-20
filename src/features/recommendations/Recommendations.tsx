@@ -1,3 +1,4 @@
+import { openCleanup } from "../../app/cleaning";
 import { useCopyFlash } from "../../app/clipboard";
 import { useKpis, useRecommendations } from "../../app/data";
 import { useStore } from "../../app/store";
@@ -66,6 +67,7 @@ export function Recommendations() {
   const checked = useStore((s) => s.checked);
   const setChecked = useStore((s) => s.setChecked);
   const showToast = useStore((s) => s.showToast);
+  const scanId = useStore((s) => s.scan.summary?.scanId ?? null);
   const recos = useRecommendations() ?? [];
   const rulesReady = useKpis()?.rulesReady ?? true;
   const [copied, copy] = useCopyFlash();
@@ -115,16 +117,16 @@ export function Recommendations() {
           <div className={styles.buttons}>
             <Button
               variant="primary"
-              disabled={selected.length === 0}
+              disabled={selected.length === 0 || scanId === null}
               onClick={() =>
-                void copy(backend.script(selected.map((r) => r.id), true)).then(
+                void copy(backend.script(scanId ?? 0, selected.map((r) => r.id))).then(
                   (ok) => ok && showToast(currentT()("preview.scriptCopied")),
                 )
               }
             >
               {copied ? t("reco.copied") : t("reco.copyScript")}
             </Button>
-            <Button variant="clean" disabled={selected.length === 0} onClick={() => showToast(currentT()("preview.later", { n: 5 }))}>
+            <Button variant="clean" disabled={selected.length === 0 || scanId === null} onClick={() => openCleanup(selected.map((r) => r.id))}>
               {t("reco.clean")}
             </Button>
           </div>

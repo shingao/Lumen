@@ -1,0 +1,113 @@
+// Nettoyage : plan validé par safety → confirmation → exécution réelle → bilan → journal.
+// Rien n'est fait sans la confirmation du plan affiché (son empreinte) ; le définitif demande
+// en plus une saisie (le total ou « SUPPRIMER »).
+
+import { backend } from "../ipc/client";
+import type { CleanMode } from "../ipc/types";
+import { CLEAN_CLOSED, useStore } from "./store";
+
+let subscribed = false;
+
+function subscribe(): void {
+  if (subscribed) return;
+  subscribed = true;
+  backend.onCleanEvent((e) => {
+    const { clean, setClean, bumpJournal } = useStore.getState();
+    const ours = (planId: number) => clean.plan?.planId === planId;
+    if (e.type === "progress") {
+      if (ours(e.progress.planId)) setClean({ progress: e.progress });
+    } else if (e.type === "done") {
+      if (!ours(e.report.planId)) return;
+      setClean({ step: "report", report: e.report, progress: null, cancelling: false });
+      bumpJournal();
+    } else if (ours(e.planId)) {
+      setClean({ step: "error", message: e.message, progress: null, cancelling: false });
+    }
+  });
+}
+
+async function plan(ids: string[], mode: CleanMode): Promise<void> {
+  const { scan, setClean } = useStore.getState();
+  const scanId = scan.summary?.scanId;
+  if (scanId === undefined) return;
+  setClean({ step: "loading", ids, mode, plan: null, report: null, message: null });
+  try {
+    const p = await backend.planCleanup(scanId, ids, mode);
+    // Une autre demande a pu remplacer celle-ci entre-temps.
+    const now = useStore.getState().clean;
+    if (now.step === "loading" && now.mode === mode && now.ids === ids) setClean({ step: "confirm", plan: p });
+  } catch (err) {
+    setClean({ step: "error", message: String(err) });
+  }
+}
+
+/** Ouvre la confirmation pour les recommandations données (Corbeille par défaut). */
+export function openCleanup(ids: string[]): void {
+  subscribe();
+  if (ids.length === 0) return;
+  void plan(ids, "trash");
+}
+
+/** Corbeille ↔ définitif (seulement si les réglages l'autorisent) : nouveau plan, nouvelle empreinte. */
+export function setCleanMode(mode: CleanMode): void {
+  const { clean, settings } = useStore.getState();
+  if (mode === "permanent" && !settings?.permanentDelete) return;
+  void plan(clean.ids, mode);
+}
+
+/** Premier bouton : Corbeille → exécution ; définitif → seconde confirmation. */
+export function confirmCleanup(): void {
+  const { clean, setClean } = useStore.getState();
+  if (clean.step !== "confirm" || !clean.plan) return;
+  if (clean.plan.mode === "permanent") {
+    setClean({ step: "permanent" });
+    return;
+  }
+  void execute(false);
+}
+
+/** La saisie attendue pour le définitif : le total affiché, ou « SUPPRIMER » (« DELETE »). */
+export function permanentPhraseOk(input: string, total: string): boolean {
+  const norm = (s: string) => s.replace(/[\s\u00a0\u202f]+/g, "").toUpperCase();
+  const typed = norm(input);
+  return typed.length > 0 && (typed === norm(total) || typed === "SUPPRIMER" || typed === "DELETE");
+}
+
+export function confirmPermanent(): void {
+  const { clean } = useStore.getState();
+  if (clean.step !== "permanent") return;
+  void execute(true);
+}
+
+async function execute(permanentAcknowledged: boolean): Promise<void> {
+  const { clean, setClean } = useStore.getState();
+  const p = clean.plan;
+  if (!p) return;
+  setClean({ step: "running", progress: null, cancelling: false });
+  try {
+    await backend.executePlan(p.planId, p.fingerprint, permanentAcknowledged);
+  } catch (err) {
+    setClean({ step: "error", message: String(err) });
+  }
+}
+
+/** Annulation prise en compte entre deux éléments ; sinon ferme sans rien faire. */
+export function cancelCleanup(): void {
+  const { clean, setClean } = useStore.getState();
+  if (clean.step === "running" && clean.plan) {
+    setClean({ cancelling: true });
+    void backend.cancelPlan(clean.plan.planId);
+    return;
+  }
+  if (clean.step === "permanent") {
+    setClean({ step: "confirm" });
+    return;
+  }
+  closeCleanup();
+}
+
+export function closeCleanup(): void {
+  const { clean } = useStore.getState();
+  if (clean.step === "running") return;
+  useStore.setState({ clean: CLEAN_CLOSED });
+}

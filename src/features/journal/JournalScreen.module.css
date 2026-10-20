@@ -1,0 +1,175 @@
+.actions,
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  overflow: hidden;
+}
+
+.action + .action {
+  border-top: 1px solid var(--border-soft);
+}
+
+.head {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto 120px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text-1);
+}
+
+.head:hover,
+.head[aria-expanded="true"] {
+  background: var(--bg-sunken);
+}
+
+.date {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-3);
+}
+
+.titleText,
+.itemText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.name {
+  font-size: var(--fs-12-5);
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint {
+  font-size: var(--fs-11-5);
+  color: var(--text-label);
+}
+
+.freed .hint {
+  font-weight: var(--fw-regular);
+}
+
+.freed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12-5);
+  font-weight: var(--fw-semibold);
+}
+
+.status {
+  justify-self: end;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--st-keep);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.status[data-status="ok"],
+.status[data-status="done"],
+.status[data-status="succeeded"],
+.status[data-status="restored"] {
+  background: var(--st-safe);
+}
+
+.status[data-status="partial"],
+.status[data-status="failed"],
+.status[data-status="left"],
+.status[data-status="refused"],
+.status[data-status="skipped"],
+.status[data-status="timedOut"],
+.status[data-status="notFound"],
+.status[data-status="error"] {
+  background: var(--st-review);
+}
+
+.detail {
+  padding: 4px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-sunken);
+}
+
+.items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.command summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.size {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-3);
+}
+
+.output {
+  margin-top: 6px;
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--r-field);
+  background: var(--bg-container);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  white-space: pre-wrap;
+}
+
+.detailActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (width <= 720px) {
+  .head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+/* Sur la surface en creux du détail : ton de libellé dédié (contraste AA). */
+.detail .hint {
+  color: var(--text-label-sunken);
+}
