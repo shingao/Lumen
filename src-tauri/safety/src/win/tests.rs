@@ -421,7 +421,7 @@ fn fixture_simulation_ne_touche_a_rien() {
     let plan = Plan::build(&f.checker(), &[f.target(&s(&a)), f.target(&s(&b))], DeleteMode::Trash);
     let dry = simulate(&plan);
     assert_eq!((dry.items, dry.bytes), (2, 6));
-    let _ = crate::script::render("Simulation", &plan, &[], true);
+    let _ = crate::script::render("Simulation", &plan, |_| None, 0);
     assert!(a.exists() && b.exists());
 }
 
@@ -438,11 +438,16 @@ fn fixture_corbeille_ifileoperation() {
     let f = Fixture::new("corbeille");
     let p = f.file("a recycler é.txt", b"lumen");
     let path = canonical(&p);
-    let drive = format!("{}\\", &path.display_string()[..2]);
-    let before = recycle_bin_items(&drive);
-    recycle(&path, 5).unwrap();
+    let id = WinProbe.facts(&path).unwrap().file_id;
+    let recycled = recycle(&path, 5).unwrap();
     assert!(!p.exists(), "le fichier doit avoir quitté son dossier");
-    assert_eq!(recycle_bin_items(&drive), before + 1, "le fichier doit être dans la Corbeille, pas détruit");
+    // Dans la Corbeille, pas détruit : même contenu, même identité, fiche $I qui le désigne
+    // (vérifié sur l'élément lui-même : d'autres tests utilisent la Corbeille en parallèle).
+    let bin = recycled.bin_path.expect("emplacement dans la Corbeille");
+    assert!(bin.contains("$Recycle.Bin") || bin.contains("$RECYCLE.BIN"), "{bin}");
+    assert_eq!(fs::read(&bin).unwrap(), b"lumen");
+    assert!(in_recycle_bin(&bin, &path, id));
+    assert!(recycle_bin_items(&format!("{}\\", &path.display_string()[..2])) >= 1);
 }
 
 #[test]

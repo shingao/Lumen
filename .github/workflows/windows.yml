@@ -35,6 +35,22 @@ jobs:
           echo "TEMP=$env:TEMP"
       - name: Tests de safety/ (jonctions, symlinks, 8.3, verrous, SYSTEM, Corbeille…)
         run: node scripts/check-safety-tests.mjs
+      # Le script copié s'exécute hors de safety/ : ses propres garde-fous sont testés sur de
+      # vraies fixtures (jonctions piégées, fichiers modifiés après la génération, expiration).
+      - name: Script PowerShell (Pester, Windows PowerShell 5.1)
+        shell: pwsh
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml -p safety --example script
+          $env:LUMEN_SCRIPT_GEN = (Resolve-Path src-tauri/target/debug/examples/script.exe).Path
+          if (-not (Get-Module -ListAvailable Pester | Where-Object { $_.Version -ge [version]'5.5.0' })) {
+            Install-Module Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          }
+          Import-Module Pester -MinimumVersion 5.5.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'scripts/ci/script.Tests.ps1'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
 
   # La partie pure de safety/ doit aussi passer hors de Windows.
   safety-portable:

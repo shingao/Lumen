@@ -69,8 +69,10 @@ all plan::tests::pas_de_doublon_ni_enfant_d_un_parent_deja_present
 all plan::tests::simulation_et_refus
 all script::tests::apostrophes_de_powershell_doublees
 all script::tests::chemins_longs_en_verbatim
-all script::tests::execution_reelle_et_definitive
-all script::tests::simulation_par_defaut_et_commentaires
+all script::tests::commandes_par_chemin_complet
+all script::tests::date_de_generation_et_expiration
+all script::tests::dossier_mesure_sans_suivre_les_liens
+all script::tests::simulation_par_defaut_et_garde_fous
 all script::tests::tailles_francaises
 all script::tests::titre_sans_saut_de_ligne
 
