@@ -899,12 +899,15 @@ mod tests {
         // Personne ne répond : ni tube (nom inconnu), ni jeton (tube muet).
         let lonely = HelperArgs { pipe: hex(&random_bytes::<16>().unwrap()), ..Channel::create().unwrap().helper_args('C') };
         let silent = Channel::create().unwrap();
+        let started = Instant::now();
         let a = spawn_child(&lonely.to_args()).unwrap();
         let b = spawn_child(&silent.helper_args('C').to_args()).unwrap();
         for child in [a, b] {
-            let (code, took) = wait_exit(&child, Duration::from_secs(20));
+            // Durée comptée depuis le lancement (le second assistant a pu finir pendant l'attente du premier).
+            let (code, _) = wait_exit(&child, Duration::from_secs(20));
+            let took = started.elapsed();
             assert_eq!(code, exit::TIMEOUT);
-            assert!(took >= Duration::from_secs(8) && took <= Duration::from_secs(15), "{took:?}");
+            assert!(took >= Duration::from_secs(8) && took <= Duration::from_secs(16), "{took:?}");
         }
         drop(silent);
     }

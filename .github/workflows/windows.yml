@@ -157,9 +157,10 @@ jobs:
       - name: Clippy (unwrap, panic et suppressions hors safety/ interdits)
         working-directory: src-tauri
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # Le scanner a son propre job (volume de test monté, administrateur) : pas de double exécution ici.
       - name: Tests Rust
         working-directory: src-tauri
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude scan
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
