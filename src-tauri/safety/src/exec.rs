@@ -100,6 +100,8 @@ pub struct CommandRun {
     pub stdout: String,
     pub stderr: String,
     pub duration_ms: u64,
+    /// Fichier de sortie de la commande (journal de DISM), rattaché au journal de Lumen.
+    pub log: Option<String>,
 }
 
 impl CommandRun {
@@ -122,6 +124,7 @@ impl CommandRun {
             stdout: String::new(),
             stderr: String::new(),
             duration_ms: 0,
+            log: None,
         }
     }
 }

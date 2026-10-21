@@ -18,6 +18,7 @@ import type {
   DuplicatesProgress,
   DuplicatesResult,
   LargestResult,
+  RestorePoints,
   SystemSinks,
   JournalAction,
   JournalDetail,
@@ -296,7 +297,8 @@ export function createTauriBackend(): Backend {
       return plan;
     },
 
-    executePlan: (planId, fingerprint, permanentAcknowledged) => invoke("plan_execute", { planId, fingerprint, permanentAcknowledged }),
+    executePlan: (planId, fingerprint, permanentAcknowledged, withoutRestorePoint) =>
+      invoke("plan_execute", { planId, fingerprint, permanentAcknowledged, withoutRestorePoint }),
 
     cancelPlan: (planId) => invoke("plan_cancel", { planId }),
 
@@ -322,6 +324,8 @@ export function createTauriBackend(): Backend {
       return () => offs.forEach((p) => void p.then((off) => off()));
     },
     systemSinks: () => invoke<SystemSinks>("system_sinks"),
+    readRestorePoints: () => invoke<RestorePoints>("restore_points_read"),
+    openSystemProtection: () => invoke("open_system_protection"),
     journal: () => invoke<JournalAction[]>("journal_list"),
     journalDetail: (actionId) => invoke<JournalDetail>("journal_detail", { actionId }),
     journalScript: (actionId) => invoke<string>("journal_script", { actionId }),

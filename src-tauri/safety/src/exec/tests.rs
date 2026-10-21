@@ -47,7 +47,7 @@ impl World {
     }
 
     fn run(&self, plan: &Plan, effects: &Fake<'_>) -> Report {
-        let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: true };
+        let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: true, without_restore_point: false };
         execute(plan, &ok, &self.checker(), effects, &AtomicBool::new(false), |_| {}).unwrap()
     }
 }
@@ -287,7 +287,7 @@ fn annulation_entre_deux_elements() {
     let plan = w.plan(&["C:\\Users\\Arthur\\cache\\index.json", "C:\\Users\\Arthur\\cache\\sous"], "cache", DeleteMode::Trash);
     let fx = Fake::new(&w.probe);
     let cancel = AtomicBool::new(false);
-    let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false };
+    let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false, without_restore_point: false };
     let r = execute(&plan, &ok, &w.checker(), &fx, &cancel, |e| {
         if matches!(e, Event::ItemDone { index: 0, .. }) {
             cancel.store(true, Ordering::SeqCst);
@@ -307,11 +307,11 @@ fn commandes_d_abord_jamais_elevees() {
     let plan = w.plan(&["C:\\Users\\Arthur\\cache\\sous"], "cache", DeleteMode::Trash).with_commands(vec![
         PlannedCommand::action(OfficialCommand::NpmCacheClean, Some(p(CACHE)), 500),
         PlannedCommand::prerequisite(OfficialCommand::GradleStop, false),
-        PlannedCommand::action(OfficialCommand::DismComponentCleanup, None, 0),
+        PlannedCommand::action(OfficialCommand::DismComponentCleanup(None), None, 0),
     ]);
     let fx = Fake::new(&w.probe);
     let mut order = Vec::new();
-    let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false };
+    let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false, without_restore_point: false };
     let r = execute(&plan, &ok, &w.checker(), &fx, &AtomicBool::new(false), |e| order.push(e)).unwrap();
     assert_eq!(*fx.commands.borrow(), [OfficialCommand::GradleStop, OfficialCommand::NpmCacheClean]);
     assert_eq!(r.commands[2].status, CommandStatus::NeedsElevation);
@@ -351,7 +351,7 @@ fn element_disparu_ou_remplace() {
 #[test]
 fn commandes_systeme_elevees_seulement_si_le_plan_l_autorise() {
     let w = World::new();
-    let base = w.plan(&[], "cache", DeleteMode::Trash).with_commands(vec![PlannedCommand::action(OfficialCommand::DismComponentCleanup, None, 0)]);
+    let base = w.plan(&[], "cache", DeleteMode::Trash).with_commands(vec![PlannedCommand::action(OfficialCommand::DismComponentCleanup(None), None, 0)]);
     let fx = Fake::new(&w.probe);
     let r = w.run(&base, &fx);
     assert_eq!(r.commands[0].status, CommandStatus::NeedsElevation);
@@ -359,10 +359,17 @@ fn commandes_systeme_elevees_seulement_si_le_plan_l_autorise() {
 
     let elevated = base.clone().with_elevation();
     assert_ne!(elevated.fingerprint(), base.fingerprint(), "l'empreinte couvre l'élévation");
+    // Sans point de restauration préalable : seulement après « Continuer sans point de restauration ».
+    assert!(elevated.without_restore_point() && !base.without_restore_point());
     let fx = Fake::new(&w.probe);
-    let r = w.run(&elevated, &fx);
+    let mut confirmation = Confirmation { fingerprint: elevated.fingerprint(), permanent_acknowledged: false, without_restore_point: false };
+    let refused = execute(&elevated, &confirmation, &w.checker(), &fx, &AtomicBool::new(false), |_| {});
+    assert_eq!(refused.err(), Some(crate::plan::ExecError::RestorePointNotWaived));
+    assert!(fx.commands.borrow().is_empty());
+    confirmation.without_restore_point = true;
+    let r = execute(&elevated, &confirmation, &w.checker(), &fx, &AtomicBool::new(false), |_| {}).unwrap();
     assert_eq!(r.commands[0].status, CommandStatus::Succeeded);
-    assert_eq!(*fx.commands.borrow(), [OfficialCommand::DismComponentCleanup]);
+    assert_eq!(*fx.commands.borrow(), [OfficialCommand::DismComponentCleanup(None)]);
 }
 
 #[test]
@@ -371,15 +378,16 @@ fn point_de_restauration_obligatoire_avant_les_actions_systeme() {
     let plan = w
         .plan(&[], "cache", DeleteMode::Trash)
         .with_commands(vec![
-            PlannedCommand::action(OfficialCommand::DismComponentCleanup, None, 0),
+            PlannedCommand::action(OfficialCommand::DismComponentCleanup(None), None, 0),
             PlannedCommand::prerequisite(OfficialCommand::RestorePointCreate, true),
         ])
         .with_elevation();
+    assert!(!plan.without_restore_point(), "le point de restauration obligatoire suffit");
     // Point déjà créé il y a moins de 24 h (code 3) : prérequis rempli, on continue, et on le dit.
     let mut fx = Fake::new(&w.probe);
     fx.restore_point = 3;
     let r = w.run(&plan, &fx);
-    assert_eq!(*fx.commands.borrow(), [OfficialCommand::RestorePointCreate, OfficialCommand::DismComponentCleanup]);
+    assert_eq!(*fx.commands.borrow(), [OfficialCommand::RestorePointCreate, OfficialCommand::DismComponentCleanup(None)]);
     assert_eq!(r.commands[0].status, CommandStatus::Failed(3));
     assert!(r.commands[0].satisfied() && r.aborted.is_none());
     assert!(OfficialCommand::RestorePointCreate.exit_meaning(3).unwrap().contains("moins de 24 h"));

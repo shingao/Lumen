@@ -565,7 +565,7 @@ fn fixture_variables_des_regles() {
 }
 
 fn run_plan(f: &Fixture, plan: &Plan) -> crate::exec::Report {
-    let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: true };
+    let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: true, without_restore_point: false };
     execute(plan, &ok, &f.checker(), &WinEffects::new(), &AtomicBool::new(false), |_| {}).unwrap()
 }
 
@@ -710,7 +710,7 @@ fn fixture_commande_officielle_par_chemin_complet() {
         assert!(WinPath::parse(run.program.as_deref().unwrap()).is_ok());
     }
     // Outils système : uniquement System32.
-    let (dism, _) = fx.resolve(&OfficialCommand::DismComponentCleanup).unwrap();
+    let (dism, _) = fx.resolve(&OfficialCommand::DismComponentCleanup(None)).unwrap();
     assert!(dism.display_string().to_lowercase().ends_with("\\system32\\dism.exe"), "{dism}");
 }
 
@@ -741,10 +741,15 @@ fn fixture_commande_elevee_code_de_sortie() {
     let (status, _) = super::elevated::launch(&cmd, &args, false, Duration::from_secs(60), &AtomicBool::new(false));
     assert_eq!(status, CommandStatus::Failed(7));
     // Arguments avec espace, guillemet ou caractère de shell : refusés avant tout lancement.
-    for bad in ["a b", "\"x\"", "x&y", "x|y", "%PATH%", ""] {
-        assert!(super::elevated::plain_args(&[bad.to_owned()]).is_none(), "{bad}");
+    for bad in ["a b", "\"x\"", "x&y", "x|y", "%PATH%", "", "/LogPath:C:\\a\"b", "/LogPath:C:\\a\\", "/LogPath:C:\\%TEMP%\\x"] {
+        assert!(super::elevated::command_line(&[bad.to_owned()]).is_none(), "{bad}");
     }
-    assert_eq!(super::elevated::plain_args(&["/for=C:".into(), "/oldest".into()]).as_deref(), Some("/for=C: /oldest"));
+    assert_eq!(super::elevated::command_line(&["/for=C:".into(), "/oldest".into()]).as_deref(), Some("/for=C: /oldest"));
+    // Seul un chemin validé est mis entre guillemets.
+    assert_eq!(
+        super::elevated::command_line(&["/Online".into(), "/LogPath:C:\\Users\\Jean Dupont\\x.log".into()]).as_deref(),
+        Some("/Online \"/LogPath:C:\\Users\\Jean Dupont\\x.log\"")
+    );
 }
 
 #[test]
@@ -846,4 +851,38 @@ fn fixture_gouffres_systeme_lus_sans_admin() {
     if std::env::var_os("LUMEN_TEST_NTFS").is_some() {
         assert!(f.last_access_updated, "{:?}", f.last_access_raw);
     }
+}
+
+#[test]
+fn fixture_point_le_plus_ancien_jamais_le_dernier() {
+    // Lecture (élevée, lecture seule) des points de restauration du lecteur système.
+    let layout = system_layout().unwrap();
+    let drive = match layout.windows.prefix() {
+        crate::path::Prefix::Drive(d) => crate::commands::Drive::parse(&d.to_string()).unwrap(),
+        crate::path::Prefix::Unc { .. } => panic!("Windows sur un partage"),
+    };
+    let fixture = Fixture::new("points");
+    let dir = fixture.root.clone();
+    let wdir = WinPath::parse(dir.to_str().unwrap()).unwrap();
+    let out = crate::commands::OutputFile::new(&wdir, "restore-points.json").unwrap();
+    let count = || {
+        let run = super::read_restore_points(drive, out.clone(), &AtomicBool::new(false));
+        assert_eq!(run.status, CommandStatus::Succeeded, "{run:#?}");
+        let json = fs::read_to_string(dir.join("restore-points.json")).unwrap();
+        assert!(json.contains("\"shadows\""), "{json}");
+        json.matches("\"id\"").count()
+    };
+    let before = count();
+    // Suppression d'un cliché qui n'est pas le plus ancien affiché (identifiant inventé) : refusée
+    // par le script, qu'il y ait moins de 2 points (6) ou que ce ne soit pas le bon (8).
+    let cmd = OfficialCommand::ShadowDeleteOldest {
+        drive,
+        shadow: crate::commands::ShadowId::parse("{00000000-0000-0000-0000-000000000000}").unwrap(),
+        not_after: i64::MAX / 2,
+    };
+    let run = WinEffects::new().run_elevated(&cmd, &AtomicBool::new(false));
+    let expected = if before < 2 { 6 } else { 8 };
+    assert_eq!(run.status, CommandStatus::Failed(expected), "{run:#?}");
+    assert!(cmd.exit_meaning(expected).is_some());
+    assert_eq!(count(), before, "aucun point de restauration supprimé");
 }

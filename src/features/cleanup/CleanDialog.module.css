@@ -284,3 +284,26 @@
     transition: none;
   }
 }
+
+.waive {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.waive input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--check-accent);
+}
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 6px;
+}

@@ -122,6 +122,13 @@ impl Plan {
         self.elevated
     }
 
+    /// Actions système sans point de restauration obligatoire avant elles.
+    pub fn without_restore_point(&self) -> bool {
+        self.elevated
+            && self.commands.iter().any(|c| c.command.needs_elevation())
+            && !self.commands.iter().any(|c| c.required && c.command == crate::commands::OfficialCommand::RestorePointCreate)
+    }
+
     pub fn mode(&self) -> DeleteMode {
         self.mode
     }
@@ -300,6 +307,9 @@ pub struct Confirmation {
     pub fingerprint: [u8; 32],
     /// Deuxième confirmation, obligatoire pour une suppression définitive.
     pub permanent_acknowledged: bool,
+    /// « Continuer sans point de restauration » : obligatoire pour des actions système lancées
+    /// sans point de restauration préalable (protection désactivée, ou choix de l'utilisateur).
+    pub without_restore_point: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -310,6 +320,8 @@ pub enum ExecError {
     PermanentNotAcknowledged,
     #[error("rien à faire")]
     EmptyPlan,
+    #[error("actions système sans point de restauration : il faut confirmer « Continuer sans point de restauration »")]
+    RestorePointNotWaived,
 }
 
 /// Vérifie qu'une confirmation porte sur ce plan précis (empreinte, seconde confirmation).
@@ -322,6 +334,9 @@ pub fn verify(plan: &Plan, confirmation: &Confirmation) -> Result<(), ExecError>
     }
     if plan.is_empty() {
         return Err(ExecError::EmptyPlan);
+    }
+    if plan.without_restore_point() && !confirmation.without_restore_point {
+        return Err(ExecError::RestorePointNotWaived);
     }
     Ok(())
 }
@@ -409,11 +424,11 @@ mod tests {
     #[test]
     fn confirmation_de_l_empreinte_exigee() {
         let plan = plan_of(&["C:\\Users\\Arthur\\cache\\a.bin"], DeleteMode::Trash);
-        assert_eq!(verify(&plan, &Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false }), Ok(()));
-        let wrong = Confirmation { fingerprint: [0; 32], permanent_acknowledged: true };
+        assert_eq!(verify(&plan, &Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false, without_restore_point: false }), Ok(()));
+        let wrong = Confirmation { fingerprint: [0; 32], permanent_acknowledged: true, without_restore_point: false };
         assert_eq!(verify(&plan, &wrong), Err(ExecError::FingerprintMismatch));
         let empty = plan_of(&[], DeleteMode::Trash);
-        assert_eq!(verify(&empty, &Confirmation { fingerprint: empty.fingerprint(), permanent_acknowledged: false }), Err(ExecError::EmptyPlan));
+        assert_eq!(verify(&empty, &Confirmation { fingerprint: empty.fingerprint(), permanent_acknowledged: false, without_restore_point: false }), Err(ExecError::EmptyPlan));
     }
 
     #[test]
@@ -480,7 +495,7 @@ mod tests {
     #[test]
     fn definitif_exige_une_seconde_confirmation() {
         let plan = plan_of(&["C:\\Users\\Arthur\\cache\\a.bin"], DeleteMode::Permanent);
-        let once = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false };
+        let once = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false, without_restore_point: false };
         assert_eq!(verify(&plan, &once), Err(ExecError::PermanentNotAcknowledged));
     }
 }

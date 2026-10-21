@@ -191,6 +191,8 @@ pub struct PlanDto {
     pub skipped_locked: usize,
     /// Commandes « administrateur » lancées par Lumen (une demande UAC chacune).
     pub elevated: bool,
+    /// Actions système sans point de restauration préalable : confirmation explicite exigée.
+    pub without_restore_point: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -233,6 +235,8 @@ pub struct CommandReportDto {
     /// A fait son travail (un point de restauration déjà récent compte).
     pub satisfied: bool,
     pub detail: Option<String>,
+    /// Fichier de sortie rattaché (journal de DISM).
+    pub log: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -254,6 +258,9 @@ pub struct ReportDto {
     pub commands: Vec<CommandReportDto>,
     /// Arrêt avant les actions (prérequis obligatoire non rempli).
     pub aborted: Option<String>,
+    /// Le point de restauration n'a pas pu être créé : l'interface propose d'ouvrir la
+    /// protection du système ou de continuer sans, après confirmation explicite.
+    pub restore_point_failed: bool,
     pub journal_error: Option<String>,
 }
 
@@ -327,9 +334,11 @@ fn report_dto(plan_id: u32, r: &Report, action_id: Option<i64>, journal_error: O
                     _ if !c.stderr.is_empty() => Some(c.stderr.clone()),
                     _ => None,
                 },
+                log: c.log.clone(),
             })
             .collect(),
         aborted: r.aborted.clone(),
+        restore_point_failed: r.commands.iter().any(|c| c.command == safety::commands::OfficialCommand::RestorePointCreate && !c.satisfied()),
         journal_error,
     }
 }
@@ -514,6 +523,7 @@ fn plan_dto(id: u32, p: &Prepared, sel: &Selection, display: &dyn Fn(&str) -> St
         refused: plan.refused().iter().take(MAX_LISTED).map(|(path, r)| RefusedDto { path: display(path), reason: r.to_string() }).collect(),
         skipped_locked: plan.skipped().len(),
         elevated: plan.elevated(),
+        without_restore_point: plan.without_restore_point(),
     }
 }
 
@@ -578,9 +588,16 @@ fn parse_fingerprint(hex: &str) -> Option<[u8; 32]> {
 /// Exécution réelle d'un plan confirmé : empreinte du plan affiché, seconde confirmation pour
 /// le définitif. Avancement par `clean:progress`, bilan par `clean:done`.
 #[tauri::command]
-pub fn plan_execute(app: AppHandle, state: State<'_, CleanState>, plan_id: u32, fingerprint: String, permanent_acknowledged: bool) -> Result<(), LumenError> {
+pub fn plan_execute(
+    app: AppHandle,
+    state: State<'_, CleanState>,
+    plan_id: u32,
+    fingerprint: String,
+    permanent_acknowledged: bool,
+    without_restore_point: Option<bool>,
+) -> Result<(), LumenError> {
     let fingerprint = parse_fingerprint(&fingerprint).ok_or(LumenError::Plan("empreinte invalide".into()))?;
-    let confirmation = safety::plan::Confirmation { fingerprint, permanent_acknowledged };
+    let confirmation = safety::plan::Confirmation { fingerprint, permanent_acknowledged, without_restore_point: without_restore_point.unwrap_or(false) };
     let cancel = Arc::new(AtomicBool::new(false));
     let prepared = {
         let mut inner = state.0.lock().map_err(|_| LumenError::Plan("état indisponible".into()))?;
@@ -622,7 +639,7 @@ pub fn plan_execute(app: AppHandle, state: State<'_, CleanState>, plan_id: u32, 
             let dto = match result {
                 Ok(report) => {
                     let script = platform::script(&prepared.plan, &prepared.title);
-                    let meta = ActionMeta { kind: prepared.kind, started_at: started, finished_at: unix_ms(), title: &prepared.title, planned_bytes: prepared.plan.total_bytes(), script: &script };
+                    let meta = ActionMeta { kind: prepared.kind, without_restore_point: prepared.plan.without_restore_point(), started_at: started, finished_at: unix_ms(), title: &prepared.title, planned_bytes: prepared.plan.total_bytes(), script: &script };
                     let (id, err) = match with_journal(&app, |j| j.record(&meta, &report)) {
                         Ok(id) => (Some(id), None),
                         Err(e) => (None, Some(e.to_string())),
@@ -673,6 +690,10 @@ pub fn journal_detail(app: AppHandle, action_id: i64) -> Result<JournalDetailDto
         Ok((action, j.items(action_id, MAX_LISTED as u32)?, j.commands(action_id)?))
     })?;
     let action = action.ok_or(LumenError::UnknownAction)?;
+    let commands = commands.into_iter().map(|mut c| {
+        c.log_tail = c.log_path.as_deref().and_then(journal::log_tail);
+        c
+    }).collect();
     let items = items.into_iter().map(|item| JournalItemDto { restorable: platform::restorable(&item), item }).collect();
     Ok(JournalDetailDto { action, items, commands })
 }

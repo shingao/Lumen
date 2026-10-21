@@ -31,7 +31,7 @@ async function plan(request: CleanRequest, mode: CleanMode): Promise<void> {
   // Les gouffres système ne dépendent d'aucune analyse.
   const scanId = scan.summary?.scanId ?? (request.kind === "system" ? 0 : undefined);
   if (scanId === undefined) return;
-  setClean({ step: "loading", request, mode, plan: null, report: null, message: null });
+  setClean({ step: "loading", request, mode, plan: null, report: null, message: null, waiveRestorePoint: false });
   try {
     const p = await backend.planCleanup(scanId, request, mode);
     // Une autre demande a pu remplacer celle-ci entre-temps.
@@ -65,6 +65,8 @@ export function setCleanMode(mode: CleanMode): void {
 export function confirmCleanup(): void {
   const { clean, setClean } = useStore.getState();
   if (clean.step !== "confirm" || !clean.plan) return;
+  // Actions système sans point de restauration : seulement après la confirmation explicite.
+  if (clean.plan.withoutRestorePoint && !clean.waiveRestorePoint) return;
   if (clean.plan.mode === "permanent") {
     setClean({ step: "permanent" });
     return;
@@ -91,10 +93,23 @@ async function execute(permanentAcknowledged: boolean): Promise<void> {
   if (!p) return;
   setClean({ step: "running", progress: null, cancelling: false });
   try {
-    await backend.executePlan(p.planId, p.fingerprint, permanentAcknowledged);
+    await backend.executePlan(p.planId, p.fingerprint, permanentAcknowledged, p.withoutRestorePoint && clean.waiveRestorePoint);
   } catch (err) {
     setClean({ step: "error", message: String(err) });
   }
+}
+
+/** Case « Continuer sans point de restauration ». */
+export function setWaiveRestorePoint(on: boolean): void {
+  useStore.getState().setClean({ waiveRestorePoint: on });
+}
+
+/** Point de restauration impossible : nouveau plan des mêmes actions, sans lui ; il faudra cocher
+ * « Continuer sans point de restauration » pour le lancer. */
+export function continueWithoutRestorePoint(): void {
+  const { clean } = useStore.getState();
+  if (clean.request?.kind !== "system") return;
+  void plan({ ...clean.request, restorePoint: false }, "trash");
 }
 
 /** Annulation prise en compte entre deux éléments ; sinon ferme sans rien faire. */

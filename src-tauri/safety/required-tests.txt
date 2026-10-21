@@ -27,10 +27,12 @@ all commands::tests::arguments_variables_valides
 all commands::tests::binaires_par_chemin_complet
 all commands::tests::delais_maximaux
 all commands::tests::entrees_du_path_absolues_seulement
+all commands::tests::identifiants_et_fichiers_de_sortie_valides
 all commands::tests::outils_systeme_et_elevation
 all commands::tests::outils_systeme_par_chemin_complet
 all commands::tests::point_de_restauration_script_fige
 all commands::tests::points_de_restauration_jamais_tous
+all commands::tests::un_seul_point_qui_vient_d_etre_cree_jamais_supprime
 all denylist::tests::autres_profils_du_registre_quel_que_soit_leur_nom
 all denylist::tests::chaque_entree_de_la_denylist
 all denylist::tests::faits_du_fichier
@@ -114,6 +116,7 @@ windows win::tests::fixture_liens_symboliques_refuses
 windows win::tests::fixture_liste_par_handle
 windows win::tests::fixture_noms_courts_8_3
 windows win::tests::fixture_point_de_restauration_script_execute
+windows win::tests::fixture_point_le_plus_ancien_jamais_le_dernier
 windows win::tests::fixture_prefixe_verbatim_et_casse
 windows win::tests::fixture_profils_du_registre
 windows win::tests::fixture_progra_1_vers_program_files_refuse

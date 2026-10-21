@@ -15,7 +15,7 @@ use safety::plan::{CommandRole, DeleteMode};
 
 use crate::advanced::duplicates::{CacheEntry, CacheKey};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 /// Empreinte de doublon oubliée si elle n'a pas servi depuis (ms).
 const HASH_CACHE_TTL_MS: i64 = 180 * 86_400 * 1000;
 
@@ -71,6 +71,32 @@ CREATE TABLE IF NOT EXISTS action_commands (
 );
 ";
 
+/// v3 : fichier de sortie d'une commande (journal de DISM), actions système lancées sans point
+/// de restauration après confirmation explicite.
+const SCHEMA_V3: &str = "
+ALTER TABLE action_commands ADD COLUMN log_path TEXT;
+ALTER TABLE actions ADD COLUMN without_restore_point INTEGER NOT NULL DEFAULT 0;
+";
+
+/// Fin d'un fichier de sortie (journal de DISM) pour l'affichage : 64 Kio au plus, 80 lignes.
+pub fn log_tail(path: &str) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(64 * 1024))).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    // DISM écrit en UTF-16 ou en ANSI selon la version : on accepte les deux.
+    let text = if buf.iter().skip(1).step_by(2).take(64).filter(|&&b| b == 0).count() > 16 {
+        let start = usize::from(buf.len() % 2 == 1);
+        String::from_utf16_lossy(&buf[start..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>())
+    } else {
+        String::from_utf8_lossy(&buf).into_owned()
+    };
+    let lines: Vec<&str> = text.trim_start_matches('\u{feff}').lines().collect();
+    Some(lines[lines.len().saturating_sub(80)..].join("\n"))
+}
+
 /// v2 (jalon 6) : type de nettoyage, arrêt avant les actions, cache des empreintes.
 const SCHEMA_V2: &str = "
 ALTER TABLE actions ADD COLUMN kind TEXT NOT NULL DEFAULT 'recos';
@@ -105,6 +131,8 @@ pub struct Journal {
 pub struct ActionMeta<'a> {
     /// `recos`, `dormant`, `largest`, `duplicates`, `system`.
     pub kind: &'a str,
+    /// Actions système lancées sans point de restauration, après confirmation explicite.
+    pub without_restore_point: bool,
     pub started_at: i64,
     pub finished_at: i64,
     pub title: &'a str,
@@ -133,6 +161,8 @@ pub struct ActionRow {
     pub kind: String,
     /// Arrêt avant les actions (prérequis obligatoire non rempli).
     pub aborted: Option<String>,
+    /// « Continuer sans point de restauration » confirmé.
+    pub without_restore_point: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -167,6 +197,9 @@ pub struct CommandRow {
     pub stdout: String,
     pub stderr: String,
     pub duration_ms: u64,
+    /// Fichier de sortie rattaché (journal de DISM) et sa fin, pour l'affichage.
+    pub log_path: Option<String>,
+    pub log_tail: Option<String>,
 }
 
 pub fn status_name(s: &CommandStatus) -> &'static str {
@@ -253,11 +286,13 @@ impl Journal {
                 1
             }
         };
-        if version < 2 {
-            let tx = conn.unchecked_transaction()?;
-            tx.execute_batch(SCHEMA_V2)?;
-            tx.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'", [])?;
-            tx.commit()?;
+        for (v, sql) in [(2, SCHEMA_V2), (3, SCHEMA_V3)] {
+            if version < v {
+                let tx = conn.unchecked_transaction()?;
+                tx.execute_batch(sql)?;
+                tx.execute("UPDATE meta SET value = ?1 WHERE key = 'schema_version'", params![v.to_string()])?;
+                tx.commit()?;
+            }
         }
         Ok(Journal { conn })
     }
@@ -272,8 +307,8 @@ impl Journal {
         let tx = self.conn.transaction()?;
         tx.execute(
             "INSERT INTO actions (started_at, finished_at, title, method, plan_hash, status, bytes_planned, bytes_freed, bytes_measured,
-               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script, kind, aborted)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script, kind, aborted, without_restore_point)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 meta.started_at,
                 meta.finished_at,
@@ -293,6 +328,7 @@ impl Journal {
                 meta.script,
                 meta.kind,
                 report.aborted,
+                meta.without_restore_point,
             ],
         )?;
         let action = tx.last_insert_rowid();
@@ -339,8 +375,8 @@ impl Journal {
                 }
             }
             let mut cmd = tx.prepare(
-                "INSERT INTO action_commands (action_id, role, program, args, status, exit_code, stdout, stderr, duration_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO action_commands (action_id, role, program, args, status, exit_code, stdout, stderr, duration_ms, log_path)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?;
             for c in &report.commands {
                 let role = match c.role {
@@ -357,7 +393,7 @@ impl Journal {
                     stderr.push_str(e);
                 }
                 let args = serde_json::to_string(&c.args).unwrap_or_else(|_| "[]".into());
-                cmd.execute(params![action, role, c.program, args, status_name(&c.status), code, c.stdout, stderr, c.duration_ms as i64])?;
+                cmd.execute(params![action, role, c.program, args, status_name(&c.status), code, c.stdout, stderr, c.duration_ms as i64, c.log])?;
             }
         }
         tx.commit()?;
@@ -367,7 +403,7 @@ impl Journal {
     pub fn actions(&self, limit: u32) -> Result<Vec<ActionRow>, JournalError> {
         let mut st = self.conn.prepare(
             "SELECT id, started_at, finished_at, title, method, status, bytes_planned, bytes_freed, bytes_measured,
-               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, kind, aborted
+               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, kind, aborted, without_restore_point
              FROM actions ORDER BY started_at DESC, id DESC LIMIT ?1",
         )?;
         let rows = st.query_map(params![limit], |r| {
@@ -389,6 +425,7 @@ impl Journal {
                 items_cancelled: r.get::<_, i64>(14)? as u64,
                 kind: r.get(15)?,
                 aborted: r.get(16)?,
+                without_restore_point: r.get(17)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -433,7 +470,7 @@ impl Journal {
 
     pub fn commands(&self, action: i64) -> Result<Vec<CommandRow>, JournalError> {
         let mut st = self.conn.prepare(
-            "SELECT role, program, args, status, exit_code, stdout, stderr, duration_ms FROM action_commands WHERE action_id = ?1 ORDER BY id",
+            "SELECT role, program, args, status, exit_code, stdout, stderr, duration_ms, log_path FROM action_commands WHERE action_id = ?1 ORDER BY id",
         )?;
         let rows = st.query_map(params![action], |r| {
             Ok(CommandRow {
@@ -445,6 +482,8 @@ impl Journal {
                 stdout: r.get(5)?,
                 stderr: r.get(6)?,
                 duration_ms: r.get::<_, i64>(7)? as u64,
+                log_path: r.get(8)?,
+                log_tail: None,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -520,7 +559,7 @@ mod tests {
             fingerprint: [0xAB; 32],
             commands: vec![
                 CommandRun { program: Some("C:\\Program Files\\nodejs\\node.exe".into()), stdout: "ok".into(), ..CommandRun::new(&OfficialCommand::NpmCacheClean, CommandStatus::Succeeded) },
-                CommandRun::new(&OfficialCommand::DismComponentCleanup, CommandStatus::NeedsElevation),
+                CommandRun::new(&OfficialCommand::DismComponentCleanup(None), CommandStatus::NeedsElevation),
             ],
             items: vec![
                 ItemReport {
@@ -552,7 +591,7 @@ mod tests {
     #[test]
     fn journal_complet_d_une_execution() {
         let mut j = Journal::in_memory().unwrap();
-        let meta = ActionMeta { kind: "recos", started_at: 10, finished_at: 20, title: "Nettoyage", planned_bytes: 155, script: "# Lumen · script" };
+        let meta = ActionMeta { kind: "recos", without_restore_point: false, started_at: 10, finished_at: 20, title: "Nettoyage", planned_bytes: 155, script: "# Lumen · script" };
         let id = j.record(&meta, &report()).unwrap();
         let actions = j.actions(10).unwrap();
         assert_eq!(actions.len(), 1);
@@ -610,7 +649,7 @@ mod tests {
         r.items.clear();
         r.commands = vec![
             CommandRun { role: CommandRole::Prerequisite, ..CommandRun::new(&OfficialCommand::RestorePointCreate, CommandStatus::Failed(3)) },
-            CommandRun::new(&OfficialCommand::DismComponentCleanup, CommandStatus::Succeeded),
+            CommandRun::new(&OfficialCommand::DismComponentCleanup(None), CommandStatus::Succeeded),
         ];
         assert_eq!(report_status(&r), "ok");
         // Point de restauration impossible : arrêt avant les actions, rien de fait.
@@ -656,7 +695,9 @@ mod tests {
         drop(conn);
         let j = Journal::open(&path).unwrap();
         let a = j.actions(10).unwrap();
-        assert_eq!((a[0].title.as_str(), a[0].kind.as_str(), a[0].aborted.as_deref()), ("Ancien", "recos", None));
+        assert_eq!((a[0].title.as_str(), a[0].kind.as_str(), a[0].aborted.as_deref(), a[0].without_restore_point), ("Ancien", "recos", None, false));
+        let version: String = j.conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, SCHEMA_VERSION.to_string());
         assert!(j.hash_cache(1).unwrap().is_empty());
         drop(j);
         // Réouverture : déjà en v2, rien à refaire.
@@ -678,5 +719,59 @@ mod tests {
         let d = std::env::temp_dir().join(format!("lumen-journal-{}-{}", std::process::id(), line!()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+}
+
+#[cfg(test)]
+mod v3_tests {
+    use super::*;
+    use safety::commands::{OfficialCommand, OutputFile};
+    use safety::exec::CommandRun;
+    use safety::path::WinPath;
+
+    #[test]
+    fn journal_de_dism_et_sans_point_de_restauration() {
+        let dir = std::env::temp_dir().join(format!("lumen-journal-v3-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Base v2 existante (jalon 6 avant correction) : montée en v3 sans perte.
+        let path = dir.join("v2.db");
+        drop(std::fs::File::create(&path));
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')", []).unwrap();
+            conn.execute_batch(SCHEMA_V2).unwrap();
+            conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'", []).unwrap();
+        }
+        let mut j = Journal::open(&path).unwrap();
+        let log = dir.join("dism-20261021-120000.log");
+        let lines: Vec<String> = (0..200).map(|i| format!("ligne {i}")).collect();
+        std::fs::write(&log, lines.join("\r\n")).unwrap();
+        let out = OutputFile::new(&WinPath::parse("C:\\Lumen\\logs").unwrap(), "dism-20261021-120000.log").unwrap();
+        let mut run = CommandRun::new(&OfficialCommand::DismComponentCleanup(Some(out)), safety::exec::CommandStatus::Succeeded);
+        run.log = Some(log.to_string_lossy().into_owned());
+        let report = Report {
+            mode: DeleteMode::Trash,
+            fingerprint: [1; 32],
+            commands: vec![run],
+            items: Vec::new(),
+            volumes: Vec::new(),
+            cancelled: false,
+            aborted: None,
+        };
+        let meta = ActionMeta { kind: "system", without_restore_point: true, started_at: 1, finished_at: 2, title: "Gouffres système", planned_bytes: 0, script: "" };
+        let id = j.record(&meta, &report).unwrap();
+        let a = &j.actions(1).unwrap()[0];
+        assert_eq!((a.kind.as_str(), a.without_restore_point), ("system", true));
+        let c = &j.commands(id).unwrap()[0];
+        assert_eq!(c.log_path.as_deref(), Some(log.to_string_lossy().as_ref()));
+        let tail = log_tail(c.log_path.as_deref().unwrap()).unwrap();
+        assert!(tail.ends_with("ligne 199") && tail.starts_with("ligne 120"), "{tail}");
+        // Journal de DISM en UTF-16 (avec BOM).
+        let utf16: Vec<u8> = "\u{feff}Résultat : terminé\r\nfin".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let log16 = dir.join("dism-utf16.log");
+        std::fs::write(&log16, utf16).unwrap();
+        assert_eq!(log_tail(log16.to_str().unwrap()).unwrap(), "Résultat : terminé\nfin");
+        assert!(log_tail("Z:\\absent.log").is_none());
     }
 }

@@ -82,6 +82,12 @@ function Detail({ action }: { action: JournalAction }) {
                   </span>
                 </summary>
                 {(c.stdout || c.stderr) && <pre className={styles.output}>{[c.stdout, c.stderr].filter(Boolean).join("\n")}</pre>}
+                {c.logPath && (
+                  <>
+                    <p className={styles.hint}>{t("journal.log", { path: c.logPath })}</p>
+                    {c.logTail ? <pre className={styles.output}>{c.logTail}</pre> : <p className={styles.hint}>{t("journal.logMissing")}</p>}
+                  </>
+                )}
               </details>
             </li>
           ))}
@@ -133,6 +139,7 @@ function ActionRow({ action, open, onToggle }: { action: JournalAction; open: bo
         </span>
       </button>
       {open && action.aborted && <p className={styles.aborted}>{t("journal.aborted", { reason: action.aborted })}</p>}
+      {open && action.withoutRestorePoint && <p className={styles.aborted}>{t("journal.withoutRestorePoint")}</p>}
       {open && <Detail action={action} />}
     </li>
   );

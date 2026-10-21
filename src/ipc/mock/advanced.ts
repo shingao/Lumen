@@ -10,6 +10,7 @@ import type {
   FileRow,
   LargestResult,
   PlanCommand,
+  RestorePoints,
   PlanItem,
   SystemAction,
   SystemSinks,
@@ -132,6 +133,25 @@ export function mockDuplicates(scanId: number, now: number): DuplicatesResult {
   };
 }
 
+/** Coffre factice : `localStorage` `lumen-dev-no-protection` = protection du système désactivée. */
+function noProtection(): boolean {
+  try {
+    return globalThis.localStorage.getItem("lumen-dev-no-protection") === "1";
+  } catch {
+    return false;
+  }
+}
+
+export const mockNoProtection = noProtection;
+
+export function mockRestorePoints(now: number): RestorePoints {
+  const points = [
+    { id: "{4C1E7A90-2B3D-4E5F-8A6B-1C2D3E4F5A6B}", created: now - 45 * DAY, description: "Windows Update" },
+    { id: "{9D8C7B6A-5F4E-4D3C-8B2A-0F1E2D3C4B5A}", created: now - 3 * DAY, description: "Installed Visual Studio Build Tools" },
+  ];
+  return { drive: "C:", count: points.length, points, oldest: points[0] ?? null, deletable: true, refusal: null };
+}
+
 export function mockSinks(): SystemSinks {
   return {
     available: true,
@@ -146,12 +166,13 @@ export function mockSinks(): SystemSinks {
     lastAccessRaw: 0x8000_0002,
     lastAccessUpdated: true,
     free: gb(73.8),
+    restoreProtection: !noProtection(),
   };
 }
 
 const SYSTEM: Record<SystemAction, { line: string; fr: string; en: string; size: (s: SystemSinks) => number }> = {
   components: {
-    line: "Dism.exe /Online /Cleanup-Image /StartComponentCleanup",
+    line: "Dism.exe /Online /Cleanup-Image /StartComponentCleanup /LogPath:C:\\Users\\Arthur\\AppData\\Local\\Lumen\\logs\\dism-20261021-120000.log",
     fr: "Outil officiel : nettoie le magasin des composants de Windows (WinSxS)",
     en: "Official tool: cleans up the Windows component store (WinSxS)",
     size: () => 0,
@@ -169,9 +190,9 @@ const SYSTEM: Record<SystemAction, { line: string; fr: string; en: string; size:
     size: () => 0,
   },
   oldestRestorePoint: {
-    line: "vssadmin.exe delete shadows /for=C: /oldest /quiet",
-    fr: "Supprime uniquement le plus ancien point de restauration de C:",
-    en: "Deletes only the oldest restore point of C:",
+    line: "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand … (vssadmin delete shadows /shadow={4C1E…})",
+    fr: "Supprime uniquement le plus ancien point de restauration, s'il en reste un autre et s'il date de plus de 7 jours",
+    en: "Deletes only the oldest restore point, if another one remains and it is more than 7 days old",
     size: () => 0,
   },
   windowsOld: {

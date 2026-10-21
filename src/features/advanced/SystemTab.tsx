@@ -1,10 +1,11 @@
 import { useEffect, type ReactNode } from "react";
-import { loadSinks, setRestorePoint, toggleSystemAction, useAdvanced } from "../../app/advanced";
+import { loadRestorePoints, loadSinks, openSystemProtection, setRestorePoint, toggleSystemAction, useAdvanced } from "../../app/advanced";
 import { openRequest } from "../../app/cleaning";
+import { Button } from "../../components/Button";
 import { Segmented } from "../../components/Segmented";
 import { StatusDot } from "../../components/StatusDot";
 import { Toggle } from "../../components/Toggle";
-import { formatBytes, formatCount } from "../../core/format";
+import { formatBytes, formatCount, formatDate, formatRelative } from "../../core/format";
 import { useT } from "../../i18n";
 import type { SystemAction, SystemSinks } from "../../ipc/types";
 import { Check, SelectionBar } from "./FileRows";
@@ -26,6 +27,52 @@ function Card({ title, size, command, children, control, info }: { title: string
         {command && <code className={styles.command}>{command}</code>}
       </div>
     </section>
+  );
+}
+
+/** « Supprimer le plus ancien point de restauration » : jamais sans avoir lu la liste, jamais
+ * le dernier point, jamais un point de moins de 7 jours ou de cette session. */
+function RestoreCard({ drive }: { drive: string }) {
+  const t = useT();
+  const read = useAdvanced((s) => s.restorePoints);
+  const on = useAdvanced((s) => s.systemActions.includes("oldestRestorePoint"));
+  const value = read.status === "done" ? read.value : null;
+  const title = t("sys.restore.title");
+  const control = (
+    <Check
+      checked={on}
+      disabled={!value?.deletable}
+      title={value?.refusal ?? (value ? undefined : t("sys.restore.readFirst"))}
+      label={t("sys.include", { title })}
+      onChange={(checked) => toggleSystemAction("oldestRestorePoint", checked)}
+    />
+  );
+  return (
+    <Card title={title} control={control} command={value?.deletable && value.oldest ? `vssadmin.exe delete shadows /shadow=${value.oldest.id} /quiet` : undefined}>
+      <p>{t("sys.restore.text", { drive })}</p>
+      {read.status === "idle" && (
+        <Button variant="primary" onClick={() => void loadRestorePoints()}>
+          {t("sys.restore.read")}
+        </Button>
+      )}
+      {read.status === "loading" && <span className={styles.hint}>{t("sys.restore.reading")}</span>}
+      {read.status === "failed" && <span className={styles.warning}>{read.message}</span>}
+      {value && (
+        <>
+          <span className={styles.hint}>{t.plural("sys.restore.count", value.count, { n: formatCount(value.count, t.locale), drive: value.drive })}</span>
+          {value.oldest && (
+            <span className={value.deletable ? styles.oldest : styles.warning}>
+              {t(value.deletable ? "sys.restore.oldest" : "sys.restore.oldestKept", {
+                date: formatDate(value.oldest.created, t.locale),
+                when: formatRelative(value.oldest.created, t.locale),
+                what: value.oldest.description ?? t("sys.restore.noDescription"),
+              })}
+            </span>
+          )}
+          {value.refusal && <span className={styles.hint}>{value.refusal}</span>}
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -73,9 +120,7 @@ function Cards({ sinks }: { sinks: SystemSinks }) {
           </>
         )}
       </Card>
-      <Card title={t("sys.restore.title")} control={include("oldestRestorePoint", t("sys.restore.title"))} command={`vssadmin.exe delete shadows /for=${drive} /oldest /quiet`}>
-        <p>{t("sys.restore.text", { drive })}</p>
-      </Card>
+      <RestoreCard drive={drive} />
       {sinks.windowsOld ? (
         <Card title={t("sys.windowsOld.title")} control={include("windowsOld", t("sys.windowsOld.title"))} command={`cleanmgr.exe /d ${drive}`}>
           <p>{t("sys.windowsOld.text")}</p>
@@ -124,10 +169,22 @@ export function SystemTab() {
           </div>
           <Cards sinks={value} />
           <div className={styles.restore}>
-            <Toggle checked={restorePoint} onChange={setRestorePoint} label={t("sys.restorePoint")} />
+            <Toggle checked={restorePoint} onChange={setRestorePoint} label={t("sys.restorePoint")} disabled={value.restoreProtection === false} />
             <div className={styles.restoreText}>
               <span className={styles.cardTitle}>{t("sys.restorePoint")}</span>
-              <span className={styles.hint}>{t("sys.restorePoint.text", { hours: Math.max(1, Math.round(value.restorePointFrequencyMin / 60)) })}</span>
+              {value.restoreProtection === false ? (
+                <>
+                  <span className={styles.warning}>{t("sys.protection.off", { drive: value.systemDrive })}</span>
+                  <span>
+                    <Button variant="link" onClick={openSystemProtection}>
+                      {t("sys.protection.open")}
+                    </Button>
+                  </span>
+                </>
+              ) : (
+                <span className={styles.hint}>{t("sys.restorePoint.text", { hours: Math.max(1, Math.round(value.restorePointFrequencyMin / 60)) })}</span>
+              )}
+              {!restorePoint && <span className={styles.hint}>{t("sys.restorePoint.without")}</span>}
             </div>
           </div>
         </>

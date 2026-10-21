@@ -13,6 +13,7 @@ import type {
   FileKind,
   JournalAction,
   JournalDetail,
+  RestorePoints,
   Kpis,
   LargestResult,
   NodeId,
@@ -56,8 +57,12 @@ export interface Backend {
   onDuplicatesEvent(listener: (event: DuplicatesEvent) => void): () => void;
   /** Gouffres système, lus sans droits d'administrateur. */
   systemSinks(): Promise<SystemSinks>;
+  /** Points de restauration du lecteur système (une demande UAC, lecture seule). */
+  readRestorePoints(): Promise<RestorePoints>;
+  /** Ouvre « Protection du système » de Windows. */
+  openSystemProtection(): Promise<void>;
   /** Exécution réelle du plan affiché (son empreinte), avancement et bilan par `onCleanEvent`. */
-  executePlan(planId: number, fingerprint: string, permanentAcknowledged: boolean): Promise<void>;
+  executePlan(planId: number, fingerprint: string, permanentAcknowledged: boolean, withoutRestorePoint: boolean): Promise<void>;
   cancelPlan(planId: number): Promise<void>;
   onCleanEvent(listener: (event: CleanEvent) => void): () => void;
   journal(): Promise<JournalAction[]>;

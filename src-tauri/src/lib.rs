@@ -29,6 +29,7 @@ pub fn helper_entry() -> Option<i32> {
 }
 
 pub fn run() {
+    advanced::ipc::mark_session_start();
     let result = tauri::Builder::default()
         .manage(scanning::ScanState::default())
         .manage(cleanup::CleanState::default())
@@ -58,6 +59,8 @@ pub fn run() {
             advanced::ipc::duplicates_cancel,
             advanced::ipc::system_sinks,
             advanced::ipc::advanced_plan,
+            advanced::ipc::restore_points_read,
+            advanced::ipc::open_system_protection,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {

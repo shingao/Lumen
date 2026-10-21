@@ -95,7 +95,7 @@ fn nettoyage_reel_d_un_faux_profil() {
     let plan = Plan::build(&checker, &sel.targets, DeleteMode::Trash).with_commands(sel.commands.clone());
     assert!(plan.refused().is_empty(), "{:?}", plan.refused());
     std::env::set_var("npm_config_cache", at("AppData\\Local\\npm-cache"));
-    let confirmation = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false };
+    let confirmation = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false, without_restore_point: false };
     let report = execute(&plan, &confirmation, &checker, &WinEffects::new(), &AtomicBool::new(false), |_| {}).unwrap();
     eprintln!("{report:#?}");
 
@@ -134,7 +134,7 @@ fn nettoyage_reel_d_un_faux_profil() {
 
     // Journal complet, puis restauration de node_modules depuis la Corbeille.
     let mut journal = Journal::open(&root.path().join("lumen.db")).unwrap();
-    let meta = ActionMeta { kind: "recos", started_at: 1, finished_at: 2, title: "E2E", planned_bytes: plan.total_bytes(), script: "# script" };
+    let meta = ActionMeta { kind: "recos", without_restore_point: false, started_at: 1, finished_at: 2, title: "E2E", planned_bytes: plan.total_bytes(), script: "# script" };
     let action = journal.record(&meta, &report).unwrap();
     let items = journal.items(action, 1000).unwrap();
     let nm = items.iter().find(|i| i.path.ends_with("\\Projets\\app\\node_modules")).expect("node_modules au journal");
@@ -231,7 +231,7 @@ fn doublons_et_dormants_d_un_faux_profil() {
     other[10] ^= 0xFF;
     fs::write(&changed, &other).unwrap();
     OpenOptions::new().write(true).open(&changed).unwrap().set_modified(mtime).unwrap();
-    let confirmation = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false };
+    let confirmation = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false, without_restore_point: false };
     let report = execute(&plan, &confirmation, &checker, &WinEffects::new(), &AtomicBool::new(false), |_| {}).unwrap();
     eprintln!("{report:#?}");
     assert!(!at(&members[1]).exists(), "copie supprimée");
@@ -249,7 +249,7 @@ fn doublons_et_dormants_d_un_faux_profil() {
     let sel = ipc::select_files(&scan, &d.eligible, ("Fichiers dormants", "Dormant files")).unwrap();
     let checker = Checker { probe: &WinProbe, deny: &deny, allow: &sel.allow, now: analysis::now() };
     let plan = Plan::build(&checker, &sel.targets, DeleteMode::Trash);
-    let confirmation = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false };
+    let confirmation = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false, without_restore_point: false };
     let report = execute(&plan, &confirmation, &checker, &WinEffects::new(), &AtomicBool::new(false), |_| {}).unwrap();
     assert!(report.items.iter().all(|i| i.outcome == ItemOutcome::Done), "{report:#?}");
     assert!(!at("Documents\\vieux-rapport.pdf").exists());

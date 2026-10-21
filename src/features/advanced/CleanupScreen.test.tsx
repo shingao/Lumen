@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { useAdvanced } from "../../app/advanced";
+import { setRestorePoint, useAdvanced } from "../../app/advanced";
 import { CLEAN_CLOSED, useStore } from "../../app/store";
 import { backend } from "../../ipc/client";
 import { DEFAULT_SETTINGS } from "../../ipc/mock";
@@ -32,7 +32,10 @@ async function scanned() {
 const tab = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
 
 describe("Nettoyage avancé", () => {
-  beforeEach(scanned);
+  beforeEach(async () => {
+    useAdvanced.setState({ systemActions: [], restorePoint: true, restorePoints: { status: "idle" }, sinks: { status: "idle" } });
+    await scanned();
+  });
 
   it("dormants : base de date affichée, rien de coché par défaut, sélection par identifiants", async () => {
     render(
@@ -92,5 +95,67 @@ describe("Nettoyage avancé", () => {
     expect(await screen.findByText("déjà fait", undefined, { timeout: 3000 })).toBeTruthy();
     const journal = await backend.journal();
     expect(journal[0]?.kind).toBe("system");
+  });
+
+  it("plus ancien point de restauration : jamais sans lire la liste, date du point affichée", async () => {
+    render(<CleanupScreen />);
+    tab("Gouffres système");
+    const include = (await screen.findByRole("checkbox", { name: /Points de restauration/ })) as HTMLInputElement;
+    expect(include.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Lire les points de restauration (autorisation administrateur)" }));
+    const oldest = await screen.findByText(/^Point qui serait supprimé : /);
+    expect(text(oldest)).toMatch(/^Point qui serait supprimé : \d\d\/\d\d\/\d{4} \(il y a \d+ mois\) — Windows Update$/);
+    expect(include.disabled).toBe(false);
+    expect(text(screen.getByRole("region", { name: "Points de restauration" }))).toContain("/shadow={4C1E7A90-2B3D-4E5F-8A6B-1C2D3E4F5A6B}");
+  });
+
+  it("sans point de restauration : confirmation explicite exigée, journalisée", async () => {
+    render(
+      <>
+        <CleanupScreen />
+        <CleanDialog />
+      </>,
+    );
+    tab("Gouffres système");
+    fireEvent.click(await screen.findByRole("checkbox", { name: /WinSxS/ }));
+    act(() => setRestorePoint(false));
+    fireEvent.click(screen.getByRole("button", { name: "Préparer les actions…" }));
+    const go = (await screen.findByRole("button", { name: "Lancer 1 action système" })) as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Continuer sans point de restauration" }));
+    expect(go.disabled).toBe(false);
+    fireEvent.click(go);
+    expect(await screen.findByText(/Journal complet : .*dism-.*\.log/, undefined, { timeout: 3000 })).toBeTruthy();
+    const journal = await backend.journal();
+    expect(journal[0]?.withoutRestorePoint).toBe(true);
+  });
+
+  it("protection du système désactivée : expliqué, réglages proposés, puis continuer sans point", async () => {
+    localStorage.setItem("lumen-dev-no-protection", "1");
+    try {
+      render(
+        <>
+          <CleanupScreen />
+          <CleanDialog />
+        </>,
+      );
+      tab("Gouffres système");
+      expect(await screen.findByText(/Windows ne peut pas créer de point de restauration sur ce disque \(C:\)/)).toBeTruthy();
+      expect(useAdvanced.getState().restorePoint).toBe(false);
+      // Point de restauration demandé malgré tout : il échoue, rien d'autre n'est lancé.
+      act(() => setRestorePoint(true));
+      fireEvent.click(screen.getByRole("checkbox", { name: /WinSxS/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Préparer les actions…" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Lancer 1 action système" }));
+      expect(await screen.findByText(/^Windows ne peut pas créer de point de restauration sur ce disque\. /, undefined, { timeout: 3000 })).toBeTruthy();
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getByRole("button", { name: "Ouvrir la protection du système" })).toBeTruthy();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Continuer sans point de restauration…" }));
+      const go = (await screen.findByRole("button", { name: "Lancer 1 action système" })) as HTMLButtonElement;
+      expect(go.disabled).toBe(true);
+      expect(useStore.getState().clean.plan?.withoutRestorePoint).toBe(true);
+    } finally {
+      localStorage.removeItem("lumen-dev-no-protection");
+    }
   });
 });

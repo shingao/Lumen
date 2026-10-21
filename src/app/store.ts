@@ -49,6 +49,8 @@ export interface CleanUi {
   report: CleanReport | null;
   message: string | null;
   cancelling: boolean;
+  /** « Continuer sans point de restauration » coché (actions système sans point préalable). */
+  waiveRestorePoint: boolean;
 }
 
 export const CLEAN_CLOSED: CleanUi = {
@@ -60,6 +62,7 @@ export const CLEAN_CLOSED: CleanUi = {
   report: null,
   message: null,
   cancelling: false,
+  waiveRestorePoint: false,
 };
 
 export interface State {

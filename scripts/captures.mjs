@@ -105,6 +105,7 @@ await shot("20-gouffres", {
     await advanced(p, "Gouffres système");
     await p.getByRole("checkbox", { name: /WinSxS/ }).check();
     await p.getByRole("group", { name: "Hibernation" }).getByRole("button", { name: "Réduire" }).click();
+    await p.getByRole("button", { name: "Lire les points de restauration (autorisation administrateur)" }).click();
     await p.getByRole("checkbox", { name: /Points de restauration/ }).check();
   },
 });
@@ -116,6 +117,17 @@ await shot("21-confirmation-systeme-sombre", {
     await p.getByRole("group", { name: "Hibernation" }).getByRole("button", { name: "Désactiver" }).click();
     await p.getByRole("button", { name: "Préparer les actions…" }).click();
     await p.getByText("Voir la liste").click();
+  },
+});
+await shot("23-sans-point-de-restauration", {
+  act: async (p) => {
+    await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-no-protection", "1"));
+    await p.reload();
+    await p.waitForSelector("#root > *");
+    await advanced(p, "Gouffres système");
+    await p.getByRole("checkbox", { name: /WinSxS/ }).check();
+    await p.getByRole("button", { name: "Préparer les actions…" }).click();
+    await p.getByRole("checkbox", { name: "Continuer sans point de restauration" }).check();
   },
 });
 await shot("22-doublons-anglais", {

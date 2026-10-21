@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use safety::allow::{Allowlist, Authority, DupGroup, DupMember, DuplicateSelection, Selection as AllowSelection};
 use safety::check::Target;
-use safety::commands::{Drive, OfficialCommand};
+use safety::commands::{oldest_deletable, oldest_not_after, Drive, OfficialCommand, OutputFile, ShadowCopy, ShadowId};
 use safety::path::WinPath;
 use safety::plan::PlannedCommand;
 use scan::{NodeId, Scan};
@@ -36,6 +36,130 @@ struct Inner {
     largest: Option<(u32, HashSet<NodeId>)>,
     duplicates: Option<(u32, Arc<Found>)>,
     searching: Option<(u32, Arc<AtomicBool>)>,
+    /// Points de restauration lus (en administrateur) : seule base de « supprimer le plus ancien ».
+    restore: Option<RestoreFacts>,
+}
+
+/// Début de la session de Lumen (secondes depuis 1970) : un point de restauration créé depuis
+/// n'est jamais supprimé.
+static SESSION_START: OnceLock<i64> = OnceLock::new();
+
+pub fn mark_session_start() {
+    SESSION_START.get_or_init(unix_secs);
+}
+
+fn session_start() -> i64 {
+    *SESSION_START.get_or_init(unix_secs)
+}
+
+fn unix_secs() -> i64 {
+    crate::cleanup::unix_ms() / 1000
+}
+
+/// `20261021-120005` (UTC), pour nommer un fichier.
+pub(crate) fn stamp(unix: i64) -> String {
+    let days = unix.div_euclid(86_400);
+    let secs = unix.rem_euclid(86_400);
+    // Jours depuis 1970 → date civile (algorithme de Howard Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
+}
+
+/// Clichés instantanés et points de restauration d'un lecteur, lus en administrateur.
+#[derive(Debug, Clone)]
+pub(crate) struct RestoreFacts {
+    pub drive: char,
+    pub shadows: Vec<ShadowCopy>,
+    /// Description et date (secondes) des points de restauration.
+    pub points: Vec<(String, i64)>,
+}
+
+impl RestoreFacts {
+    /// JSON écrit par la commande de lecture (`shadows`, `points`), BOM toléré.
+    #[cfg_attr(not(windows), allow(dead_code))] // lu seulement sous Windows (et dans les tests)
+    pub(crate) fn parse(drive: char, json: &str) -> Result<RestoreFacts, String> {
+        let v: serde_json::Value = serde_json::from_str(json.trim_start_matches('\u{feff}')).map_err(|e| e.to_string())?;
+        let list = |key: &str| -> Vec<serde_json::Value> {
+            match v.get(key) {
+                Some(serde_json::Value::Array(a)) => a.clone(),
+                Some(o @ serde_json::Value::Object(_)) => vec![o.clone()],
+                _ => Vec::new(),
+            }
+        };
+        let mut shadows = Vec::new();
+        for s in list("shadows") {
+            let id = s.get("id").and_then(|x| x.as_str()).ok_or("cliché sans identifiant")?;
+            let created = s.get("created").and_then(serde_json::Value::as_i64).ok_or("cliché sans date")?;
+            shadows.push(ShadowCopy { id: ShadowId::parse(id).map_err(|e| e.to_string())?, created });
+        }
+        let points = list("points")
+            .iter()
+            .filter_map(|p| Some((p.get("description")?.as_str()?.to_owned(), p.get("created")?.as_i64()?)))
+            .collect();
+        Ok(RestoreFacts { drive, shadows, points })
+    }
+
+    /// Description du point de restauration correspondant à un cliché (même date, à 10 min près).
+    fn description_of(&self, created: i64) -> Option<String> {
+        self.points.iter().filter(|(_, c)| (c - created).abs() <= 600).min_by_key(|(_, c)| (c - created).abs()).map(|(d, _)| d.clone())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePointDto {
+    pub id: String,
+    /// Millisecondes depuis 1970.
+    pub created: i64,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePointsDto {
+    pub drive: String,
+    pub count: usize,
+    pub points: Vec<RestorePointDto>,
+    /// Le point qui serait supprimé (le plus ancien), s'il y en a un.
+    pub oldest: Option<RestorePointDto>,
+    pub deletable: bool,
+    /// Pourquoi il ne peut pas l'être.
+    pub refusal: Option<String>,
+}
+
+pub(crate) fn restore_dto(f: &RestoreFacts, not_after: i64) -> RestorePointsDto {
+    let dto = |s: &ShadowCopy| RestorePointDto { id: s.id.as_str().to_owned(), created: s.created * 1000, description: f.description_of(s.created) };
+    let mut points: Vec<RestorePointDto> = f.shadows.iter().map(dto).collect();
+    points.sort_by_key(|p| p.created);
+    let verdict = oldest_deletable(&f.shadows, not_after);
+    RestorePointsDto {
+        drive: format!("{}:", f.drive),
+        count: f.shadows.len(),
+        oldest: f.shadows.iter().min_by_key(|s| s.created).map(dto),
+        points,
+        deletable: verdict.is_ok(),
+        refusal: verdict.err().map(|e| e.to_string()),
+    }
+}
+
+/// Ce que les actions système doivent connaître du PC.
+pub(crate) struct SystemContext<'a> {
+    pub drive: char,
+    pub hiberfil: Option<u64>,
+    /// Points de restauration lus en administrateur (obligatoire pour « supprimer le plus ancien »).
+    pub restore: Option<&'a RestoreFacts>,
+    /// Date limite du point supprimé (7 jours et début de session).
+    pub not_after: i64,
+    /// Journal de DISM (`%LOCALAPPDATA%\Lumen\logs\dism-<horodatage>.log`).
+    pub dism_log: Option<OutputFile>,
 }
 
 #[derive(Default)]
@@ -89,6 +213,8 @@ pub struct SinksDto {
     pub last_access_raw: Option<u32>,
     pub last_access_updated: bool,
     pub free: Option<u64>,
+    /// Protection du système activée sur le lecteur système (`None` : inconnue).
+    pub restore_protection: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,6 +274,7 @@ pub(crate) mod platform {
             restore_point_frequency_min: f.restore_point_frequency_min,
             last_access_raw: f.last_access_raw,
             last_access_updated: f.last_access_updated,
+            restore_protection: f.restore_protection,
             free: root.and_then(|r| safety::exec::Effects::free_bytes(&safety::win::WinEffects::new(), &r)),
         }
     }
@@ -166,8 +293,46 @@ pub(crate) mod platform {
             restore_point_frequency_min: 1440,
             last_access_raw: None,
             last_access_updated: false,
+            restore_protection: None,
             free: None,
         }
+    }
+
+    #[cfg(windows)]
+    pub fn read_restore_points(app: &AppHandle) -> Result<RestoreFacts, LumenError> {
+        let drive_char = sinks().system_drive.chars().next().unwrap_or('C');
+        let drive = Drive::parse(&drive_char.to_string()).map_err(|e| LumenError::Plan(e.to_string()))?;
+        let dir = lumen_dir(app, "").ok_or_else(|| LumenError::Plan("dossier de Lumen introuvable".into()))?;
+        let out = OutputFile::new(&dir, "restore-points.json").map_err(|e| LumenError::Plan(e.to_string()))?;
+        let file = out.display_string();
+        let run = safety::win::read_restore_points(drive, out, &AtomicBool::new(false));
+        if run.status != safety::exec::CommandStatus::Succeeded {
+            let why = run.command.exit_meaning(match run.status {
+                safety::exec::CommandStatus::Failed(c) => c,
+                _ => -1,
+            });
+            return Err(LumenError::Plan(format!(
+                "lecture des points de restauration impossible ({})",
+                why.map_or_else(|| crate::journal::status_name(&run.status).to_owned(), str::to_owned)
+            )));
+        }
+        let json = std::fs::read_to_string(&file).map_err(|e| LumenError::Plan(e.to_string()))?;
+        RestoreFacts::parse(drive_char, &json).map_err(LumenError::Plan)
+    }
+
+    #[cfg(not(windows))]
+    pub fn read_restore_points(_: &AppHandle) -> Result<RestoreFacts, LumenError> {
+        Err(LumenError::Plan("points de restauration : Windows uniquement".into()))
+    }
+
+    #[cfg(windows)]
+    pub fn open_system_protection() -> Result<(), String> {
+        safety::win::open_system_protection()
+    }
+
+    #[cfg(not(windows))]
+    pub fn open_system_protection() -> Result<(), String> {
+        Err("Windows uniquement".into())
     }
 
     /// Lecture réelle : `safety::win::content` (dernier accès gelé, E/S basse priorité, jamais
@@ -276,7 +441,8 @@ pub(crate) fn select_duplicates(scan: &Scan, found: &Found, ids: &[i64]) -> Resu
 
 /// Actions système : commandes officielles élevées, mesurées sur le lecteur système, après un
 /// point de restauration obligatoire s'il est demandé.
-pub(crate) fn select_system(drive: char, hiberfil: Option<u64>, actions: &[SystemAction], restore_point: bool) -> Result<Selection, LumenError> {
+pub(crate) fn select_system(ctx: &SystemContext<'_>, actions: &[SystemAction], restore_point: bool) -> Result<Selection, LumenError> {
+    let drive = ctx.drive;
     if actions.is_empty() {
         return Err(LumenError::Plan("aucune action système choisie".into()));
     }
@@ -296,10 +462,19 @@ pub(crate) fn select_system(drive: char, hiberfil: Option<u64>, actions: &[Syste
         }
         seen.push(a);
         let (command, bytes) = match a {
-            SystemAction::Components => (OfficialCommand::DismComponentCleanup, 0),
-            SystemAction::HibernateOff => (OfficialCommand::HibernateOff, hiberfil.unwrap_or(0)),
+            SystemAction::Components => (OfficialCommand::DismComponentCleanup(ctx.dism_log.clone()), 0),
+            SystemAction::HibernateOff => (OfficialCommand::HibernateOff, ctx.hiberfil.unwrap_or(0)),
             SystemAction::HibernateReduced => (OfficialCommand::HibernateReduced, 0),
-            SystemAction::OldestRestorePoint => (OfficialCommand::ShadowDeleteOldest(d), 0),
+            SystemAction::OldestRestorePoint => {
+                // Jamais le dernier point, jamais un point récent ou créé pendant la session :
+                // décidé ici sur la liste lue, et revérifié par le script au moment de l'action.
+                let facts = ctx
+                    .restore
+                    .filter(|f| f.drive.eq_ignore_ascii_case(&drive))
+                    .ok_or_else(|| LumenError::Plan("lis d'abord les points de restauration (autorisation administrateur)".into()))?;
+                let oldest = oldest_deletable(&facts.shadows, ctx.not_after).map_err(|e| LumenError::Plan(e.to_string()))?;
+                (OfficialCommand::ShadowDeleteOldest { drive: d, shadow: oldest.id.clone(), not_after: ctx.not_after }, 0)
+            }
             SystemAction::WindowsOld => (OfficialCommand::DiskCleanup(d), 0),
         };
         commands.push(PlannedCommand::action(command, Some(root.clone()), bytes));
@@ -425,6 +600,32 @@ pub fn duplicates_cancel(state: State<'_, AdvancedState>, scan_id: u32) {
     }
 }
 
+/// `%LOCALAPPDATA%\Lumen\<sub>`, créé s'il manque.
+fn lumen_dir(app: &AppHandle, sub: &str) -> Option<WinPath> {
+    let dir = app.path().local_data_dir().ok()?.join("Lumen").join(sub);
+    std::fs::create_dir_all(&dir).ok()?;
+    WinPath::parse(dir.to_str()?).ok()
+}
+
+/// Points de restauration du lecteur système, lus en administrateur (une demande UAC, lecture
+/// seule) : date du point qui serait supprimé, et s'il peut l'être.
+#[tauri::command]
+pub async fn restore_points_read(app: AppHandle) -> Result<RestorePointsDto, LumenError> {
+    let worker = app.clone();
+    let facts = tauri::async_runtime::spawn_blocking(move || platform::read_restore_points(&worker))
+        .await
+        .map_err(|e| LumenError::Plan(e.to_string()))??;
+    let dto = restore_dto(&facts, oldest_not_after(unix_secs(), session_start()));
+    app.state::<AdvancedState>().lock()?.restore = Some(facts);
+    Ok(dto)
+}
+
+/// Ouvre « Protection du système » de Windows, pour activer les points de restauration.
+#[tauri::command]
+pub fn open_system_protection() -> Result<(), LumenError> {
+    platform::open_system_protection().map_err(LumenError::Plan)
+}
+
 /// Gouffres système : tailles et réglages lus sans droits d'administrateur.
 #[tauri::command]
 pub fn system_sinks() -> SinksDto {
@@ -434,6 +635,7 @@ pub fn system_sinks() -> SinksDto {
 /// Plan d'une sélection du nettoyage avancé, à confirmer (rien n'est fait ici).
 #[tauri::command]
 pub fn advanced_plan(
+    app: AppHandle,
     scans: State<'_, ScanState>,
     state: State<'_, AdvancedState>,
     clean: State<'_, CleanState>,
@@ -445,7 +647,10 @@ pub fn advanced_plan(
     if let AdvancedRequest::System { actions, restore_point } = &request {
         let sinks = platform::sinks();
         let drive = sinks.system_drive.chars().next().unwrap_or('C');
-        let sel = select_system(drive, sinks.hiberfil, actions, *restore_point)?;
+        let restore = state.lock()?.restore.clone();
+        let dism_log = lumen_dir(&app, "logs").and_then(|dir| OutputFile::new(&dir, &format!("dism-{}.log", stamp(unix_secs()))).ok());
+        let ctx = SystemContext { drive, hiberfil: sinks.hiberfil, restore: restore.as_ref(), not_after: oldest_not_after(unix_secs(), session_start()), dism_log };
+        let sel = select_system(&ctx, actions, *restore_point)?;
         return cleanup::prepare(&clean, &sel, mode, "Gouffres système".into(), "system", &|p| p.to_owned());
     }
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
@@ -522,20 +727,86 @@ mod tests {
         assert!(matches!(select_duplicates(&s, &found, &[9999]), Err(LumenError::UnknownNode)));
     }
 
+    const NOW: i64 = 1_800_000_000;
+    const DAY: i64 = 86_400;
+
+    fn facts(created: &[i64]) -> RestoreFacts {
+        let shadows = created.iter().enumerate().map(|(i, &c)| ShadowCopy { id: ShadowId::parse(&format!("{{0000000{i}-0000-0000-0000-000000000000}}")).unwrap(), created: c }).collect();
+        RestoreFacts { drive: 'C', shadows, points: vec![("Lumen : avant nettoyage du système".into(), NOW - 30), ("Windows Update".into(), NOW - 40 * DAY)] }
+    }
+
+    fn ctx(restore: Option<&RestoreFacts>) -> SystemContext<'_> {
+        let logs = WinPath::parse("C:\\Users\\Jean Dupont\\AppData\\Local\\Lumen\\logs").unwrap();
+        SystemContext {
+            drive: 'C',
+            hiberfil: Some(6 << 30),
+            restore,
+            not_after: oldest_not_after(NOW, NOW - 3600),
+            dism_log: Some(OutputFile::new(&logs, &format!("dism-{}.log", stamp(NOW))).unwrap()),
+        }
+    }
+
+    #[test]
+    fn un_seul_point_juste_cree_jamais_supprime() {
+        // Lumen vient de créer le seul point de restauration : « supprimer le plus ancien » est refusé.
+        let one = facts(&[NOW - 30]);
+        let dto = restore_dto(&one, oldest_not_after(NOW, NOW - 3600));
+        assert!(!dto.deletable && dto.count == 1);
+        assert_eq!(dto.oldest.as_ref().unwrap().created, (NOW - 30) * 1000);
+        assert_eq!(dto.oldest.unwrap().description.as_deref(), Some("Lumen : avant nettoyage du système"));
+        let err = select_system(&ctx(Some(&one)), &[SystemAction::OldestRestorePoint], true).err().unwrap();
+        assert!(err.to_string().contains("au moins 2"), "{err}");
+        // Deux points dont le plus ancien a 3 jours : gardé.
+        let recent = facts(&[NOW - 30, NOW - 3 * DAY]);
+        assert!(select_system(&ctx(Some(&recent)), &[SystemAction::OldestRestorePoint], true).is_err());
+        // Pas lus : rien n'est supposé.
+        assert!(select_system(&ctx(None), &[SystemAction::OldestRestorePoint], true).is_err());
+        // Le plus ancien a 40 jours, un autre reste : celui-là précisément, date limite transmise.
+        let ok = facts(&[NOW - 30, NOW - 40 * DAY]);
+        let dto = restore_dto(&ok, oldest_not_after(NOW, NOW - 3600));
+        assert!(dto.deletable && dto.refusal.is_none());
+        assert_eq!(dto.oldest.as_ref().unwrap().description.as_deref(), Some("Windows Update"));
+        let sel = select_system(&ctx(Some(&ok)), &[SystemAction::OldestRestorePoint], true).unwrap();
+        match &sel.commands[1].command {
+            OfficialCommand::ShadowDeleteOldest { shadow, not_after, .. } => {
+                assert_eq!(shadow, &ok.shadows[1].id);
+                assert_eq!(*not_after, NOW - 7 * DAY);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn lecture_des_points_de_restauration() {
+        let json = "\u{feff}{\"shadows\":[{\"id\":\"{0A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9}\",\"created\":1700000000}],\"points\":{\"description\":\"Installé X\",\"created\":1700000100}}";
+        let f = RestoreFacts::parse('C', json).unwrap();
+        assert_eq!((f.shadows.len(), f.points.len()), (1, 1));
+        assert_eq!(f.description_of(1_700_000_000).as_deref(), Some("Installé X"));
+        assert!(RestoreFacts::parse('C', "{\"shadows\":[{\"id\":\"'; rm\",\"created\":1}]}").is_err());
+        assert_eq!(RestoreFacts::parse('C', "{\"shadows\":[],\"points\":[]}").unwrap().shadows.len(), 0);
+        assert_eq!(stamp(1_792_929_605), "20261025-120005");
+        assert_eq!(stamp(0), "19700101-000000");
+    }
+
     #[test]
     fn actions_systeme_elevees_apres_le_point_de_restauration() {
-        let sel = select_system('C', Some(6 << 30), &[SystemAction::Components, SystemAction::HibernateOff, SystemAction::OldestRestorePoint, SystemAction::WindowsOld], true).unwrap();
+        let old = facts(&[NOW - 30, NOW - 40 * DAY]);
+        let sel = select_system(&ctx(Some(&old)), &[SystemAction::Components, SystemAction::HibernateOff, SystemAction::OldestRestorePoint, SystemAction::WindowsOld], true).unwrap();
         assert!(sel.elevated && sel.targets.is_empty());
         let first = &sel.commands[0];
         assert_eq!((first.command.clone(), first.role, first.required), (OfficialCommand::RestorePointCreate, CommandRole::Prerequisite, true));
         let lines: Vec<String> = sel.commands[1..].iter().map(|c| c.command.args().join(" ")).collect();
-        assert_eq!(lines[0], "/Online /Cleanup-Image /StartComponentCleanup", "jamais /ResetBase");
-        assert_eq!(lines[2], "delete shadows /for=C: /oldest /quiet", "jamais /all");
+        assert_eq!(
+            lines[0],
+            format!("/Online /Cleanup-Image /StartComponentCleanup /LogPath:C:\\Users\\Jean Dupont\\AppData\\Local\\Lumen\\logs\\dism-{}.log", stamp(NOW)),
+            "jamais /ResetBase, sortie gardée"
+        );
+        assert!(matches!(sel.commands[3].command, OfficialCommand::ShadowDeleteOldest { .. }), "jamais /all");
         assert!(sel.commands[1..].iter().all(|c| c.role == CommandRole::Action && c.measured.as_ref().map(WinPath::display_string).as_deref() == Some("C:\\")));
         assert_eq!(sel.commands[2].bytes, 6 << 30, "gain estimé de l'hibernation : hiberfil.sys");
-        assert!(select_system('C', None, &[], true).is_err());
-        assert!(select_system('C', None, &[SystemAction::HibernateOff, SystemAction::HibernateReduced], false).is_err());
-        let sans = select_system('C', None, &[SystemAction::Components], false).unwrap();
+        assert!(select_system(&ctx(None), &[], true).is_err());
+        assert!(select_system(&ctx(None), &[SystemAction::HibernateOff, SystemAction::HibernateReduced], false).is_err());
+        let sans = select_system(&ctx(None), &[SystemAction::Components], false).unwrap();
         assert_eq!(sans.commands.len(), 1);
     }
 }

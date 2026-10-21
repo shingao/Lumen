@@ -233,6 +233,8 @@ export interface CleanPlan {
   skippedLocked: number;
   /** Commandes « administrateur » lancées par Lumen : une demande UAC chacune. */
   elevated: boolean;
+  /** Actions système sans point de restauration préalable : « Continuer sans point de restauration » exigé. */
+  withoutRestorePoint: boolean;
 }
 
 export interface CleanProgress {
@@ -273,9 +275,11 @@ export interface CleanReport {
     moreIssues: number;
   }[];
   /** `satisfied` : a fait son travail (un point de restauration déjà récent compte). */
-  commands: { line: string; status: CommandOutcome; satisfied: boolean; detail: string | null }[];
+  commands: { line: string; status: CommandOutcome; satisfied: boolean; detail: string | null; log: string | null }[];
   /** Arrêt avant les actions : un prérequis obligatoire n'a pas été rempli. */
   aborted: string | null;
+  /** Le point de restauration n'a pas pu être créé (protection du système désactivée…). */
+  restorePointFailed: boolean;
   journalError: string | null;
 }
 
@@ -302,6 +306,8 @@ export interface JournalAction {
   itemsCancelled: number;
   kind: CleanKind;
   aborted: string | null;
+  /** Lancé sans point de restauration, après « Continuer sans point de restauration ». */
+  withoutRestorePoint: boolean;
 }
 
 export interface JournalItem {
@@ -327,6 +333,9 @@ export interface JournalCommand {
   stdout: string;
   stderr: string;
   durationMs: number;
+  /** Journal de DISM rattaché, et sa fin. */
+  logPath: string | null;
+  logTail: string | null;
 }
 
 export interface JournalDetail {
@@ -429,6 +438,26 @@ export interface SystemSinks {
   lastAccessRaw: number | null;
   lastAccessUpdated: boolean;
   free: number | null;
+  /** Protection du système activée sur le lecteur système (null : inconnue). */
+  restoreProtection: boolean | null;
+}
+
+export interface RestorePoint {
+  id: string;
+  created: number;
+  description: string | null;
+}
+
+/** Points de restauration du lecteur système, lus en administrateur (lecture seule). */
+export interface RestorePoints {
+  drive: string;
+  count: number;
+  points: RestorePoint[];
+  /** Le point qui serait supprimé : le plus ancien. */
+  oldest: RestorePoint | null;
+  deletable: boolean;
+  /** Pourquoi il est gardé (moins de 2 points, moins de 7 jours ou de cette session). */
+  refusal: string | null;
 }
 
 /** Ce que l'interface demande à safety : jamais un chemin, seulement des identifiants. */

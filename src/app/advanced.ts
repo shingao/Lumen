@@ -10,6 +10,7 @@ import type {
   DuplicatesResult,
   FileKind,
   LargestResult,
+  RestorePoints,
   SystemAction,
   SystemSinks,
 } from "../ipc/types";
@@ -33,9 +34,11 @@ export interface AdvancedState {
   checkedDup: Set<number>;
   systemActions: SystemAction[];
   restorePoint: boolean;
+  /** Points de restauration lus en administrateur : seule base de « supprimer le plus ancien ». */
+  restorePoints: Load<RestorePoints>;
 }
 
-const EMPTY = (): Omit<AdvancedState, "sinks" | "systemActions" | "restorePoint"> => ({
+const EMPTY = (): Omit<AdvancedState, "sinks" | "systemActions" | "restorePoint" | "restorePoints"> => ({
   scanId: null,
   dormant: { status: "idle" },
   dormantMonths: null,
@@ -54,6 +57,7 @@ export const useAdvanced = create<AdvancedState>()(() => ({
   sinks: { status: "idle" },
   systemActions: [],
   restorePoint: true,
+  restorePoints: { status: "idle" },
 }));
 
 const set = (patch: Partial<AdvancedState>) => useAdvanced.setState(patch);
@@ -129,7 +133,9 @@ export function cancelDuplicates(): void {
 export async function loadSinks(): Promise<void> {
   set({ sinks: { status: "loading" } });
   try {
-    set({ sinks: { status: "done", value: await backend.systemSinks() } });
+    const value = await backend.systemSinks();
+    // Protection du système désactivée : pas de point de restauration possible, on le dit.
+    set({ sinks: { status: "done", value }, ...(value.restoreProtection === false ? { restorePoint: false } : {}) });
   } catch (err) {
     set({ sinks: { status: "failed", message: message(err) } });
   }
@@ -177,6 +183,22 @@ export function toggleSystemAction(action: SystemAction, on: boolean): void {
   const exclusive: Partial<Record<SystemAction, SystemAction>> = { hibernateOff: "hibernateReduced", hibernateReduced: "hibernateOff" };
   const rest = useAdvanced.getState().systemActions.filter((a) => a !== action && a !== exclusive[action]);
   set({ systemActions: on ? [...rest, action] : rest });
+}
+
+/** Lecture des points de restauration (une demande UAC, lecture seule). */
+export async function loadRestorePoints(): Promise<void> {
+  set({ restorePoints: { status: "loading" } });
+  try {
+    const value = await backend.readRestorePoints();
+    const actions = useAdvanced.getState().systemActions.filter((a) => a !== "oldestRestorePoint" || value.deletable);
+    set({ restorePoints: { status: "done", value }, systemActions: actions });
+  } catch (err) {
+    set({ restorePoints: { status: "failed", message: message(err) }, systemActions: useAdvanced.getState().systemActions.filter((a) => a !== "oldestRestorePoint") });
+  }
+}
+
+export function openSystemProtection(): void {
+  void backend.openSystemProtection().catch((err: unknown) => useStore.getState().showToast(String(err)));
 }
 
 export function setRestorePoint(on: boolean): void {

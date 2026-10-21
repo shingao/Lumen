@@ -27,7 +27,7 @@ import type {
 } from "../types";
 import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
-import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockProgram, mockSinks } from "./advanced";
+import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockNoProtection, mockProgram, mockRestorePoints, mockSinks } from "./advanced";
 
 const SETTINGS_KEY = "lumen-dev-settings";
 /** Durée d'une étape du nettoyage simulé. */
@@ -246,6 +246,10 @@ export function createMockBackend(now: () => number = Date.now): Backend {
   };
 
   const resolved = <T>(value: T): Promise<T> => Promise.resolve(value);
+  const NO_PROTECTION = {
+    fr: "Windows ne peut pas créer de point de restauration sur ce disque : la protection du système y est désactivée",
+    en: "Windows cannot create a restore point on this disk: system protection is turned off for it",
+  };
 
   // Nettoyage simulé : même déroulé que l'appli (plan, confirmation, avancement, bilan, journal).
   const plans = new Map<number, CleanPlan>();
@@ -393,6 +397,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           refused: [],
           skippedLocked: 0,
           elevated: request.kind === "system",
+          withoutRestorePoint: request.kind === "system" && !request.restorePoint,
         };
         plans.set(plan.planId, plan);
         planKinds.set(plan.planId, request.kind);
@@ -423,16 +428,22 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         refused: [],
         skippedLocked: 0,
         elevated: false,
+        withoutRestorePoint: false,
       };
       plans.set(plan.planId, plan);
       planKinds.set(plan.planId, "recos");
       return resolved(plan);
     },
 
-    executePlan(planId, fingerprint, permanentAcknowledged) {
+    executePlan(planId, fingerprint, permanentAcknowledged, withoutRestorePoint) {
       const plan = plans.get(planId);
       if (!plan || plan.fingerprint !== fingerprint) return Promise.reject(new Error("le plan a changé depuis sa confirmation : rien n'a été fait"));
       if (plan.mode === "permanent" && !permanentAcknowledged) return Promise.reject(new Error("la suppression définitive demande une seconde confirmation"));
+      if (plan.withoutRestorePoint && !withoutRestorePoint) {
+        return Promise.reject(new Error("actions système sans point de restauration : il faut confirmer « Continuer sans point de restauration »"));
+      }
+      // Protection du système désactivée : le point de restauration échoue, rien d'autre n'est lancé.
+      const blocked = plan.elevated && mockNoProtection() && plan.commands.some((c) => c.required);
       plans.delete(planId);
       cancelled.delete(planId);
       const steps = [...plan.commands.map((c) => ({ label: c.line, size: c.size, command: true })), ...plan.items.map((i) => ({ label: i.path, size: i.size, command: false }))];
@@ -440,11 +451,11 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       let freed = 0;
       let index = 0;
       const finish = (wasCancelled: boolean) => {
-        const done = Math.min(index, plan.items.length + plan.commands.length);
+        const done = blocked ? 0 : Math.min(index, plan.items.length + plan.commands.length);
         const report: CleanReport = {
           planId,
           actionId: journalActions.length + 1,
-          status: wasCancelled ? "cancelled" : "ok",
+          status: wasCancelled ? "cancelled" : blocked ? "failed" : "ok",
           mode: plan.mode,
           freed,
           measured: freed,
@@ -465,11 +476,14 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           })),
           // Point de restauration : Windows en garde un par 24 h, celui de moins de 24 h compte.
           commands: plan.commands.map((c, k) =>
-            c.required && k < done
-              ? { line: c.line, status: "failed", satisfied: true, detail: l({ fr: "un point de restauration existe déjà depuis moins de 24 h (limite de Windows) : il sert de point de retour", en: "a restore point already exists from the last 24 h (Windows limit): it is used as the fallback" }) }
-              : { line: c.line, status: k < done ? "succeeded" : "cancelled", satisfied: k < done, detail: null },
+            blocked && c.required
+              ? { line: c.line, status: "failed", satisfied: false, detail: l(NO_PROTECTION), log: null }
+              : c.required && k < done
+                ? { line: c.line, status: "failed", satisfied: true, detail: l({ fr: "un point de restauration existe déjà depuis moins de 24 h (limite de Windows) : il sert de point de retour", en: "a restore point already exists from the last 24 h (Windows limit): it is used as the fallback" }), log: null }
+                : { line: c.line, status: k < done ? "succeeded" : "cancelled", satisfied: k < done, detail: null, log: c.line.includes("/LogPath:") ? (c.line.split("/LogPath:")[1] ?? null) : null },
           ),
-          aborted: null,
+          aborted: blocked ? l(NO_PROTECTION) : null,
+          restorePointFailed: blocked,
           journalError: null,
         };
         const action: JournalAction = {
@@ -489,7 +503,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           itemsFailed: 0,
           itemsCancelled: report.cancelled,
           kind: planKinds.get(planId) ?? "recos",
-          aborted: null,
+          aborted: report.aborted,
+          withoutRestorePoint: plan.withoutRestorePoint,
         };
         journalActions.unshift(action);
         journalDetails.set(action.id, {
@@ -515,12 +530,14 @@ export function createMockBackend(now: () => number = Date.now): Backend {
             stdout: "",
             stderr: "",
             durationMs: 1200,
+            logPath: report.commands[k]?.log ?? null,
+            logTail: report.commands[k]?.log ? "[==========================100.0%==========================]\nL'opération a réussi." : null,
           })),
         });
         emitClean({ type: "done", report });
       };
       const step = () => {
-        if (cancelled.has(planId) || index >= steps.length) {
+        if (blocked || cancelled.has(planId) || index >= steps.length) {
           finish(cancelled.has(planId));
           return;
         }
@@ -585,6 +602,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     systemSinks: () => resolved(mockSinks()),
+    readRestorePoints: () => resolved(mockRestorePoints(now())),
+    openSystemProtection: () => resolved(undefined),
 
     journal: () => resolved([...journalActions]),
 
