@@ -139,7 +139,7 @@ impl Plan {
     /// Actions système sans point de restauration obligatoire avant elles.
     pub fn without_restore_point(&self) -> bool {
         self.elevated
-            && self.commands.iter().any(|c| c.command.needs_elevation())
+            && self.commands.iter().any(|c| c.command.wants_restore_point())
             && !self.commands.iter().any(|c| c.required && c.command == crate::commands::OfficialCommand::RestorePointCreate)
     }
 

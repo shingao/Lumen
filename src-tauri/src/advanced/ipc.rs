@@ -197,6 +197,8 @@ pub enum AdvancedRequest {
     Artifacts { ids: Vec<i64> },
     /// `docker image prune` (images sans étiquette listées), si Docker tourne.
     DockerPrune,
+    /// Compactage des disques virtuels WSL / Docker cochés (identifiants de la dernière liste).
+    WslCompact { ids: Vec<u32> },
     System {
         actions: Vec<SystemAction>,
         #[serde(rename = "restorePoint")]
@@ -675,6 +677,12 @@ pub fn advanced_plan(
         let volume_key = crate::timeline::volume_key(&entry.volume);
         return cleanup::prepare(&clean, &sel, mode, "Artefacts de projets".into(), ("artifacts", volume_key), &|p| applied.display(p));
     }
+    if let AdvancedRequest::WslCompact { ids } = &request {
+        let paths = crate::dev::wsl_paths(&app.state::<crate::dev::DevState>(), ids)?;
+        let sel = crate::dev::wsl::select(&paths)?;
+        let letter = paths.first().map(|p| p.to_string_lossy().chars().take(2).collect::<String>()).unwrap_or_default();
+        return cleanup::prepare(&clean, &sel, mode, "Compactage WSL / Docker".into(), ("wsl", crate::timeline::volume_key(&letter)), &|p| p.to_owned());
+    }
     if let AdvancedRequest::DockerPrune = request {
         let sel = crate::dev::select_docker()?;
         return cleanup::prepare(&clean, &sel, mode, "Images Docker sans étiquette".into(), ("docker", None), &|p| p.to_owned());
@@ -695,7 +703,7 @@ pub fn advanced_plan(
             let found = inner.duplicates.as_ref().filter(|(id, _)| *id == scan_id).map(|(_, f)| f.clone()).ok_or(LumenError::UnknownNode)?;
             (select_duplicates(&entry.scan, &found, ids)?, "Doublons", "duplicates")
         }
-        AdvancedRequest::System { .. } | AdvancedRequest::Shaders | AdvancedRequest::Artifacts { .. } | AdvancedRequest::DockerPrune => {
+        AdvancedRequest::System { .. } | AdvancedRequest::Shaders | AdvancedRequest::Artifacts { .. } | AdvancedRequest::DockerPrune | AdvancedRequest::WslCompact { .. } => {
             return Err(LumenError::Plan("requête inattendue".into()))
         }
     };

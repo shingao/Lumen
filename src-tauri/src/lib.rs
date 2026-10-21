@@ -40,6 +40,7 @@ pub fn run() {
         .manage(advanced::ipc::AdvancedState::default())
         .manage(timeline::DailyState::default())
         .manage(games::GamesState::default())
+        .manage(dev::DevState::default())
         .invoke_handler(tauri::generate_handler![
             scanning::app_info,
             scanning::volumes_list,
@@ -82,6 +83,7 @@ pub fn run() {
             games::games_shaders,
             dev::dev_overview,
             dev::docker_images,
+            dev::wsl_disks,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {

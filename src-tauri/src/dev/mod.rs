@@ -7,6 +7,7 @@
 //! `docker image prune` (images sans étiquette, listées avant).
 
 pub mod docker;
+pub mod wsl;
 
 use std::collections::HashMap;
 
@@ -352,6 +353,58 @@ pub fn select_docker() -> Result<Selection, LumenError> {
     }
     let command = safety::plan::PlannedCommand::action(safety::commands::OfficialCommand::DockerImagePrune, None, d.total);
     Ok(Selection { targets: Vec::new(), allow: Allowlist::new(), commands: vec![command], rule_names: HashMap::new(), elevated: false, guard: None })
+}
+
+/// Dernière liste des disques virtuels (le front coche des identifiants, jamais des chemins).
+#[derive(Default)]
+pub struct DevState(std::sync::Mutex<Vec<std::path::PathBuf>>);
+
+mod wsl_platform {
+    use super::wsl::Distro;
+
+    #[cfg(windows)]
+    pub fn distros() -> Vec<Distro> {
+        use scan::win::registry::{string, subkeys, Hive, View};
+        let root = "Software\\Microsoft\\Windows\\CurrentVersion\\Lxss";
+        subkeys(Hive::CurrentUser, View::Native, root)
+            .into_iter()
+            .filter_map(|k| {
+                let path = format!("{root}\\{k}");
+                Some(Distro {
+                    name: string(Hive::CurrentUser, View::Native, &path, "DistributionName")?,
+                    base_path: string(Hive::CurrentUser, View::Native, &path, "BasePath")?,
+                    vhd: string(Hive::CurrentUser, View::Native, &path, "VhdFileName"),
+                })
+            })
+            .collect()
+    }
+
+    #[cfg(not(windows))]
+    pub fn distros() -> Vec<Distro> {
+        Vec::new()
+    }
+
+    pub fn hyperv() -> bool {
+        std::env::var_os("SystemRoot").map(std::path::PathBuf::from).is_some_and(|r| r.join("System32").join("WindowsPowerShell").join("v1.0").join("Modules").join("Hyper-V").is_dir())
+    }
+}
+
+/// Disques virtuels WSL et Docker et leur taille (réglage Expérimental côté interface).
+#[tauri::command]
+pub fn wsl_disks(state: tauri::State<'_, DevState>) -> wsl::WslDto {
+    let local = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+    let size = |p: &std::path::Path| std::fs::metadata(p).ok().filter(|m| m.is_file()).map(|m| m.len());
+    let list = wsl::disks(&wsl_platform::distros(), local.as_deref(), &size);
+    if let Ok(mut s) = state.0.lock() {
+        *s = list.iter().map(|(_, p)| p.clone()).collect();
+    }
+    wsl::WslDto { disks: list.into_iter().map(|(d, _)| d).collect(), hyperv: wsl_platform::hyperv() }
+}
+
+/// Chemins des disques cochés, d'après la dernière liste.
+pub fn wsl_paths(state: &DevState, ids: &[u32]) -> Result<Vec<std::path::PathBuf>, LumenError> {
+    let list = state.0.lock().map_err(|_| LumenError::Plan("état indisponible".into()))?;
+    ids.iter().map(|&i| list.get(i as usize).cloned().ok_or(LumenError::UnknownNode)).collect()
 }
 
 #[cfg(test)]
