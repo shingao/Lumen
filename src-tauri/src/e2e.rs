@@ -3,6 +3,7 @@
 //! vrai (Corbeille, commande officielle npm), puis on vérifie que seuls les bons éléments sont
 //! partis, que les fichiers récents de %TEMP% et tout le reste sont intacts, que le journal
 //! est complet et qu'un élément se restaure depuis la Corbeille.
+#![cfg(windows)]
 
 use std::fs::{self, OpenOptions};
 use std::path::Path;
