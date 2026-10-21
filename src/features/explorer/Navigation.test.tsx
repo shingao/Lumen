@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { goBack, goForward, goTo, goToTarget, resetNavigation, useNav } from "../../app/navigation";
 import { startScan } from "../../app/scanning";
 import { navigationButton, navigationKey } from "../../app/shortcuts";
@@ -61,8 +61,9 @@ describe("Précédent / suivant dans l'Explorer", () => {
     await waitFor(() => expect(useNav.getState().forward).toHaveLength(0));
   });
 
-  it("changement de disque dans l'historique : retour réanalyse et rouvre le dossier par son chemin", async () => {
+  it("changement de disque dans l'historique : retour instantané sur l'analyse gardée, dossier rouvert par son chemin", async () => {
     render(<Explorer />);
+    const profileScan = useStore.getState().scan.summary?.scanId;
     const videos = await idOf("C:\\Users\\Arthur\\Vidéos");
     act(() => goTo(videos));
     await waitFor(() => expect(useNav.getState().here?.label).toBe("Vidéos"));
@@ -71,11 +72,14 @@ describe("Précédent / suivant dans l'Explorer", () => {
     await waitFor(() => expect(useNav.getState().here?.target).toEqual({ kind: "volume", letter: "D:" }));
     expect(useNav.getState().back.at(-1)?.label).toBe("Vidéos");
 
+    const started = vi.spyOn(backend, "startScan");
     act(() => goBack());
     await waitFor(() => expect(useStore.getState().target).toEqual({ kind: "userProfile" }));
-    await waitFor(() => expect(useStore.getState().scan.status).toBe("done"));
-    // Nouvelle analyse : les identifiants ont pu changer, le dossier est retrouvé par son chemin.
     await waitFor(() => expect(useStore.getState().node).toBe(videos));
+    // Dernière analyse du profil gardée pendant la session : aucune nouvelle analyse.
+    expect(started).not.toHaveBeenCalled();
+    expect(useStore.getState().scan).toMatchObject({ status: "done", summary: { scanId: profileScan } });
+    started.mockRestore();
   });
 
   it("raccourcis : Alt+← / Alt+→, Retour arrière hors saisie, boutons 4 et 5 de la souris", () => {

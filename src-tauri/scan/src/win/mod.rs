@@ -12,6 +12,7 @@
 #![allow(unsafe_code)]
 
 pub mod helper;
+pub mod registry;
 pub mod mft;
 pub mod trust;
 #[cfg(test)]

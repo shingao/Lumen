@@ -6,7 +6,7 @@ edition = "2021"
 rust-version = "1.80"
 
 [workspace]
-members = [".", "safety", "scan", "rules"]
+members = [".", "safety", "scan", "rules", "launchers"]
 
 [lib]
 name = "lumen_lib"
@@ -23,6 +23,7 @@ thiserror = "2"
 scan = { path = "scan" }
 rules = { path = "rules" }
 safety = { path = "safety" }
+launchers = { path = "launchers" }
 rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]

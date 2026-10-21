@@ -193,6 +193,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
 
   // Analyses factices : chaque cible pointe vers un jeu de données de la maquette.
   const scans = new Map<number, string>();
+  /** Analyses terminées (la dernière de chaque cible est gardée, comme dans l'appli). */
+  const finished = new Set<number>();
   let nextScan = 0;
   const listeners = new Set<(e: ScanEvent) => void>();
   const emit = (e: ScanEvent) => listeners.forEach((fn) => fn(e));
@@ -317,8 +319,18 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           });
         }, (i + 1) * 100);
       });
-      setTimeout(() => emit({ type: "done", summary: total }), 400);
+      setTimeout(() => {
+        finished.add(id);
+        emit({ type: "done", summary: total });
+      }, 400);
       return resolved(id);
+    },
+
+    cachedScan(target) {
+      const key = targetKey(target);
+      const ids = [...finished].filter((id) => scans.get(id) === key);
+      const last = ids.length > 0 ? Math.max(...ids) : null;
+      return resolved(last === null ? null : summaryOf(last));
     },
 
     cancelScan(scanId) {

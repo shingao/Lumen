@@ -127,6 +127,10 @@ impl Effects for WinEffects {
         Some(free)
     }
 
+    fn running_processes(&self) -> Vec<crate::guard::RunningProcess> {
+        super::process::running_processes()
+    }
+
     fn run_elevated(&self, command: &OfficialCommand, cancel: &AtomicBool) -> CommandRun {
         let exe = self.resolve(command).map(|(exe, _)| exe);
         super::elevated::run(command, exe, cancel)

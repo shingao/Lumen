@@ -7,7 +7,7 @@
 import { create } from "zustand";
 import { backend } from "../ipc/client";
 import type { NodeId, ScanTarget } from "../ipc/types";
-import { startScan } from "./scanning";
+import { showCachedScan, startScan } from "./scanning";
 import { useStore } from "./store";
 
 export interface Place {
@@ -86,7 +86,13 @@ export function goForward(): void {
 async function restore(place: Place): Promise<void> {
   const { target, scan, zoom } = useStore.getState();
   if (!sameTarget(target, place.target)) {
-    // Autre disque : l'appli ne garde que la dernière analyse, il faut le réanalyser.
+    // Autre disque : sa dernière analyse de la session s'il y en a une (instantané), sinon
+    // une nouvelle analyse qui rouvrira le dossier.
+    const cached = await showCachedScan(place.target);
+    if (cached !== null) {
+      zoom(await resolve(cached, place.path));
+      return;
+    }
     useNav.setState({ pending: place.path });
     await startScan(place.target);
     return;

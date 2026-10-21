@@ -48,6 +48,8 @@ export interface Backend {
   tree(scanId: number, node: NodeId | null): Promise<TreeSlice>;
   /** Nœud d'un chemin complet dans l'analyse (historique : les identifiants changent d'une analyse à l'autre). */
   findNode(scanId: number, path: string): Promise<NodeId | null>;
+  /** Dernière analyse d'une cible gardée pendant la session (retour instantané), ou null. */
+  cachedScan(target: ScanTarget): Promise<ScanSummary | null>;
   kpis(target: ScanTarget, summary: ScanSummary | null): Promise<Kpis>;
   recommendations(scanId: number): Promise<Recommendation[]>;
   recommendation(id: string): Promise<RecommendationDetail>;

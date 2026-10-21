@@ -10,6 +10,7 @@ mod cleanup;
 #[cfg(test)]
 mod e2e;
 mod error;
+mod games;
 mod journal;
 mod scanning;
 mod timeline;
@@ -37,6 +38,7 @@ pub fn run() {
         .manage(cleanup::JournalState::default())
         .manage(advanced::ipc::AdvancedState::default())
         .manage(timeline::DailyState::default())
+        .manage(games::GamesState::default())
         .invoke_handler(tauri::generate_handler![
             scanning::app_info,
             scanning::volumes_list,
@@ -45,6 +47,7 @@ pub fn run() {
             scanning::scan_summary,
             scanning::scan_tree,
             scanning::scan_find,
+            scanning::scan_cached,
             scanning::recommendations,
             scanning::recommendation_detail,
             scanning::rule_kpis,
@@ -71,6 +74,11 @@ pub fn run() {
             timeline::timeline_database,
             timeline::timeline_purge,
             timeline::timeline_daily,
+            games::games_list,
+            games::game_cover,
+            games::game_open,
+            games::games_running,
+            games::games_shaders,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {

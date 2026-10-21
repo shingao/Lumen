@@ -17,6 +17,9 @@ use scan::{Kind, NodeId, Progress, Scan, ScanError, SliceNode};
 const TOP_N: usize = 30;
 /// Niveaux de la treemap sous le dossier affiché, au plus.
 const MAX_LEVELS: u8 = 4;
+/// Analyses gardées en mémoire pendant la session : la dernière de chaque cible visitée (retour
+/// instantané par « Précédent »), les plus anciennes oubliées au-delà.
+const MAX_CACHED: usize = 4;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -151,6 +154,7 @@ pub struct TreeSliceDto {
 }
 
 pub(crate) struct Entry {
+    pub(crate) target: ScanTarget,
     pub(crate) scan: Scan,
     pub(crate) volume: String,
     notice: Option<&'static str>,
@@ -163,6 +167,23 @@ struct Inner {
     next_id: u32,
     running: Option<(u32, Arc<AtomicBool>)>,
     results: HashMap<u32, Arc<Entry>>,
+}
+
+impl Inner {
+    /// Garde la nouvelle analyse d'une cible : remplace la précédente de la même cible, puis
+    /// oublie les plus anciennes au-delà de `MAX_CACHED`.
+    fn keep(&mut self, id: u32, entry: Arc<Entry>) {
+        self.results.retain(|_, e| e.target != entry.target);
+        self.results.insert(id, entry);
+        while self.results.len() > MAX_CACHED {
+            let Some(oldest) = self.results.keys().min().copied() else { break };
+            self.results.remove(&oldest);
+        }
+    }
+
+    fn cached(&self, target: &ScanTarget) -> Option<(u32, Arc<Entry>)> {
+        self.results.iter().filter(|(_, e)| &e.target == target).max_by_key(|(id, _)| **id).map(|(id, e)| (*id, e.clone()))
+    }
 }
 
 #[derive(Default)]
@@ -426,11 +447,9 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
                         Ok(i) => i,
                         Err(_) => return,
                     };
-                    let entry = Arc::new(Entry { scan, volume, notice, applied });
+                    let entry = Arc::new(Entry { target, scan, volume, notice, applied });
                     let dto = summary(id, &entry);
-                    // Une seule analyse gardée en mémoire : la dernière.
-                    inner.results.clear();
-                    inner.results.insert(id, entry.clone());
+                    inner.keep(id, entry.clone());
                     drop(inner);
                     let _ = app.emit("scan:done", dto);
                     // Snapshot de la Timeline (tailles agrégées par dossier) ; un échec n'empêche
@@ -445,6 +464,17 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
         })
         .map_err(|e| LumenError::Startup(e.to_string()))?;
     Ok(id)
+}
+
+/// Dernière analyse d'une cible gardée pendant la session (retour par « Précédent » sans
+/// réanalyser), ou rien.
+#[tauri::command]
+pub fn scan_cached(state: State<'_, ScanState>, target: ScanTarget) -> Option<SummaryDto> {
+    let inner = state.0.lock().ok()?;
+    if inner.running.is_some() {
+        return None;
+    }
+    inner.cached(&target).map(|(id, e)| summary(id, &e))
 }
 
 #[tauri::command]
@@ -619,5 +649,37 @@ mod tests {
         assert_eq!(t, ScanTarget::UserProfile);
         // Aucun chemin libre accepté.
         assert!(serde_json::from_str::<ScanTarget>(r#"{"kind":"path","path":"C:\\Windows"}"#).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn entry(target: ScanTarget) -> Arc<Entry> {
+        let root = scan::RawEntry { name: "C:".into(), kind: Kind::Dir, attributes: 0, file_id: 5, logical: 0, allocated: 0, modified: 0, accessed: 0 };
+        let scan = scan::model::Builder::new(&root).finish("C:\\".into(), 1, scan::Method::Walk, false, scan::Stats::default());
+        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None })
+    }
+
+    #[test]
+    fn derniere_analyse_de_chaque_disque_gardee() {
+        let vol = |l: &str| ScanTarget::Volume { letter: l.into() };
+        let mut inner = Inner::default();
+        inner.keep(1, entry(ScanTarget::UserProfile));
+        inner.keep(2, entry(vol("D:")));
+        // Nouvelle analyse du profil : remplace l'ancienne, D: reste là.
+        inner.keep(3, entry(ScanTarget::UserProfile));
+        assert_eq!(inner.cached(&ScanTarget::UserProfile).map(|(id, _)| id), Some(3));
+        assert_eq!(inner.cached(&vol("D:")).map(|(id, _)| id), Some(2));
+        assert!(!inner.results.contains_key(&1));
+        // Au-delà de 4 cibles, la plus ancienne est oubliée.
+        for (id, l) in [(4, "E:"), (5, "F:"), (6, "G:")] {
+            inner.keep(id, entry(vol(l)));
+        }
+        assert_eq!(inner.results.len(), MAX_CACHED);
+        assert!(inner.cached(&vol("D:")).is_none());
+        assert_eq!(inner.cached(&vol("G:")).map(|(id, _)| id), Some(6));
+        assert!(inner.cached(&vol("Z:")).is_none());
     }
 }

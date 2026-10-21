@@ -2,7 +2,7 @@
 
 import { backend, isTauri } from "../ipc/client";
 import { onScanDone } from "./navigation";
-import type { ScanMethod, ScanTarget } from "../ipc/types";
+import type { ScanMethod, ScanSummary, ScanTarget } from "../ipc/types";
 import { useStore } from "./store";
 
 let subscribed = false;
@@ -18,21 +18,38 @@ function subscribe(): void {
       if (ours(e.progress.scanId)) setScan({ id: e.progress.scanId, progress: e.progress });
     } else if (e.type === "done") {
       if (!ours(e.summary.scanId)) return;
-      useStore.setState({ node: null });
-      setScan({ id: e.summary.scanId, status: "done", summary: e.summary, progress: null, message: null });
+      show(e.summary);
       void onScanDone(e.summary.scanId);
-      // Cochés par défaut : les éléments sans risque seulement (un « À vérifier » ne l'est jamais).
-      if (isTauri) {
-        void backend
-          .recommendations(e.summary.scanId)
-          .then((recos) => useStore.getState().setChecked(recos.filter((r) => r.status === "safe").map((r) => r.id)))
-          .catch((err: unknown) => console.error("recommandations :", err));
-      }
     } else if (ours(e.scanId)) {
       // Annulée ou en échec : on garde l'analyse précédente si elle existe.
       setScan({ status: scan.summary ? "done" : "failed", progress: null, message: e.cancelled ? null : e.message });
     }
   });
+}
+
+/** Affiche une analyse terminée (nouvelle, ou gardée en mémoire pour sa cible). */
+function show(summary: ScanSummary): void {
+  useStore.setState({ node: null });
+  useStore.getState().setScan({ id: summary.scanId, status: "done", summary, progress: null, message: null });
+  // Cochés par défaut : les éléments sans risque seulement (un « À vérifier » ne l'est jamais).
+  if (isTauri) {
+    void backend
+      .recommendations(summary.scanId)
+      .then((recos) => useStore.getState().setChecked(recos.filter((r) => r.status === "safe").map((r) => r.id)))
+      .catch((err: unknown) => console.error("recommandations :", err));
+  }
+}
+
+/** Retour vers une cible déjà analysée dans la session : sa dernière analyse, sans réanalyser.
+ * Renvoie son identifiant, ou null s'il faut l'analyser. */
+export async function showCachedScan(target: ScanTarget): Promise<number | null> {
+  subscribe();
+  if (useStore.getState().scan.status === "running") return null;
+  const summary = await backend.cachedScan(target).catch(() => null);
+  if (!summary) return null;
+  useStore.getState().setTarget(target);
+  show(summary);
+  return summary.scanId;
 }
 
 export async function startScan(target: ScanTarget, method: ScanMethod = "auto"): Promise<void> {

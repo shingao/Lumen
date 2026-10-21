@@ -21,6 +21,8 @@ pub mod check;
 pub mod commands;
 pub mod denylist;
 pub mod exec;
+pub mod guard;
+pub mod launch;
 pub mod path;
 pub mod plan;
 pub mod probe;
