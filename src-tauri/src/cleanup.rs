@@ -353,6 +353,8 @@ struct Prepared {
     title: String,
     /// Type de nettoyage, pour le journal.
     kind: &'static str,
+    /// Volume visé (clé de la Timeline), pour les repères de nettoyage sur la courbe.
+    volume_key: Option<String>,
 }
 
 #[derive(Default)]
@@ -542,7 +544,8 @@ pub fn plan_create(
     let mode = delete_mode(mode);
     let names: Vec<&str> = recos.iter().filter_map(|r| sel.rule_names.get(r)).map(|(fr, _)| fr.as_str()).collect();
     let title = if names.len() <= 3 { names.join(", ") } else { format!("{} recommandations", names.len()) };
-    prepare(&state, &sel, mode, title, "recos", &|p| applied.display(p))
+    let volume_key = crate::timeline::volume_key(&entry.volume);
+    prepare(&state, &sel, mode, title, ("recos", volume_key), &|p| applied.display(p))
 }
 
 pub(crate) fn delete_mode(mode: ModeDto) -> DeleteMode {
@@ -558,11 +561,11 @@ pub(crate) fn prepare(
     sel: &Selection,
     mode: DeleteMode,
     title: String,
-    kind: &'static str,
+    (kind, volume_key): (&'static str, Option<String>),
     display: &dyn Fn(&str) -> String,
 ) -> Result<PlanDto, LumenError> {
     let plan = platform::build(sel, mode)?;
-    let prepared = Prepared { plan, allow: sel.allow.clone(), title, kind };
+    let prepared = Prepared { plan, allow: sel.allow.clone(), title, kind, volume_key };
     let mut inner = state.0.lock().map_err(|_| LumenError::Plan("état indisponible".into()))?;
     inner.next_id += 1;
     let id = inner.next_id;
@@ -639,7 +642,7 @@ pub fn plan_execute(
             let dto = match result {
                 Ok(report) => {
                     let script = platform::script(&prepared.plan, &prepared.title);
-                    let meta = ActionMeta { kind: prepared.kind, without_restore_point: prepared.plan.without_restore_point(), started_at: started, finished_at: unix_ms(), title: &prepared.title, planned_bytes: prepared.plan.total_bytes(), script: &script };
+                    let meta = ActionMeta { kind: prepared.kind, without_restore_point: prepared.plan.without_restore_point(), started_at: started, finished_at: unix_ms(), title: &prepared.title, planned_bytes: prepared.plan.total_bytes(), script: &script, volume_key: prepared.volume_key.as_deref() };
                     let (id, err) = match with_journal(&app, |j| j.record(&meta, &report)) {
                         Ok(id) => (Some(id), None),
                         Err(e) => (None, Some(e.to_string())),

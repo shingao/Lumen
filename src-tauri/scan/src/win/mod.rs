@@ -26,7 +26,7 @@ use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, FILETIME, HANDLE};
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FileBasicInfo, FileIdInfo, FileStandardInfo, GetCompressedFileSizeW, GetDiskFreeSpaceExW, GetDiskFreeSpaceW, GetDriveTypeW,
-    GetFileInformationByHandle, GetFileInformationByHandleEx, GetLogicalDrives, GetLongPathNameW, GetVolumeInformationW,
+    GetFileInformationByHandle, GetFileInformationByHandleEx, GetLogicalDrives, GetLongPathNameW, GetVolumeInformationW, GetVolumeNameForVolumeMountPointW,
     GetVolumePathNameW, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_NO_RECALL,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, SetFileTime, GetFinalPathNameByHandleW,
@@ -484,6 +484,11 @@ pub struct Volume {
     pub kind: VolumeKind,
     pub total: u64,
     pub free: u64,
+    /// `\\?\Volume{GUID}\` : identité stable du volume (la lettre peut changer). Absent pour
+    /// un lecteur réseau ou SUBST.
+    pub guid: Option<String>,
+    /// Numéro de série du volume (`GetVolumeInformationW`), identité de repli sans GUID.
+    pub serial: u32,
 }
 
 impl Volume {
@@ -518,10 +523,14 @@ pub fn volumes() -> Vec<Volume> {
         }
         let mut label = [0u16; 261];
         let mut fs = [0u16; 261];
-        // SAFETY : chaîne et tampons possédés.
-        let _ = unsafe { GetVolumeInformationW(&root, Some(&mut label), None, None, None, Some(&mut fs)) };
+        let mut serial = 0u32;
+        // SAFETY : chaîne, tampons et entier possédés.
+        let _ = unsafe { GetVolumeInformationW(&root, Some(&mut label), Some(&mut serial), None, None, Some(&mut fs)) };
         let text = |b: &[u16]| String::from_utf16_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]);
-        out.push(Volume { letter, label: text(&label), file_system: text(&fs), kind, total, free });
+        let mut name = [0u16; 64];
+        // SAFETY : chaîne et tampon possédés (50 caractères suffisent pour « \\?\Volume{GUID}\ »).
+        let guid = unsafe { GetVolumeNameForVolumeMountPointW(&root, &mut name) }.ok().map(|_| text(&name)).filter(|g| g.contains('{'));
+        out.push(Volume { letter, label: text(&label), file_system: text(&fs), kind, total, free, guid, serial });
     }
     out
 }

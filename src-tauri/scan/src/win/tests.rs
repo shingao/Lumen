@@ -18,7 +18,7 @@ use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_OFF
 use windows::Win32::System::Ioctl::{FSCTL_SET_COMPRESSION, FSCTL_SET_SPARSE};
 use windows::Win32::System::IO::DeviceIoControl;
 
-use super::{is_elevated, mft::scan_mft, root_path, WinSource};
+use super::{is_elevated, mft::scan_mft, root_path, volumes, WinSource};
 use crate::model::{Kind, Scan};
 use crate::walk::{walk, DirError, Progress, Source};
 
@@ -279,4 +279,23 @@ fn scan_sans_toucher_au_dernier_acces() {
     if !dir_tracked {
         eprintln!("note : lister un dossier ne met pas sa date à jour sur ce système ; seule la partie fichiers est probante");
     }
+}
+
+#[test]
+fn volume_systeme_identifie_par_son_guid() {
+    // La Timeline identifie un volume par son GUID, jamais par sa lettre : il doit être lu, et
+    // rester le même d'une lecture à l'autre.
+    let system = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+    let letter = system.chars().next().unwrap_or('C');
+    let read = || volumes().into_iter().find(|v| v.letter == letter).unwrap();
+    let (a, b) = (read(), read());
+    let guid = a.guid.clone().unwrap();
+    assert!(guid.starts_with("\\\\?\\Volume{") && guid.ends_with("}\\"), "{guid}");
+    assert_eq!(a.guid, b.guid);
+    assert_ne!(a.serial, 0);
+    assert_eq!(a.serial, b.serial);
+    // Deux volumes montés n'ont jamais le même GUID.
+    let all: Vec<String> = volumes().into_iter().filter_map(|v| v.guid).collect();
+    let unique: std::collections::BTreeSet<&String> = all.iter().collect();
+    assert_eq!(unique.len(), all.len());
 }

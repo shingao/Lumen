@@ -15,7 +15,7 @@ use safety::plan::{CommandRole, DeleteMode};
 
 use crate::advanced::duplicates::{CacheEntry, CacheKey};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 /// Empreinte de doublon oubliée si elle n'a pas servi depuis (ms).
 const HASH_CACHE_TTL_MS: i64 = 180 * 86_400 * 1000;
 
@@ -78,6 +78,53 @@ ALTER TABLE action_commands ADD COLUMN log_path TEXT;
 ALTER TABLE actions ADD COLUMN without_restore_point INTEGER NOT NULL DEFAULT 0;
 ";
 
+/// v4 (jalon 7) : snapshots de la Timeline. Un volume est identifié par son GUID (à défaut, son
+/// numéro de série et son système de fichiers), jamais par sa lettre, qui n'est qu'un dernier état
+/// connu. Un snapshot ne garde que des tailles agrégées par dossier (4 niveaux au plus), jamais la
+/// liste des fichiers ; les chemins sont relatifs à la racine du snapshot, elle-même relative au
+/// volume (sans lettre). Chaque nettoyage retient le volume qu'il visait (repères de la courbe).
+const SCHEMA_V4: &str = "
+CREATE TABLE IF NOT EXISTS volumes (
+  id INTEGER PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  guid TEXT,
+  serial INTEGER NOT NULL,
+  scan_serial INTEGER,
+  fs TEXT NOT NULL,
+  label TEXT NOT NULL,
+  letter TEXT NOT NULL,
+  seen_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS snapshots (
+  id INTEGER PRIMARY KEY,
+  volume_id INTEGER NOT NULL REFERENCES volumes(id) ON DELETE CASCADE,
+  root TEXT NOT NULL COLLATE NOCASE,
+  method TEXT NOT NULL CHECK (method IN ('walk', 'mft')),
+  source TEXT NOT NULL CHECK (source IN ('scan', 'daily')),
+  taken_at INTEGER NOT NULL,
+  used INTEGER NOT NULL,
+  files INTEGER NOT NULL,
+  volume_total INTEGER,
+  volume_free INTEGER,
+  letter TEXT NOT NULL,
+  min_bytes INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS snapshots_by_series ON snapshots(volume_id, root, method, taken_at);
+CREATE TABLE IF NOT EXISTS snapshot_paths (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS snapshot_sizes (
+  snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  path_id INTEGER NOT NULL REFERENCES snapshot_paths(id),
+  allocated INTEGER NOT NULL,
+  files INTEGER NOT NULL,
+  PRIMARY KEY (snapshot_id, path_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS snapshot_sizes_by_path ON snapshot_sizes(path_id);
+ALTER TABLE actions ADD COLUMN volume_key TEXT;
+";
+
+/// Migrations, dans l'ordre : (version atteinte, SQL). La base vide est d'abord créée en v1.
+const MIGRATIONS: [(i64, &str); 3] = [(2, SCHEMA_V2), (3, SCHEMA_V3), (4, SCHEMA_V4)];
+
 /// Fin d'un fichier de sortie (journal de DISM) pour l'affichage : 64 Kio au plus, 80 lignes.
 pub fn log_tail(path: &str) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
@@ -138,6 +185,8 @@ pub struct ActionMeta<'a> {
     pub title: &'a str,
     pub planned_bytes: u64,
     pub script: &'a str,
+    /// Volume visé (clé stable de la Timeline : GUID ou numéro de série), pour les repères.
+    pub volume_key: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -286,7 +335,7 @@ impl Journal {
                 1
             }
         };
-        for (v, sql) in [(2, SCHEMA_V2), (3, SCHEMA_V3)] {
+        for (v, sql) in MIGRATIONS {
             if version < v {
                 let tx = conn.unchecked_transaction()?;
                 tx.execute_batch(sql)?;
@@ -295,6 +344,14 @@ impl Journal {
             }
         }
         Ok(Journal { conn })
+    }
+
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    pub(crate) fn conn_mut(&mut self) -> &mut Connection {
+        &mut self.conn
     }
 
     /// Enregistre une exécution et tout son détail, en une transaction.
@@ -307,8 +364,9 @@ impl Journal {
         let tx = self.conn.transaction()?;
         tx.execute(
             "INSERT INTO actions (started_at, finished_at, title, method, plan_hash, status, bytes_planned, bytes_freed, bytes_measured,
-               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script, kind, aborted, without_restore_point)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script, kind, aborted, without_restore_point,
+               volume_key)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 meta.started_at,
                 meta.finished_at,
@@ -329,6 +387,7 @@ impl Journal {
                 meta.kind,
                 report.aborted,
                 meta.without_restore_point,
+                meta.volume_key,
             ],
         )?;
         let action = tx.last_insert_rowid();
@@ -591,7 +650,7 @@ mod tests {
     #[test]
     fn journal_complet_d_une_execution() {
         let mut j = Journal::in_memory().unwrap();
-        let meta = ActionMeta { kind: "recos", without_restore_point: false, started_at: 10, finished_at: 20, title: "Nettoyage", planned_bytes: 155, script: "# Lumen · script" };
+        let meta = ActionMeta { kind: "recos", without_restore_point: false, started_at: 10, finished_at: 20, title: "Nettoyage", planned_bytes: 155, script: "# Lumen · script", volume_key: None };
         let id = j.record(&meta, &report()).unwrap();
         let actions = j.actions(10).unwrap();
         assert_eq!(actions.len(), 1);
@@ -759,7 +818,7 @@ mod v3_tests {
             cancelled: false,
             aborted: None,
         };
-        let meta = ActionMeta { kind: "system", without_restore_point: true, started_at: 1, finished_at: 2, title: "Gouffres système", planned_bytes: 0, script: "" };
+        let meta = ActionMeta { kind: "system", without_restore_point: true, started_at: 1, finished_at: 2, title: "Gouffres système", planned_bytes: 0, script: "", volume_key: None };
         let id = j.record(&meta, &report).unwrap();
         let a = &j.actions(1).unwrap()[0];
         assert_eq!((a.kind.as_str(), a.without_restore_point), ("system", true));
@@ -773,5 +832,69 @@ mod v3_tests {
         std::fs::write(&log16, utf16).unwrap();
         assert_eq!(log_tail(log16.to_str().unwrap()).unwrap(), "Résultat : terminé\nfin");
         assert!(log_tail("Z:\\absent.log").is_none());
+    }
+}
+
+#[cfg(test)]
+mod v4_tests {
+    use super::*;
+
+    fn tables(conn: &Connection) -> Vec<String> {
+        conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    fn version(conn: &Connection) -> String {
+        conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn base_vide_jusqu_a_la_derniere_version() {
+        let j = Journal::in_memory().unwrap();
+        assert_eq!(version(j.conn()), SCHEMA_VERSION.to_string());
+        assert_eq!(
+            tables(j.conn()),
+            ["action_commands", "action_items", "actions", "hash_cache", "meta", "snapshot_paths", "snapshot_sizes", "snapshots", "volumes"]
+        );
+        // Les colonnes ajoutées par les migrations sont là.
+        j.conn().execute("UPDATE actions SET volume_key = NULL, without_restore_point = 0, kind = 'recos', aborted = NULL", []).unwrap();
+        j.conn().execute("UPDATE action_commands SET log_path = NULL", []).unwrap();
+    }
+
+    #[test]
+    fn migration_depuis_la_version_precedente() {
+        let dir = std::env::temp_dir().join(format!("lumen-journal-v4-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v3.db");
+        let _ = std::fs::File::create(&path);
+        {
+            // Base du jalon 6 (v3) avec un nettoyage et une empreinte en cache.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')", []).unwrap();
+            conn.execute_batch(SCHEMA_V2).unwrap();
+            conn.execute_batch(SCHEMA_V3).unwrap();
+            conn.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'", []).unwrap();
+            conn.execute(
+                "INSERT INTO actions (started_at, finished_at, title, method, plan_hash, status, bytes_planned, bytes_freed,
+                   items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script, kind, without_restore_point)
+                 VALUES (1, 2, 'Jalon 6', 'trash', 'ab', 'ok', 10, 10, 1, 0, 0, 0, 0, 0, '', 'duplicates', 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO hash_cache (volume_serial, file_id, size, modified, used_at) VALUES (1, 'f', 2, 3, 4)", []).unwrap();
+            assert!(!tables(&conn).contains(&"snapshots".to_owned()));
+        }
+        let j = Journal::open(&path).unwrap();
+        assert_eq!(version(j.conn()), "4");
+        let a = j.actions(10).unwrap();
+        assert_eq!((a.len(), a[0].title.as_str(), a[0].kind.as_str()), (1, "Jalon 6", "duplicates"));
+        let key: Option<String> = j.conn().query_row("SELECT volume_key FROM actions", [], |r| r.get(0)).unwrap();
+        assert_eq!(key, None);
+        assert_eq!(j.hash_cache(1).unwrap().len(), 1);
+        assert!(tables(j.conn()).contains(&"snapshots".to_owned()));
+        drop(j);
+        // Réouverture : déjà en v4, aucune migration rejouée (un ALTER rejoué échouerait).
+        let j = Journal::open(&path).unwrap();
+        assert_eq!(version(j.conn()), "4");
     }
 }
