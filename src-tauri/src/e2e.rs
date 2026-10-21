@@ -3,10 +3,9 @@
 //! vrai (Corbeille, commande officielle npm), puis on vérifie que seuls les bons éléments sont
 //! partis, que les fichiers récents de %TEMP% et tout le reste sont intacts, que le journal
 //! est complet et qu'un élément se restaure depuis la Corbeille.
-#![allow(clippy::disallowed_methods)] // Les fixtures créent et suppriment leurs propres fichiers.
 
 use std::fs::{self, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 
@@ -33,19 +32,11 @@ fn age(p: &Path, hours: u64) {
     f.set_modified(SystemTime::now() - Duration::from_secs(hours * 3600)).unwrap();
 }
 
-struct Root(PathBuf);
-
-impl Drop for Root {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 #[test]
 fn nettoyage_reel_d_un_faux_profil() {
-    let root = Root(std::env::temp_dir().join(format!("lumen-e2e-{}", std::process::id())));
-    let _ = fs::remove_dir_all(&root.0);
-    let p = root.0.join("Arthur");
+    // Dossier temporaire supprimé à la fin par `tempfile` (aucune suppression écrite ici).
+    let root = tempfile::Builder::new().prefix("lumen-e2e-").tempdir().unwrap();
+    let p = root.path().join("Arthur");
     let at = |rel: &str| p.join(rel);
 
     // Cache npm (commande officielle, sur ce cache-ci grâce à npm_config_cache).
@@ -136,7 +127,7 @@ fn nettoyage_reel_d_un_faux_profil() {
     assert!(report.measured_gain().is_some());
 
     // Journal complet, puis restauration de node_modules depuis la Corbeille.
-    let mut journal = Journal::open(&root.0.join("lumen.db")).unwrap();
+    let mut journal = Journal::open(&root.path().join("lumen.db")).unwrap();
     let meta = ActionMeta { started_at: 1, finished_at: 2, title: "E2E", planned_bytes: plan.total_bytes(), script: "# script" };
     let action = journal.record(&meta, &report).unwrap();
     let items = journal.items(action, 1000).unwrap();
