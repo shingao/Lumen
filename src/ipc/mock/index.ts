@@ -8,7 +8,9 @@ import type {
   CleanEvent,
   CleanPlan,
   CleanReport,
+  CleanKind,
   Crumb,
+  DuplicatesEvent,
   JournalAction,
   JournalDetail,
   Kpis,
@@ -25,6 +27,7 @@ import type {
 } from "../types";
 import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
+import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockNoProtection, mockProgram, mockRestorePoints, mockSinks } from "./advanced";
 
 const SETTINGS_KEY = "lumen-dev-settings";
 /** Durée d'une étape du nettoyage simulé. */
@@ -43,6 +46,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lowSpaceThreshold: 10,
   explorerMenu: true,
   logsFolder: "%LOCALAPPDATA%\\Lumen\\logs",
+  experimentalSystem: false,
 };
 
 const gb = (n: number) => Math.round(n * GIB);
@@ -119,10 +123,13 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     return n.children.reduce((sum, c) => sum + sizeOf(tree, c), 0);
   }
 
-  function toNode(tree: VolumeTree, id: NodeId, depth: number): TreeNode {
+  /** Même règle que le backend : enfants et petits-enfants toujours, puis jusqu'à 4 niveaux sous
+   * les dossiers d'au moins 1 % de la vue. */
+  function toNode(tree: VolumeTree, id: NodeId, level: number, minExpand: number): TreeNode {
     const n = tree.nodes.get(id);
     const t = n?.tile ?? null;
-    const children = depth > 0 ? (n?.children ?? []).map((c) => toNode(tree, c, depth - 1)) : [];
+    const expand = level < 2 || (level < 4 && sizeOf(tree, id) >= minExpand);
+    const children = expand ? (n?.children ?? []).map((c) => toNode(tree, c, level + 1, minExpand)) : [];
     if (!t) {
       const name = tree.prefix[tree.prefix.length - 1] ?? "";
       return {
@@ -243,6 +250,10 @@ export function createMockBackend(now: () => number = Date.now): Backend {
   };
 
   const resolved = <T>(value: T): Promise<T> => Promise.resolve(value);
+  const NO_PROTECTION = {
+    fr: "Windows ne peut pas créer de point de restauration sur ce disque : la protection du système y est désactivée",
+    en: "Windows cannot create a restore point on this disk: system protection is turned off for it",
+  };
 
   // Nettoyage simulé : même déroulé que l'appli (plan, confirmation, avancement, bilan, journal).
   const plans = new Map<number, CleanPlan>();
@@ -252,6 +263,11 @@ export function createMockBackend(now: () => number = Date.now): Backend {
   const emitClean = (e: CleanEvent) => cleanListeners.forEach((fn) => fn(e));
   const journalActions: JournalAction[] = [];
   const journalDetails = new Map<number, JournalDetail>();
+  const planKinds = new Map<number, CleanKind>();
+  // Doublons simulés : avancement par étapes, annulable.
+  const dupListeners = new Set<(e: DuplicatesEvent) => void>();
+  const emitDup = (e: DuplicatesEvent) => dupListeners.forEach((fn) => fn(e));
+  const dupCancelled = new Set<number>();
 
   return {
     setLocale(next) {
@@ -337,8 +353,18 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     tree(scanId, node) {
       const tree = treeOf(scanVolume(scanId));
       const id = node !== null && tree.nodes.has(node) ? node : tree.rootId;
-      const slice: TreeSlice = { root: toNode(tree, id, 2), breadcrumb: breadcrumb(tree, id) };
+      const slice: TreeSlice = { root: toNode(tree, id, 0, sizeOf(tree, id) / 100), breadcrumb: breadcrumb(tree, id) };
       return resolved(slice);
+    },
+
+    findNode(scanId, path) {
+      const tree = treeOf(scanVolume(scanId));
+      const want = path.replace(/\\$/, "").toLowerCase();
+      if (tree.base.replace(/\\$/, "").toLowerCase() === want) return resolved(tree.rootId);
+      for (const [id, n] of tree.nodes) {
+        if (n.tile && (tree.base + l(n.tile.path)).toLowerCase() === want) return resolved(id);
+      }
+      return resolved(null);
     },
 
     recommendations(scanId) {
@@ -368,13 +394,36 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       return resolved(parts.join("\n\n"));
     },
 
-    planCleanup(_scanId, ids, mode) {
+    planCleanup(_scanId, request, mode) {
+      if (request.kind !== "recos") {
+        const { items, commands } = mockAdvancedPlan(request, locale === "en");
+        const total = items.reduce((a, i) => a + i.size, 0) + commands.reduce((a, c) => a + c.size, 0);
+        const plan: CleanPlan = {
+          planId: ++nextPlan,
+          fingerprint: (nextPlan * 2654435761).toString(16).padStart(64, "0"),
+          mode,
+          total,
+          count: items.length + commands.filter((c) => !c.prerequisite).length,
+          items,
+          moreItems: 0,
+          commands,
+          volumes: [{ volume: "C:\\", free: gb(KPI.freeNow) }],
+          refused: [],
+          skippedLocked: 0,
+          elevated: request.kind === "system",
+          withoutRestorePoint: request.kind === "system" && !request.restorePoint,
+        };
+        plans.set(plan.planId, plan);
+        planKinds.set(plan.planId, request.kind);
+        return resolved(plan);
+      }
+      const ids = request.ids;
       const chosen = RECOS.filter((r) => ids.includes(r.id));
       const commands = chosen
         .filter((r) => r.id === "npm")
         .flatMap((r) => [
-          { line: "npm cache clean --force", explanation: l({ fr: "Outil officiel : vide le cache npm", en: "Official tool: clears the npm cache" }), prerequisite: false, needsElevation: false, size: gb(r.size) },
-          { line: "npm cache verify", explanation: l({ fr: "Vérifie l'intégrité du cache npm", en: "Checks the npm cache integrity" }), prerequisite: false, needsElevation: false, size: 0 },
+          { line: "npm cache clean --force", explanation: l({ fr: "Outil officiel : vide le cache npm", en: "Official tool: clears the npm cache" }), prerequisite: false, required: false, needsElevation: false, size: gb(r.size) },
+          { line: "npm cache verify", explanation: l({ fr: "Vérifie l'intégrité du cache npm", en: "Checks the npm cache integrity" }), prerequisite: false, required: false, needsElevation: false, size: 0 },
         ]);
       const items = chosen
         .filter((r) => r.id !== "npm")
@@ -392,15 +441,23 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         volumes: [{ volume: "C:\\", free: gb(KPI.freeNow) }],
         refused: [],
         skippedLocked: 0,
+        elevated: false,
+        withoutRestorePoint: false,
       };
       plans.set(plan.planId, plan);
+      planKinds.set(plan.planId, "recos");
       return resolved(plan);
     },
 
-    executePlan(planId, fingerprint, permanentAcknowledged) {
+    executePlan(planId, fingerprint, permanentAcknowledged, withoutRestorePoint) {
       const plan = plans.get(planId);
       if (!plan || plan.fingerprint !== fingerprint) return Promise.reject(new Error("le plan a changé depuis sa confirmation : rien n'a été fait"));
       if (plan.mode === "permanent" && !permanentAcknowledged) return Promise.reject(new Error("la suppression définitive demande une seconde confirmation"));
+      if (plan.withoutRestorePoint && !withoutRestorePoint) {
+        return Promise.reject(new Error("actions système sans point de restauration : il faut confirmer « Continuer sans point de restauration »"));
+      }
+      // Protection du système désactivée : le point de restauration échoue, rien d'autre n'est lancé.
+      const blocked = plan.elevated && mockNoProtection() && plan.commands.some((c) => c.required);
       plans.delete(planId);
       cancelled.delete(planId);
       const steps = [...plan.commands.map((c) => ({ label: c.line, size: c.size, command: true })), ...plan.items.map((i) => ({ label: i.path, size: i.size, command: false }))];
@@ -408,11 +465,11 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       let freed = 0;
       let index = 0;
       const finish = (wasCancelled: boolean) => {
-        const done = Math.min(index, plan.items.length + plan.commands.length);
+        const done = blocked ? 0 : Math.min(index, plan.items.length + plan.commands.length);
         const report: CleanReport = {
           planId,
           actionId: journalActions.length + 1,
-          status: wasCancelled ? "cancelled" : "ok",
+          status: wasCancelled ? "cancelled" : blocked ? "failed" : "ok",
           mode: plan.mode,
           freed,
           measured: freed,
@@ -431,7 +488,16 @@ export function createMockBackend(now: () => number = Date.now): Backend {
             issues: [],
             moreIssues: 0,
           })),
-          commands: plan.commands.map((c, k) => ({ line: c.line, status: k < done ? "succeeded" : "cancelled", detail: null })),
+          // Point de restauration : Windows en garde un par 24 h, celui de moins de 24 h compte.
+          commands: plan.commands.map((c, k) =>
+            blocked && c.required
+              ? { line: c.line, status: "failed", satisfied: false, detail: l(NO_PROTECTION), log: null }
+              : c.required && k < done
+                ? { line: c.line, status: "failed", satisfied: true, detail: l({ fr: "un point de restauration existe déjà depuis moins de 24 h (limite de Windows) : il sert de point de retour", en: "a restore point already exists from the last 24 h (Windows limit): it is used as the fallback" }), log: null }
+                : { line: c.line, status: k < done ? "succeeded" : "cancelled", satisfied: k < done, detail: null, log: c.line.includes("/LogPath:") ? (c.line.split("/LogPath:")[1] ?? null) : null },
+          ),
+          aborted: blocked ? l(NO_PROTECTION) : null,
+          restorePointFailed: blocked,
           journalError: null,
         };
         const action: JournalAction = {
@@ -450,6 +516,9 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           itemsRefused: 0,
           itemsFailed: 0,
           itemsCancelled: report.cancelled,
+          kind: planKinds.get(planId) ?? "recos",
+          aborted: report.aborted,
+          withoutRestorePoint: plan.withoutRestorePoint,
         };
         journalActions.unshift(action);
         journalDetails.set(action.id, {
@@ -468,19 +537,21 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           })),
           commands: plan.commands.map((c, k) => ({
             role: c.prerequisite ? "prerequisite" : "action",
-            program: "C:\\Program Files\\nodejs\\node.exe",
+            program: mockProgram(c.line),
             args: c.line.split(" ").slice(1),
-            status: k < done ? "succeeded" : "cancelled",
-            exitCode: k < done ? 0 : null,
+            status: c.required && k < done ? "failed" : k < done ? "succeeded" : "cancelled",
+            exitCode: c.required && k < done ? 3 : k < done ? 0 : null,
             stdout: "",
             stderr: "",
             durationMs: 1200,
+            logPath: report.commands[k]?.log ?? null,
+            logTail: report.commands[k]?.log ? "[==========================100.0%==========================]\nL'opération a réussi." : null,
           })),
         });
         emitClean({ type: "done", report });
       };
       const step = () => {
-        if (cancelled.has(planId) || index >= steps.length) {
+        if (blocked || cancelled.has(planId) || index >= steps.length) {
           finish(cancelled.has(planId));
           return;
         }
@@ -509,6 +580,44 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       cleanListeners.add(listener);
       return () => cleanListeners.delete(listener);
     },
+
+    dormant: (_scanId, months) => resolved(mockDormant(months, now())),
+    largest: (_scanId, kind) => resolved(mockLargest(kind, now())),
+
+    startDuplicates(scanId) {
+      dupCancelled.delete(scanId);
+      const steps: ["edges" | "full", number, number][] = [
+        ["edges", 120, 640],
+        ["edges", 400, 640],
+        ["edges", 640, 640],
+        ["full", 6, 18],
+        ["full", 18, 18],
+      ];
+      steps.forEach(([phase, done, total], i) => {
+        setTimeout(() => {
+          if (!dupCancelled.has(scanId)) emitDup({ type: "progress", progress: { scanId, phase, done, total } });
+        }, (i + 1) * 150);
+      });
+      setTimeout(() => {
+        if (dupCancelled.has(scanId)) emitDup({ type: "failed", scanId, cancelled: true, message: "recherche annulée" });
+        else emitDup({ type: "done", result: mockDuplicates(scanId, now()) });
+      }, (steps.length + 1) * 150);
+      return resolved(undefined);
+    },
+
+    cancelDuplicates(scanId) {
+      dupCancelled.add(scanId);
+      return resolved(undefined);
+    },
+
+    onDuplicatesEvent(listener) {
+      dupListeners.add(listener);
+      return () => dupListeners.delete(listener);
+    },
+
+    systemSinks: () => resolved(mockSinks()),
+    readRestorePoints: () => resolved(mockRestorePoints(now())),
+    openSystemProtection: () => resolved(undefined),
 
     journal: () => resolved([...journalActions]),
 

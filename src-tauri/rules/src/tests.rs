@@ -383,9 +383,11 @@ fn statuts_categories_et_gains() {
     assert_eq!(cat("Users\\Arthur\\AppData\\Local\\npm-cache"), Category::Packages);
     assert_eq!(cat("Windows\\Temp"), Category::System);
     assert_eq!(cat("Users\\Arthur\\AppData\\Local\\Microsoft"), Category::Tools, "par défaut");
-    // Gains : remontent jusqu'à la racine, séparés par statut, égaux aux recommandations.
-    let safe: u64 = a.recos.iter().filter(|r| set.rules[r.rule].status == Status::Safe).map(|r| r.allocated).sum();
-    let review: u64 = a.recos.iter().filter(|r| set.rules[r.rule].status == Status::Review).map(|r| r.allocated).sum();
+    // Gains : remontent jusqu'à la racine, séparés par statut, égaux aux recommandations de
+    // l'écran Analyse (les règles de l'onglet Jeux n'en ont pas).
+    let analyse = |r: &&crate::Reco| set.rules[r.rule].screen == crate::schema::Screen::Analyse;
+    let safe: u64 = a.recos.iter().filter(analyse).filter(|r| set.rules[r.rule].status == Status::Safe).map(|r| r.allocated).sum();
+    let review: u64 = a.recos.iter().filter(analyse).filter(|r| set.rules[r.rule].status == Status::Review).map(|r| r.allocated).sum();
     assert_eq!(a.gain_safe[0], safe);
     assert_eq!(a.gain_review[0], review);
     assert_eq!(a.gain_safe[id("Users\\Arthur\\Projets")], (300 << 20) + (1 << 20) + (1 << 10) + (90 << 20));
@@ -396,6 +398,24 @@ fn statuts_categories_et_gains() {
             assert!(!scan.path(*y).starts_with(&format!("{}\\", scan.path(*x))) && !scan.path(*x).starts_with(&format!("{}\\", scan.path(*y))));
         }
     }
+}
+
+#[test]
+fn shaders_dans_l_onglet_jeux() {
+    // Caches de shaders : « À vérifier », catégorie Jeux, jamais précochés ni comptés dans les
+    // gains de l'écran Analyse ; proposés seulement dans l'onglet Jeux (jalon 8).
+    let set = builtin().unwrap();
+    let rule = set.rules.iter().find(|r| r.id == "caches-shaders").unwrap();
+    assert_eq!((rule.status, rule.category, rule.screen), (Status::Review, Category::Games, crate::schema::Screen::Games));
+    assert!(rule.explanation.fr.contains("premiers lancements plus longs et saccades temporaires"));
+    assert!(rule.tip.as_ref().unwrap().fr.contains("NVIDIA"));
+    let scan = machine().build("C:\\");
+    let (a, _) = run(&set, &scan, "C:\\Users\\Arthur", "C:\\Users\\Arthur\\AppData\\Local\\Temp");
+    let d3d = scan.find("Users\\Arthur\\AppData\\Local\\D3DSCache\\abc").unwrap() as usize;
+    assert_eq!(a.status[d3d], STATUS_REVIEW);
+    assert_eq!(Category::ALL[a.category[d3d] as usize], Category::Games);
+    assert_eq!((a.gain_safe[d3d], a.gain_review[d3d]), (0, 0), "aucun gain sur l'écran Analyse");
+    assert!(covered_paths(&a, &scan, &set, "caches-shaders").iter().any(|p| p.ends_with("D3DSCache\\abc")), "toujours repéré pour l'onglet Jeux");
 }
 
 #[test]

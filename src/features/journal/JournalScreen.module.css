@@ -99,6 +99,7 @@
 .status[data-status="refused"],
 .status[data-status="skipped"],
 .status[data-status="timedOut"],
+.status[data-status="declined"],
 .status[data-status="notFound"],
 .status[data-status="error"] {
   background: var(--st-review);
@@ -172,4 +173,11 @@
 /* Sur la surface en creux du détail : ton de libellé dédié (contraste AA). */
 .detail .hint {
   color: var(--text-label-sunken);
+}
+
+.aborted {
+  margin: 0;
+  padding: 8px 14px 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
 }

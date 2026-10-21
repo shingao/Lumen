@@ -74,5 +74,108 @@ await shot("16-journal-sombre", {
     await p.locator("[aria-expanded]").first().click();
   },
 });
+// Jalon 6 : nettoyage avancé (dormants, doublons, gros fichiers, gouffres système).
+const advanced = async (p, tab) => {
+  if (tab === "Gouffres système") {
+    // Onglet expérimental : désactivé par défaut (réglage « Expérimental »).
+    await p.evaluate(() => {
+      const raw = globalThis.localStorage.getItem("lumen-dev-settings");
+      const settings = { ...(raw ? JSON.parse(raw) : {}), experimentalSystem: true };
+      globalThis.localStorage.setItem("lumen-dev-settings", JSON.stringify(settings));
+    });
+    await p.reload();
+    await p.waitForSelector("#root > *");
+  }
+  await p.locator("nav").getByRole("button", { name: /^(Nettoyage|Cleanup)$/ }).click();
+  if (tab) await p.getByRole("button", { name: tab, exact: true }).click();
+};
+await shot("17-dormants", {
+  act: async (p) => {
+    await advanced(p);
+    await p.getByRole("checkbox", { name: /Mariage Julie/ }).first().check();
+  },
+});
+await shot("18-doublons", {
+  act: async (p) => {
+    await advanced(p, "Doublons");
+    await p.getByRole("button", { name: "Rechercher les doublons" }).click();
+    await p.getByText(/groupes de doublons/).waitFor({ timeout: 10000 });
+    await p.getByRole("button", { name: /^Cocher les copies \(/ }).click();
+  },
+});
+await shot("19-gros-fichiers-sombre", {
+  theme: "dark",
+  act: async (p) => {
+    await advanced(p, "Gros fichiers");
+    await p.getByRole("button", { name: /^Images disque/ }).click();
+  },
+});
+await shot("20-gouffres", {
+  act: async (p) => {
+    await advanced(p, "Gouffres système");
+    await p.getByRole("checkbox", { name: /WinSxS/ }).check();
+    await p.getByRole("group", { name: "Hibernation" }).getByRole("button", { name: "Réduire" }).click();
+    await p.getByRole("button", { name: "Lire les points de restauration (autorisation administrateur)" }).click();
+    await p.getByRole("checkbox", { name: /Points de restauration/ }).check();
+  },
+});
+await shot("21-confirmation-systeme-sombre", {
+  theme: "dark",
+  act: async (p) => {
+    await advanced(p, "Gouffres système");
+    await p.getByRole("checkbox", { name: /WinSxS/ }).check();
+    await p.getByRole("group", { name: "Hibernation" }).getByRole("button", { name: "Désactiver" }).click();
+    await p.getByRole("button", { name: "Préparer les actions…" }).click();
+    await p.getByText("Voir la liste").click();
+  },
+});
+await shot("23-sans-point-de-restauration", {
+  act: async (p) => {
+    await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-no-protection", "1"));
+    await p.reload();
+    await p.waitForSelector("#root > *");
+    await advanced(p, "Gouffres système");
+    await p.getByRole("checkbox", { name: /WinSxS/ }).check();
+    await p.getByRole("button", { name: "Préparer les actions…" }).click();
+    await p.getByRole("checkbox", { name: "Continuer sans point de restauration" }).check();
+  },
+});
+await shot("22-doublons-anglais", {
+  locale: "en-US",
+  act: async (p) => {
+    await advanced(p, "Duplicates");
+    await p.getByRole("button", { name: "Find duplicates" }).click();
+    await p.getByText(/duplicate groups/).waitFor({ timeout: 10000 });
+  },
+});
+// Retours de test de la PR #4 : pleine largeur, « Étendre », profondeur adaptative, historique.
+for (const [w, h] of [[1280, 800], [1920, 1080], [2560, 1440]]) {
+  await shot(`24-pleine-largeur-${w}`, { width: w, height: h, act: (p) => p.waitForSelector("[data-level='3']") });
+}
+const hoverTile = async (p, name) => {
+  const tile = p.locator("[data-node]", { has: p.locator(`:scope > div > span:text-is("${name}")`) }).first();
+  const box = await tile.boundingBox();
+  if (box) await p.mouse.move(box.x + box.width * 0.6, box.y + 12);
+  return tile;
+};
+await shot("25-etendre-survol", {
+  width: 1920,
+  height: 1080,
+  act: async (p) => {
+    const tile = await hoverTile(p, "Captures");
+    await tile.locator(":scope > [data-expand]").hover();
+    await p.getByRole("tooltip").filter({ hasText: "Étendre : Captures" }).waitFor();
+  },
+});
+await shot("26-historique-apres-etendre", {
+  width: 1920,
+  height: 1080,
+  act: async (p) => {
+    const tile = await hoverTile(p, "Captures");
+    await tile.locator(":scope > [data-expand]").click();
+    await p.getByRole("button", { name: "Précédent : Arthur" }).waitFor();
+    await p.getByRole("button", { name: "Précédent : Arthur" }).hover();
+  },
+});
 await browser.close();
 console.log(`captures dans ${out}`);

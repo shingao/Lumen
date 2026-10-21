@@ -11,6 +11,7 @@ const UNITS: Record<Locale, readonly string[]> = {
 const INTL: Record<Locale, string> = { fr: "fr-FR", en: "en-US" };
 
 export const KIB = 1024;
+export const MIB = KIB ** 2;
 export const GIB = KIB ** 3;
 
 /** Taille lisible : 13,4 Go / 13.4 GB. Une décimale sous 100, aucune au-delà (comme la maquette). */

@@ -15,6 +15,8 @@ use scan::{Kind, NodeId, Progress, Scan, ScanError, SliceNode};
 
 /// Enfants les plus gros envoyés par niveau ; le reste est regroupé en « autres ».
 const TOP_N: usize = 30;
+/// Niveaux de la treemap sous le dossier affiché, au plus.
+const MAX_LEVELS: u8 = 4;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -184,9 +186,9 @@ fn epoch_ms(filetime: i64) -> i64 {
     filetime / 10_000 - 11_644_473_600_000
 }
 
-fn to_dto(n: SliceNode, applied: Option<&Applied>) -> TreeNodeDto {
-    // Nœud « autres » (identifiant négatif) : pas de statut propre.
-    let view = applied.filter(|_| n.id >= 0).map(|a| a.node(n.id as NodeId));
+fn to_dto(n: SliceNode, applied: Option<&Applied>, scan: &Scan) -> TreeNodeDto {
+    // Nœud « autres » (identifiant négatif) : statut, catégorie et gain de ce qu'il regroupe.
+    let view = applied.map(|a| if n.id >= 0 { a.node(n.id as NodeId) } else { a.aggregate(scan, &n.members) });
     let reco = view.and_then(|v| v.reco);
     TreeNodeDto {
         id: n.id,
@@ -205,7 +207,7 @@ fn to_dto(n: SliceNode, applied: Option<&Applied>) -> TreeNodeDto {
         gain: view.map_or(0, |v| v.gain),
         gain_status: view.and_then(|v| v.gain_status),
         gain_up_to: reco.is_some_and(|r| applied.is_some_and(|a| a.reco_up_to(r))),
-        children: n.children.into_iter().map(|c| to_dto(c, applied)).collect(),
+        children: n.children.into_iter().map(|c| to_dto(c, applied, scan)).collect(),
     }
 }
 
@@ -473,7 +475,10 @@ pub fn scan_tree(state: State<'_, ScanState>, scan_id: u32, node: Option<i64>) -
         None => s.root(),
         Some(n) => u32::try_from(n).ok().filter(|&n| (n as usize) < s.len()).ok_or(LumenError::UnknownNode)?,
     };
-    let slice = s.slice(id, 2, TOP_N).ok_or(LumenError::UnknownNode)?;
+    // Profondeur adaptative : jusqu'à 4 niveaux sous les dossiers d'au moins 1 % de la vue,
+    // assez grands pour être dessinés avec leurs enfants.
+    let min_expand = s.node(id).map_or(0, |n| n.allocated / 100).max(1);
+    let slice = s.slice_adaptive(id, MAX_LEVELS, TOP_N, min_expand).ok_or(LumenError::UnknownNode)?;
 
     // Fil d'Ariane : segments au-dessus de la racine (non cliquables), puis la racine et ses descendants.
     let mut chain = Vec::new();
@@ -489,7 +494,29 @@ pub fn scan_tree(state: State<'_, ScanState>, scan_id: u32, node: Option<i64>) -
     let mut breadcrumb: Vec<CrumbDto> = parts.into_iter().map(|p| CrumbDto { label: p.to_owned(), id: None }).collect();
     breadcrumb.push(CrumbDto { label: root_label, id: Some(0) });
     breadcrumb.extend(chain);
-    Ok(TreeSliceDto { root: to_dto(slice, e.applied.as_ref()), breadcrumb })
+    Ok(TreeSliceDto { root: to_dto(slice, e.applied.as_ref(), s), breadcrumb })
+}
+
+/// Nœud d'un chemin complet dans l'analyse (historique de navigation : les identifiants changent
+/// d'une analyse à l'autre, pas les chemins). `None` s'il n'existe plus ou est hors de l'analyse.
+#[tauri::command]
+pub fn scan_find(state: State<'_, ScanState>, scan_id: u32, path: String) -> Result<Option<i64>, LumenError> {
+    let e = entry(&state, scan_id)?;
+    Ok(find_path(&e.scan, &path).map(i64::from))
+}
+
+pub(crate) fn find_path(s: &Scan, path: &str) -> Option<NodeId> {
+    let root = s.root_path.trim_end_matches('\\');
+    let path = path.trim_end_matches('\\');
+    if path.eq_ignore_ascii_case(root) {
+        return Some(s.root());
+    }
+    let head = path.get(..root.len())?;
+    let rest = path.get(root.len()..)?.strip_prefix('\\')?;
+    if !head.eq_ignore_ascii_case(root) {
+        return None;
+    }
+    s.find(rest)
 }
 
 #[tauri::command]
@@ -520,6 +547,40 @@ mod tests {
         assert_eq!(epoch_ms(116_444_736_000_000_000), 0);
         assert_eq!(epoch_ms(0), 0);
         assert_eq!(kind_name(Kind::CloudFile), "cloudFile");
+    }
+
+    #[test]
+    fn regroupement_autres_statut_de_son_contenu() {
+        let (a, scan) = crate::analysis::tests::applied();
+        let local = scan.find("AppData\\Local").unwrap();
+        // Un seul enfant montré : l'autre (D3DSCache) part dans « autres ».
+        let slice = scan.slice(local, 2, 1).unwrap();
+        let dto = to_dto(slice, Some(&a), &scan);
+        let others = dto.children.iter().find(|c| c.others.is_some()).unwrap();
+        // (le dossier D3DSCache lui-même n'est pas couvert : seul son contenu l'est)
+        assert_eq!((others.status, others.category, others.gain, others.gain_status), ("keep", "tools", 0, None));
+        // Dans D3DSCache : les fichiers regroupés sont « À vérifier » (onglet Jeux), comme leur contenu.
+        let d3d = scan.find("AppData\\Local\\D3DSCache").unwrap();
+        let dto = to_dto(scan.slice(d3d, 1, 1).unwrap(), Some(&a), &scan);
+        let others = dto.children.iter().find(|c| c.others.is_some()).unwrap();
+        assert_eq!((others.status, others.category), ("review", "games"));
+        // Cache npm et shaders regroupés : statut majoritaire en octets (npm, sans risque), gain additionné.
+        let npm = scan.find("AppData\\Local\\npm-cache").unwrap();
+        let v = a.aggregate(&scan, &[npm, d3d]);
+        assert_eq!((v.status, v.category, v.gain, v.gain_status), ("safe", "packages", 1000, Some("safe")));
+        assert_eq!(a.aggregate(&scan, &[npm]).reco, a.node(npm).reco, "recommandation commune");
+    }
+
+    #[test]
+    fn noeud_retrouve_par_son_chemin() {
+        let (_, scan) = crate::analysis::tests::applied();
+        let npm = scan.find("AppData\\Local\\npm-cache").unwrap();
+        assert_eq!(find_path(&scan, "C:\\Users\\Arthur\\AppData\\Local\\npm-cache"), Some(npm));
+        assert_eq!(find_path(&scan, "c:\\users\\arthur\\appdata\\local\\NPM-CACHE\\"), Some(npm));
+        assert_eq!(find_path(&scan, "C:\\Users\\Arthur"), Some(scan.root()));
+        assert_eq!(find_path(&scan, "C:\\Users\\Arthur\\Absent"), None);
+        assert_eq!(find_path(&scan, "D:\\Users\\Arthur\\AppData"), None);
+        assert_eq!(find_path(&scan, "C:\\Users\\ArthurBis"), None);
     }
 
     fn tiny() -> Scan {

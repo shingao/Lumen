@@ -88,6 +88,10 @@ export const TILES: MockTile[] = [
 
   t("videos", null, "media", "keep", { fr: "Vidéos", en: "Videos" }, { fr: "Vidéos", en: "Videos" }, 26.0, 1_284, days(14), null),
   t("v_cap", "videos", "media", "keep", "Captures", { fr: "Vidéos\\Captures", en: "Videos\\Captures" }, 14.2, 612, days(14), null),
+  t("v_cap_25", "v_cap", "media", "keep", "2025", { fr: "Vidéos\\Captures\\2025", en: "Videos\\Captures\\2025" }, 8.1, 344, days(14), null),
+  t("v_cap_25_jeux", "v_cap_25", "media", "keep", { fr: "Jeux", en: "Games" }, { fr: "Vidéos\\Captures\\2025\\Jeux", en: "Videos\\Captures\\2025\\Games" }, 5.2, 120, days(14), null),
+  t("v_cap_25_bureau", "v_cap_25", "media", "keep", { fr: "Bureau", en: "Desktop" }, { fr: "Vidéos\\Captures\\2025\\Bureau", en: "Videos\\Captures\\2025\\Desktop" }, 2.9, 224, days(30), null),
+  t("v_cap_24", "v_cap", "media", "keep", "2024", { fr: "Vidéos\\Captures\\2024", en: "Videos\\Captures\\2024" }, 6.1, 268, days(300), null),
   t("v_mont", "videos", "media", "keep", { fr: "Montages", en: "Edits" }, { fr: "Vidéos\\Montages", en: "Videos\\Edits" }, 11.8, 672, days(31), null),
 
   t("docker", null, "tools", "keep", "Docker", "AppData\\Local\\Docker", 31.5, 214, ago(HOUR), "docker", review(14.0, true)),
@@ -105,6 +109,8 @@ export const TILES: MockTile[] = [
 
   t("android", null, "android", "review", "Android\\Sdk", "AppData\\Local\\Android\\Sdk", 17.2, 402_118, days(35), "android", review(17.2)),
   t("a_sys", "android", "android", "review", "system-images", "AppData\\Local\\Android\\Sdk\\system-images", 9.8, 1_806, days(35), "android"),
+  t("a_sys_34", "a_sys", "android", "review", "android-34", "AppData\\Local\\Android\\Sdk\\system-images\\android-34", 6.2, 1_120, days(35), "android"),
+  t("a_sys_33", "a_sys", "android", "review", "android-33", "AppData\\Local\\Android\\Sdk\\system-images\\android-33", 3.6, 686, days(90), "android"),
   t("a_plat", "android", "android", "review", "platforms", "AppData\\Local\\Android\\Sdk\\platforms + build-tools", 5.3, 362_940, days(35), "android"),
   t("a_emu", "android", "android", "review", "emulator", "AppData\\Local\\Android\\Sdk\\emulator", 2.1, 37_372, days(35), "android"),
 
@@ -119,7 +125,8 @@ export const TILES: MockTile[] = [
   t("temp", null, "tools", "safe", "Temp", "AppData\\Local\\Temp", 4.1, 9_742, at(0, 14, 2), "temp", safe(4.1)),
   t("pip", null, "packages", "safe", "pip & uv", ".cache\\pip + AppData\\Local\\uv", 3.0, 51_220, days(9), "pip", safe(3.0)),
   t("autres", null, "tools", "keep", { fr: "Autres", en: "Other" }, ".vscode, .config, AppData\\Roaming…", 2.8, 84_511, ago(3 * HOUR), null),
-  t("a_d3d", "autres", "tools", "safe", "D3DSCache", "AppData\\Local\\D3DSCache", 0.8, 2_304, days(4), "d3d", safe(0.8)),
+  // Shaders : « À vérifier », catégorie Jeux, proposés seulement dans l'onglet Jeux (jalon 8).
+  t("a_d3d", "autres", "games", "review", "D3DSCache", "AppData\\Local\\D3DSCache", 0.8, 2_304, days(4), null),
 ];
 
 // Le projet garde sa taille totale mais sa tuile laisse la place à ses artefacts (comme la maquette).
@@ -239,21 +246,6 @@ export const RECOS: MockReco[] = [
     meta: { fr: "2 caches · 51 220 fichiers", en: "2 caches · 51,220 files" },
     files: [["~\\.cache\\pip\\http-v2", 1.8], ["~\\AppData\\Local\\uv\\cache", 1.2]],
     script: [{ fr: "# Lumen · Caches pip & uv · 3,0 Go", en: "# Lumen · pip & uv caches · 3.0 GB" }, "pip cache purge", "uv cache clean"],
-  },
-  {
-    id: "d3d", status: "safe", name: { fr: "Cache de shaders DirectX", en: "DirectX shader cache" }, path: same("AppData\\Local\\D3DSCache"), size: 0.8,
-    highlight: ["autres", "a_d3d"],
-    explanation: {
-      fr: "Windows reconstruit ce cache au lancement des jeux, au prix de quelques saccades la première fois.",
-      en: "Windows rebuilds this cache when games start, with a little stutter the first time.",
-    },
-    meta: { fr: "2 304 fichiers · reconstruit automatiquement", en: "2,304 files · rebuilt automatically" },
-    files: [["~\\AppData\\Local\\D3DSCache", 0.8]],
-    script: [
-      { fr: "# Lumen · Cache de shaders DirectX · 0,8 Go", en: "# Lumen · DirectX shader cache · 0.8 GB" },
-      { fr: "# Windows le reconstruit au prochain lancement des jeux", en: "# Windows rebuilds it the next time games start" },
-      "Remove-Item \"$env:LOCALAPPDATA\\D3DSCache\\*\" -Recurse -Force§",
-    ],
   },
   {
     id: "android", status: "review", name: { fr: "Android SDK & émulateurs", en: "Android SDK & emulators" }, path: same("AppData\\Local\\Android\\Sdk"), size: 17.2,

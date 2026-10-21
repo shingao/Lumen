@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { cancelCleanup, closeCleanup, confirmCleanup, confirmPermanent, permanentPhraseOk, setCleanMode } from "../../app/cleaning";
+import { openSystemProtection } from "../../app/advanced";
+import {
+  cancelCleanup,
+  closeCleanup,
+  confirmCleanup,
+  confirmPermanent,
+  continueWithoutRestorePoint,
+  permanentPhraseOk,
+  setCleanMode,
+  setWaiveRestorePoint,
+} from "../../app/cleaning";
 import { startScan } from "../../app/scanning";
 import { useStore } from "../../app/store";
 import { Button } from "../../components/Button";
@@ -23,6 +33,7 @@ function methodOf(plan: CleanPlan, t: Translator): string {
 /** « Mettre 44,2 Go à la Corbeille », « Supprimer définitivement 44,2 Go », « Lancer les commandes · 13,4 Go ». */
 function cleanButtonLabel(plan: CleanPlan, t: Translator): string {
   const size = formatBytes(plan.total, t.locale);
+  if (plan.elevated && plan.items.length + plan.moreItems === 0) return t.plural("clean.go.system", plan.count, { n: formatCount(plan.count, t.locale) });
   if (plan.items.length + plan.moreItems === 0) return t("clean.go.command", { size });
   return t(plan.mode === "trash" ? "clean.go.trash" : "clean.go.permanent", { size });
 }
@@ -36,7 +47,9 @@ function Summary({ plan }: { plan: CleanPlan }) {
     <dl className={styles.summary}>
       <div className={styles.cell}>
         <dt>{t("clean.total")}</dt>
-        <dd className={styles.big}>{formatBytes(plan.total, t.locale)}</dd>
+        <dd className={plan.total === 0 && plan.elevated ? undefined : styles.big}>
+          {plan.total === 0 && plan.elevated ? t("clean.total.measured") : formatBytes(plan.total, t.locale)}
+        </dd>
       </div>
       <div className={styles.cell}>
         <dt>{t("clean.count")}</dt>
@@ -66,8 +79,8 @@ function PlanList({ plan }: { plan: CleanPlan }) {
             <span className={styles.entryText}>
               <code className={styles.mono}>{c.line}</code>
               <span className={styles.hint}>
-                {c.prerequisite ? t("clean.prerequisite") : c.explanation}
-                {c.needsElevation ? ` · ${t("clean.needsAdmin")}` : ""}
+                {c.required ? `${t("clean.prerequisite.required")} · ${c.explanation}` : c.prerequisite ? t("clean.prerequisite") : c.explanation}
+                {c.needsElevation ? ` · ${t(plan.elevated ? "clean.uac" : "clean.needsAdmin")}` : ""}
               </span>
             </span>
             {c.size > 0 && <span className={styles.size}>{formatBytes(c.size, t.locale)}</span>}
@@ -113,6 +126,7 @@ function Refused({ plan }: { plan: CleanPlan }) {
 function Confirm({ plan }: { plan: CleanPlan }) {
   const t = useT();
   const allowPermanent = useStore((s) => s.settings?.permanentDelete ?? false);
+  const waived = useStore((s) => s.clean.waiveRestorePoint);
   const deletes = plan.items.length + plan.moreItems > 0;
   const modes: { value: CleanMode; label: string }[] = [
     { value: "trash", label: t("clean.mode.trash") },
@@ -128,12 +142,22 @@ function Confirm({ plan }: { plan: CleanPlan }) {
       )}
       <PlanList plan={plan} />
       <Refused plan={plan} />
-      <p className={styles.note}>{t(plan.mode === "trash" ? "clean.note.trash" : "clean.note.permanent")}</p>
+      {plan.elevated && <p className={styles.notice}>{t("clean.elevated.note")}</p>}
+      {plan.withoutRestorePoint && (
+        <div className={styles.warnText}>
+          <p>{t("clean.noRestorePoint.text")}</p>
+          <label className={styles.waive}>
+            <input type="checkbox" checked={waived} onChange={(e) => setWaiveRestorePoint(e.target.checked)} />
+            <span>{t("clean.noRestorePoint.confirm")}</span>
+          </label>
+        </div>
+      )}
+      {deletes && <p className={styles.note}>{t(plan.mode === "trash" ? "clean.note.trash" : "clean.note.permanent")}</p>}
       <div className={styles.actions}>
         <Button variant="link" onClick={cancelCleanup}>
           {t("clean.cancel")}
         </Button>
-        <Button variant="clean" disabled={plan.count === 0} onClick={confirmCleanup}>
+        <Button variant="clean" disabled={plan.count === 0 || (plan.withoutRestorePoint && !waived)} onClick={confirmCleanup}>
           {cleanButtonLabel(plan, t)}
         </Button>
       </div>
@@ -175,6 +199,7 @@ function Running() {
   const t = useT();
   const progress = useStore((s) => s.clean.progress);
   const cancelling = useStore((s) => s.clean.cancelling);
+  const elevated = useStore((s) => s.clean.plan?.elevated ?? false);
   const ratio = progress && progress.total > 0 ? Math.min(1, progress.index / progress.total) : 0;
   return (
     <>
@@ -182,7 +207,9 @@ function Running() {
         <span style={{ width: `${Math.round(ratio * 100)}%` }} />
       </div>
       <p className={styles.current}>
-        <span className={styles.hint}>{t(progress?.phase === "command" ? "clean.running.command" : "clean.running.item")}</span>
+        <span className={styles.hint}>
+          {t(progress?.phase === "command" ? (elevated ? "clean.running.uac" : "clean.running.command") : "clean.running.item")}
+        </span>
         <code className={styles.mono}>{progress?.label ?? "…"}</code>
       </p>
       <p className={styles.hint}>
@@ -202,6 +229,7 @@ function ReportView({ report }: { report: CleanReport }) {
   const t = useT();
   const go = useStore((s) => s.go);
   const target = useStore((s) => s.target);
+  const request = useStore((s) => s.clean.request);
   const notDone = report.items.filter((i) => i.outcome !== "done" || i.issues.length > 0);
   const counts: [string, number][] = [
     [t("clean.report.done"), report.done + report.partial],
@@ -230,6 +258,20 @@ function ReportView({ report }: { report: CleanReport }) {
             </div>
           ))}
       </dl>
+      {report.aborted && <p className={styles.warnText}>{t("clean.report.aborted", { reason: report.aborted })}</p>}
+      {report.restorePointFailed && request?.kind === "system" && (
+        <div className={styles.notice}>
+          <p>{t("clean.noRestorePoint.failed")}</p>
+          <div className={styles.inline}>
+            <Button variant="link" onClick={openSystemProtection}>
+              {t("sys.protection.open")}
+            </Button>
+            <Button variant="link" onClick={continueWithoutRestorePoint}>
+              {t("clean.noRestorePoint.continue")}
+            </Button>
+          </div>
+        </div>
+      )}
       {report.commands.length > 0 && (
         <ul className={styles.commands}>
           {report.commands.map((c) => (
@@ -237,9 +279,10 @@ function ReportView({ report }: { report: CleanReport }) {
               <span className={styles.entryText}>
                 <code className={styles.mono}>{c.line}</code>
                 {c.detail && <span className={styles.hint}>{c.detail}</span>}
+                {c.log && <span className={styles.hint}>{t("clean.report.log", { path: c.log })}</span>}
               </span>
-              <span className={styles.status} data-status={c.status}>
-                {t(`clean.command.${c.status}`)}
+              <span className={styles.status} data-status={c.satisfied ? "succeeded" : c.status}>
+                {c.satisfied && c.status !== "succeeded" ? t("clean.command.satisfied") : t(`clean.command.${c.status}`)}
               </span>
             </li>
           ))}

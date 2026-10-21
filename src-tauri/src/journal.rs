@@ -2,7 +2,9 @@
 //! garde son bilan, le script équivalent à ce qui a été exécuté, chaque élément (méthode,
 //! résultat, taille, raison, emplacement dans la Corbeille pour la restauration) et chaque
 //! commande officielle (binaire par son chemin complet, code de sortie, sorties capturées).
+//! Il garde aussi le cache des empreintes des doublons (file ID + taille + date de modification).
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -11,7 +13,11 @@ use serde::Serialize;
 use safety::exec::{CommandStatus, ItemOutcome, Report};
 use safety::plan::{CommandRole, DeleteMode};
 
-const SCHEMA_VERSION: i64 = 1;
+use crate::advanced::duplicates::{CacheEntry, CacheKey};
+
+const SCHEMA_VERSION: i64 = 3;
+/// Empreinte de doublon oubliée si elle n'a pas servi depuis (ms).
+const HASH_CACHE_TTL_MS: i64 = 180 * 86_400 * 1000;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -65,6 +71,48 @@ CREATE TABLE IF NOT EXISTS action_commands (
 );
 ";
 
+/// v3 : fichier de sortie d'une commande (journal de DISM), actions système lancées sans point
+/// de restauration après confirmation explicite.
+const SCHEMA_V3: &str = "
+ALTER TABLE action_commands ADD COLUMN log_path TEXT;
+ALTER TABLE actions ADD COLUMN without_restore_point INTEGER NOT NULL DEFAULT 0;
+";
+
+/// Fin d'un fichier de sortie (journal de DISM) pour l'affichage : 64 Kio au plus, 80 lignes.
+pub fn log_tail(path: &str) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(64 * 1024))).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    // DISM écrit en UTF-16 ou en ANSI selon la version : on accepte les deux.
+    let text = if buf.iter().skip(1).step_by(2).take(64).filter(|&&b| b == 0).count() > 16 {
+        let start = usize::from(buf.len() % 2 == 1);
+        String::from_utf16_lossy(&buf[start..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>())
+    } else {
+        String::from_utf8_lossy(&buf).into_owned()
+    };
+    let lines: Vec<&str> = text.trim_start_matches('\u{feff}').lines().collect();
+    Some(lines[lines.len().saturating_sub(80)..].join("\n"))
+}
+
+/// v2 (jalon 6) : type de nettoyage, arrêt avant les actions, cache des empreintes.
+const SCHEMA_V2: &str = "
+ALTER TABLE actions ADD COLUMN kind TEXT NOT NULL DEFAULT 'recos';
+ALTER TABLE actions ADD COLUMN aborted TEXT;
+CREATE TABLE IF NOT EXISTS hash_cache (
+  volume_serial INTEGER NOT NULL,
+  file_id TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  modified INTEGER NOT NULL,
+  edges BLOB,
+  full BLOB,
+  used_at INTEGER NOT NULL,
+  PRIMARY KEY (volume_serial, file_id, size, modified)
+);
+";
+
 #[derive(Debug, thiserror::Error)]
 pub enum JournalError {
     #[error("journal illisible : {0}")]
@@ -81,6 +129,10 @@ pub struct Journal {
 
 /// Ce que l'on sait d'une exécution en plus de son bilan.
 pub struct ActionMeta<'a> {
+    /// `recos`, `dormant`, `largest`, `duplicates`, `system`.
+    pub kind: &'a str,
+    /// Actions système lancées sans point de restauration, après confirmation explicite.
+    pub without_restore_point: bool,
     pub started_at: i64,
     pub finished_at: i64,
     pub title: &'a str,
@@ -106,6 +158,11 @@ pub struct ActionRow {
     pub items_refused: u64,
     pub items_failed: u64,
     pub items_cancelled: u64,
+    pub kind: String,
+    /// Arrêt avant les actions (prérequis obligatoire non rempli).
+    pub aborted: Option<String>,
+    /// « Continuer sans point de restauration » confirmé.
+    pub without_restore_point: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -140,6 +197,9 @@ pub struct CommandRow {
     pub stdout: String,
     pub stderr: String,
     pub duration_ms: u64,
+    /// Fichier de sortie rattaché (journal de DISM) et sa fin, pour l'affichage.
+    pub log_path: Option<String>,
+    pub log_tail: Option<String>,
 }
 
 pub fn status_name(s: &CommandStatus) -> &'static str {
@@ -149,6 +209,7 @@ pub fn status_name(s: &CommandStatus) -> &'static str {
         CommandStatus::TimedOut => "timedOut",
         CommandStatus::NotFound => "notFound",
         CommandStatus::NeedsElevation => "needsElevation",
+        CommandStatus::Declined => "declined",
         CommandStatus::Cancelled => "cancelled",
         CommandStatus::Error(_) => "error",
     }
@@ -178,9 +239,13 @@ pub fn report_status(r: &Report) -> &'static str {
     if r.cancelled {
         return "cancelled";
     }
-    let commands_ok = r.commands.iter().filter(|c| c.status == CommandStatus::Succeeded).count();
+    // Un point de restauration déjà récent compte comme rempli (`satisfied`).
+    let commands_ok = r.commands.iter().filter(|c| c.role == CommandRole::Action && c.satisfied()).count();
     let all_items = r.items.iter().all(|i| i.outcome == ItemOutcome::Done);
-    let all_commands = r.commands.iter().all(|c| c.status == CommandStatus::Succeeded);
+    let all_commands = r.commands.iter().all(|c| c.satisfied());
+    if r.aborted.is_some() {
+        return if r.freed_estimate() > 0 || commands_ok > 0 { "partial" } else { "failed" };
+    }
     if all_items && all_commands {
         "ok"
     } else if r.freed_estimate() > 0 || commands_ok > 0 {
@@ -213,11 +278,20 @@ impl Journal {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         let version: Option<String> = conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).optional()?;
-        match version.and_then(|v| v.parse::<i64>().ok()) {
+        let version = match version.and_then(|v| v.parse::<i64>().ok()) {
             Some(v) if v > SCHEMA_VERSION => return Err(JournalError::Newer(v)),
-            Some(_) => {}
+            Some(v) => v,
             None => {
-                conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?1)", params![SCHEMA_VERSION.to_string()])?;
+                conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')", [])?;
+                1
+            }
+        };
+        for (v, sql) in [(2, SCHEMA_V2), (3, SCHEMA_V3)] {
+            if version < v {
+                let tx = conn.unchecked_transaction()?;
+                tx.execute_batch(sql)?;
+                tx.execute("UPDATE meta SET value = ?1 WHERE key = 'schema_version'", params![v.to_string()])?;
+                tx.commit()?;
             }
         }
         Ok(Journal { conn })
@@ -233,8 +307,8 @@ impl Journal {
         let tx = self.conn.transaction()?;
         tx.execute(
             "INSERT INTO actions (started_at, finished_at, title, method, plan_hash, status, bytes_planned, bytes_freed, bytes_measured,
-               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script, kind, aborted, without_restore_point)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 meta.started_at,
                 meta.finished_at,
@@ -252,6 +326,9 @@ impl Journal {
                 count(|o| matches!(o, ItemOutcome::Failed(_))),
                 count(|o| *o == ItemOutcome::Cancelled),
                 meta.script,
+                meta.kind,
+                report.aborted,
+                meta.without_restore_point,
             ],
         )?;
         let action = tx.last_insert_rowid();
@@ -263,7 +340,7 @@ impl Journal {
             for i in &report.items {
                 let rule = match &i.authority {
                     safety::allow::Authority::Rule(id) => Some(id.clone()),
-                    safety::allow::Authority::Selection(_) => None,
+                    safety::allow::Authority::Selection(_) | safety::allow::Authority::Duplicates(_) => None,
                 };
                 if i.units.is_empty() {
                     let result = match &i.outcome {
@@ -298,8 +375,8 @@ impl Journal {
                 }
             }
             let mut cmd = tx.prepare(
-                "INSERT INTO action_commands (action_id, role, program, args, status, exit_code, stdout, stderr, duration_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO action_commands (action_id, role, program, args, status, exit_code, stdout, stderr, duration_ms, log_path)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?;
             for c in &report.commands {
                 let role = match c.role {
@@ -316,7 +393,7 @@ impl Journal {
                     stderr.push_str(e);
                 }
                 let args = serde_json::to_string(&c.args).unwrap_or_else(|_| "[]".into());
-                cmd.execute(params![action, role, c.program, args, status_name(&c.status), code, c.stdout, stderr, c.duration_ms as i64])?;
+                cmd.execute(params![action, role, c.program, args, status_name(&c.status), code, c.stdout, stderr, c.duration_ms as i64, c.log])?;
             }
         }
         tx.commit()?;
@@ -326,7 +403,7 @@ impl Journal {
     pub fn actions(&self, limit: u32) -> Result<Vec<ActionRow>, JournalError> {
         let mut st = self.conn.prepare(
             "SELECT id, started_at, finished_at, title, method, status, bytes_planned, bytes_freed, bytes_measured,
-               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled
+               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, kind, aborted, without_restore_point
              FROM actions ORDER BY started_at DESC, id DESC LIMIT ?1",
         )?;
         let rows = st.query_map(params![limit], |r| {
@@ -346,6 +423,9 @@ impl Journal {
                 items_refused: r.get::<_, i64>(12)? as u64,
                 items_failed: r.get::<_, i64>(13)? as u64,
                 items_cancelled: r.get::<_, i64>(14)? as u64,
+                kind: r.get(15)?,
+                aborted: r.get(16)?,
+                without_restore_point: r.get(17)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -390,7 +470,7 @@ impl Journal {
 
     pub fn commands(&self, action: i64) -> Result<Vec<CommandRow>, JournalError> {
         let mut st = self.conn.prepare(
-            "SELECT role, program, args, status, exit_code, stdout, stderr, duration_ms FROM action_commands WHERE action_id = ?1 ORDER BY id",
+            "SELECT role, program, args, status, exit_code, stdout, stderr, duration_ms, log_path FROM action_commands WHERE action_id = ?1 ORDER BY id",
         )?;
         let rows = st.query_map(params![action], |r| {
             Ok(CommandRow {
@@ -402,6 +482,8 @@ impl Journal {
                 stdout: r.get(5)?,
                 stderr: r.get(6)?,
                 duration_ms: r.get::<_, i64>(7)? as u64,
+                log_path: r.get(8)?,
+                log_tail: None,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -409,6 +491,50 @@ impl Journal {
 
     pub fn mark_restored(&self, item: i64, at: i64) -> Result<(), JournalError> {
         self.conn.execute("UPDATE action_items SET restored_at = ?2 WHERE id = ?1", params![item, at])?;
+        Ok(())
+    }
+
+    /// Empreintes connues d'un volume (doublons).
+    pub fn hash_cache(&self, volume: u64) -> Result<HashMap<CacheKey, CacheEntry>, JournalError> {
+        let mut st = self.conn.prepare("SELECT file_id, size, modified, edges, full FROM hash_cache WHERE volume_serial = ?1")?;
+        let rows = st.query_map(params![volume as i64], |r| {
+            let digest = |v: Option<Vec<u8>>| v.and_then(|b| <[u8; 32]>::try_from(b).ok());
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                digest(r.get(3)?),
+                digest(r.get(4)?),
+            ))
+        })?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let (fid, size, modified, edges, full) = row?;
+            let Ok(file_id) = u128::from_str_radix(&fid, 16) else { continue };
+            map.insert(CacheKey { volume, file_id, size: size as u64, modified }, CacheEntry { edges, full });
+        }
+        Ok(map)
+    }
+
+    /// Enregistre des empreintes : un fichier n'a qu'un état en cache (l'ancien est remplacé),
+    /// et ce qui n'a pas servi depuis 6 mois est oublié.
+    pub fn store_hashes(&mut self, entries: &[(CacheKey, CacheEntry)], now_ms: i64) -> Result<(), JournalError> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut del = tx.prepare("DELETE FROM hash_cache WHERE volume_serial = ?1 AND file_id = ?2 AND (size <> ?3 OR modified <> ?4)")?;
+            let mut put = tx.prepare(
+                "INSERT INTO hash_cache (volume_serial, file_id, size, modified, edges, full, used_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT (volume_serial, file_id, size, modified)
+                 DO UPDATE SET edges = COALESCE(excluded.edges, edges), full = COALESCE(excluded.full, full), used_at = excluded.used_at",
+            )?;
+            for (k, v) in entries {
+                let fid = hex128(k.file_id);
+                del.execute(params![k.volume as i64, fid, k.size as i64, k.modified])?;
+                put.execute(params![k.volume as i64, fid, k.size as i64, k.modified, v.edges.map(|h| h.to_vec()), v.full.map(|h| h.to_vec()), now_ms])?;
+            }
+            tx.execute("DELETE FROM hash_cache WHERE used_at < ?1", params![now_ms - HASH_CACHE_TTL_MS])?;
+        }
+        tx.commit()?;
         Ok(())
     }
 }
@@ -433,7 +559,7 @@ mod tests {
             fingerprint: [0xAB; 32],
             commands: vec![
                 CommandRun { program: Some("C:\\Program Files\\nodejs\\node.exe".into()), stdout: "ok".into(), ..CommandRun::new(&OfficialCommand::NpmCacheClean, CommandStatus::Succeeded) },
-                CommandRun::new(&OfficialCommand::DismComponentCleanup, CommandStatus::NeedsElevation),
+                CommandRun::new(&OfficialCommand::DismComponentCleanup(None), CommandStatus::NeedsElevation),
             ],
             items: vec![
                 ItemReport {
@@ -458,13 +584,14 @@ mod tests {
             ],
             volumes: vec![VolumeSpace { volume: "C:\\".into(), before: Some(1000), after: Some(1120) }],
             cancelled: false,
+            aborted: None,
         }
     }
 
     #[test]
     fn journal_complet_d_une_execution() {
         let mut j = Journal::in_memory().unwrap();
-        let meta = ActionMeta { started_at: 10, finished_at: 20, title: "Nettoyage", planned_bytes: 155, script: "# Lumen · script" };
+        let meta = ActionMeta { kind: "recos", without_restore_point: false, started_at: 10, finished_at: 20, title: "Nettoyage", planned_bytes: 155, script: "# Lumen · script" };
         let id = j.record(&meta, &report()).unwrap();
         let actions = j.actions(10).unwrap();
         assert_eq!(actions.len(), 1);
@@ -473,6 +600,7 @@ mod tests {
         assert_eq!((a.bytes_planned, a.bytes_freed, a.bytes_measured), (155, 100, Some(120)));
         assert_eq!((a.items_partial, a.items_skipped), (1, 1));
         assert_eq!(j.script(id).unwrap().as_deref(), Some("# Lumen · script"));
+        assert_eq!((a.kind.as_str(), a.aborted.as_deref()), ("recos", None));
 
         let items = j.items(id, 100).unwrap();
         let results: Vec<(&str, &str)> = items.iter().map(|i| (i.path.as_str(), i.result.as_str())).collect();
@@ -516,6 +644,64 @@ mod tests {
         r.items.remove(0);
         r.commands.clear();
         assert_eq!(report_status(&r), "failed");
+        // Point de restauration déjà récent (code 3) : rempli ; actions système faites.
+        let mut r = report();
+        r.items.clear();
+        r.commands = vec![
+            CommandRun { role: CommandRole::Prerequisite, ..CommandRun::new(&OfficialCommand::RestorePointCreate, CommandStatus::Failed(3)) },
+            CommandRun::new(&OfficialCommand::DismComponentCleanup(None), CommandStatus::Succeeded),
+        ];
+        assert_eq!(report_status(&r), "ok");
+        // Point de restauration impossible : arrêt avant les actions, rien de fait.
+        r.commands[0].status = CommandStatus::Failed(5);
+        r.commands[1].status = CommandStatus::Cancelled;
+        r.aborted = Some("point de restauration non créé".into());
+        assert_eq!(report_status(&r), "failed");
+    }
+
+    #[test]
+    fn cache_des_empreintes() {
+        let mut j = Journal::in_memory().unwrap();
+        let k = CacheKey { volume: 7, file_id: 0xABC, size: 100, modified: 5 };
+        j.store_hashes(&[(k, CacheEntry { edges: Some([1; 32]), full: None })], 1_000).unwrap();
+        j.store_hashes(&[(k, CacheEntry { edges: None, full: Some([2; 32]) })], 2_000).unwrap();
+        let c = j.hash_cache(7).unwrap();
+        assert_eq!(c.get(&k), Some(&CacheEntry { edges: Some([1; 32]), full: Some([2; 32]) }));
+        assert!(j.hash_cache(8).unwrap().is_empty());
+        // Fichier modifié : l'ancien état disparaît du cache.
+        let k2 = CacheKey { modified: 6, ..k };
+        j.store_hashes(&[(k2, CacheEntry { edges: Some([3; 32]), full: None })], 3_000).unwrap();
+        let c = j.hash_cache(7).unwrap();
+        assert_eq!((c.len(), c.contains_key(&k2)), (1, true));
+        // Oublié après 6 mois sans servir.
+        j.store_hashes(&[], 3_000 + HASH_CACHE_TTL_MS + 1).unwrap();
+        assert!(j.hash_cache(7).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migration_du_schema_v1() {
+        let dir = tempdir();
+        let path = dir.join("v1.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')", []).unwrap();
+        conn.execute(
+            "INSERT INTO actions (started_at, finished_at, title, method, plan_hash, status, bytes_planned, bytes_freed,
+               items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script)
+             VALUES (1, 2, 'Ancien', 'trash', 'ab', 'ok', 10, 10, 1, 0, 0, 0, 0, 0, '')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let j = Journal::open(&path).unwrap();
+        let a = j.actions(10).unwrap();
+        assert_eq!((a[0].title.as_str(), a[0].kind.as_str(), a[0].aborted.as_deref(), a[0].without_restore_point), ("Ancien", "recos", None, false));
+        let version: String = j.conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, SCHEMA_VERSION.to_string());
+        assert!(j.hash_cache(1).unwrap().is_empty());
+        drop(j);
+        // Réouverture : déjà en v2, rien à refaire.
+        assert!(Journal::open(&path).is_ok());
     }
 
     #[test]
@@ -533,5 +719,59 @@ mod tests {
         let d = std::env::temp_dir().join(format!("lumen-journal-{}-{}", std::process::id(), line!()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+}
+
+#[cfg(test)]
+mod v3_tests {
+    use super::*;
+    use safety::commands::{OfficialCommand, OutputFile};
+    use safety::exec::CommandRun;
+    use safety::path::WinPath;
+
+    #[test]
+    fn journal_de_dism_et_sans_point_de_restauration() {
+        let dir = std::env::temp_dir().join(format!("lumen-journal-v3-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Base v2 existante (jalon 6 avant correction) : montée en v3 sans perte.
+        let path = dir.join("v2.db");
+        drop(std::fs::File::create(&path));
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')", []).unwrap();
+            conn.execute_batch(SCHEMA_V2).unwrap();
+            conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'", []).unwrap();
+        }
+        let mut j = Journal::open(&path).unwrap();
+        let log = dir.join("dism-20261021-120000.log");
+        let lines: Vec<String> = (0..200).map(|i| format!("ligne {i}")).collect();
+        std::fs::write(&log, lines.join("\r\n")).unwrap();
+        let out = OutputFile::new(&WinPath::parse("C:\\Lumen\\logs").unwrap(), "dism-20261021-120000.log").unwrap();
+        let mut run = CommandRun::new(&OfficialCommand::DismComponentCleanup(Some(out)), safety::exec::CommandStatus::Succeeded);
+        run.log = Some(log.to_string_lossy().into_owned());
+        let report = Report {
+            mode: DeleteMode::Trash,
+            fingerprint: [1; 32],
+            commands: vec![run],
+            items: Vec::new(),
+            volumes: Vec::new(),
+            cancelled: false,
+            aborted: None,
+        };
+        let meta = ActionMeta { kind: "system", without_restore_point: true, started_at: 1, finished_at: 2, title: "Gouffres système", planned_bytes: 0, script: "" };
+        let id = j.record(&meta, &report).unwrap();
+        let a = &j.actions(1).unwrap()[0];
+        assert_eq!((a.kind.as_str(), a.without_restore_point), ("system", true));
+        let c = &j.commands(id).unwrap()[0];
+        assert_eq!(c.log_path.as_deref(), Some(log.to_string_lossy().as_ref()));
+        let tail = log_tail(c.log_path.as_deref().unwrap()).unwrap();
+        assert!(tail.ends_with("ligne 199") && tail.starts_with("ligne 120"), "{tail}");
+        // Journal de DISM en UTF-16 (avec BOM).
+        let utf16: Vec<u8> = "\u{feff}Résultat : terminé\r\nfin".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let log16 = dir.join("dism-utf16.log");
+        std::fs::write(&log16, utf16).unwrap();
+        assert_eq!(log_tail(log16.to_str().unwrap()).unwrap(), "Résultat : terminé\nfin");
+        assert!(log_tail("Z:\\absent.log").is_none());
     }
 }

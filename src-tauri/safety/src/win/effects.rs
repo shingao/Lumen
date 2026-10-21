@@ -127,6 +127,11 @@ impl Effects for WinEffects {
         Some(free)
     }
 
+    fn run_elevated(&self, command: &OfficialCommand, cancel: &AtomicBool) -> CommandRun {
+        let exe = self.resolve(command).map(|(exe, _)| exe);
+        super::elevated::run(command, exe, cancel)
+    }
+
     fn run_command(&self, command: &OfficialCommand, cancel: &AtomicBool) -> CommandRun {
         let Some((exe, mut args)) = self.resolve(command) else {
             return CommandRun::new(command, CommandStatus::NotFound);

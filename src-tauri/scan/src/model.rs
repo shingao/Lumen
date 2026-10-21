@@ -235,6 +235,8 @@ pub struct SliceNode {
     pub modified: i64,
     /// Regroupement des plus petits éléments : nombre d'éléments regroupés.
     pub others: Option<u32>,
+    /// Regroupement : les éléments regroupés (leur statut fait celui du regroupement).
+    pub members: Vec<NodeId>,
     pub has_children: bool,
     pub children: Vec<SliceNode>,
 }
@@ -469,6 +471,7 @@ impl Scan {
             file_id: self.file_id(id),
             modified: n.modified,
             others: None,
+            members: Vec::new(),
             has_children: is_dir && n.child_count > 0,
             children: Vec::new(),
         }
@@ -485,7 +488,24 @@ impl Scan {
         Some(node)
     }
 
+    /// Tranche à profondeur adaptative : enfants et petits-enfants toujours, puis jusqu'à
+    /// `max_level` niveaux sous les seuls dossiers d'au moins `min_expand` octets (assez grands
+    /// pour être dessinés avec leurs enfants). Le nombre de nœuds reste borné : peu de dossiers
+    /// dépassent une fraction donnée de la racine.
+    pub fn slice_adaptive(&self, id: NodeId, max_level: u8, top_n: usize, min_expand: u64) -> Option<SliceNode> {
+        self.node(id)?;
+        let mut node = self.slice_node(id);
+        node.children = self.top_children_where(id, 1, top_n, &|level, size| level < 2 || (level < max_level && size >= min_expand));
+        Some(node)
+    }
+
     fn top_children(&self, id: NodeId, depth: u8, top_n: usize) -> Vec<SliceNode> {
+        self.top_children_where(id, 1, top_n, &|level, _| level <= depth)
+    }
+
+    /// Enfants de niveau `level` ; `expand(niveau, taille)` dit si un enfant de ce niveau reçoit
+    /// lui-même ses enfants.
+    fn top_children_where(&self, id: NodeId, level: u8, top_n: usize, expand: &dyn Fn(u8, u64) -> bool) -> Vec<SliceNode> {
         let mut kids: Vec<NodeId> = self.children(id).collect();
         let size = |c: &NodeId| {
             let n = &self.nodes[*c as usize];
@@ -501,8 +521,8 @@ impl Scan {
             .take(top_n)
             .map(|&c| {
                 let mut s = self.slice_node(c);
-                if depth > 0 && s.has_children {
-                    s.children = self.top_children(c, depth - 1, top_n);
+                if s.has_children && expand(level, s.allocated) {
+                    s.children = self.top_children_where(c, level + 1, top_n, expand);
                 }
                 s
             })
@@ -521,6 +541,7 @@ impl Scan {
                 file_id: 0,
                 modified: 0,
                 others: Some(rest.len() as u32),
+                members: rest.to_vec(),
                 has_children: false,
                 children: Vec::new(),
             };
@@ -814,6 +835,53 @@ mod tests {
         let root = s.slice(0, 2, 10).unwrap();
         assert_eq!(root.children[0].name, "Projets");
         assert!(!root.children[0].children.is_empty());
+    }
+
+    /// Arbre profond : A (90 %) ⊃ B ⊃ C ⊃ D ⊃ E, et un petit dossier P ⊃ Q ⊃ R.
+    fn deep() -> Scan {
+        let mut b = Builder::new(&entry("Arthur", Kind::Dir, 1, 0));
+        let top = b.add_children(0, &[entry("A", Kind::Dir, 2, 0), entry("P", Kind::Dir, 3, 0)]);
+        let bb = b.add_children(top.start, &[entry("B", Kind::Dir, 4, 0)]).start;
+        let c = b.add_children(bb, &[entry("C", Kind::Dir, 5, 0)]).start;
+        let d = b.add_children(c, &[entry("D", Kind::Dir, 6, 0)]).start;
+        let e = b.add_children(d, &[entry("E", Kind::Dir, 7, 0)]).start;
+        b.add_children(e, &[entry("gros.bin", Kind::File, 8, 900)]);
+        let q = b.add_children(top.start + 1, &[entry("Q", Kind::Dir, 9, 0)]).start;
+        let r = b.add_children(q, &[entry("R", Kind::Dir, 10, 0)]).start;
+        b.add_children(r, &[entry("petit.bin", Kind::File, 11, 100)]);
+        b.finish("C:\\Users\\Arthur".into(), 1, Method::Walk, false, Stats::default())
+    }
+
+    fn depth_of(n: &SliceNode) -> usize {
+        n.children.iter().map(|c| 1 + depth_of(c)).max().unwrap_or(0)
+    }
+
+    #[test]
+    fn tranche_profondeur_adaptative() {
+        let s = deep();
+        let slice = s.slice_adaptive(0, 4, 30, 500).unwrap();
+        let a = &slice.children[0];
+        let p = &slice.children[1];
+        assert_eq!((a.name.as_str(), p.name.as_str()), ("A", "P"));
+        // Gros dossier : 4 niveaux sous la racine (A, B, C, D), jamais plus.
+        assert_eq!(depth_of(&slice), 4);
+        assert_eq!(a.children[0].children[0].children[0].name, "D");
+        assert!(a.children[0].children[0].children[0].children.is_empty(), "D au 4e niveau : pas plus profond");
+        // Petit dossier : enfants et petits-enfants seulement (P, Q), comme avant.
+        assert_eq!(p.children[0].name, "Q");
+        assert!(p.children[0].children.is_empty());
+    }
+
+    #[test]
+    fn regroupement_garde_ses_membres() {
+        let s = sample();
+        let projets = s.find("Projets").unwrap();
+        let slice = s.slice(projets, 1, 2).unwrap();
+        let others = slice.children.last().unwrap();
+        let names: Vec<&str> = others.members.iter().map(|&m| s.name(m)).collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"z.bin"));
+        assert!(slice.children[0].members.is_empty());
     }
 
     #[test]

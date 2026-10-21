@@ -136,6 +136,17 @@ pub enum Gain {
     UpTo,
 }
 
+/// Écran où la règle est proposée. `games` : seulement dans l'onglet Jeux (jalon 8) ; d'ici là,
+/// ses éléments gardent leur couleur et leur statut dans la treemap, sans gain ni recommandation
+/// sur l'écran Analyse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Screen {
+    #[default]
+    Analyse,
+    Games,
+}
+
 /// Suppression (par `safety`, jalon 5) ou commande officielle seule (les cibles sont alors
 /// seulement mesurées : Windows.old, par exemple, n'est jamais supprimé directement).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -225,6 +236,9 @@ pub struct Rule {
     pub explanation: Text,
     /// Règle « Sans risque » : qui régénère ces données (relu dans `sans-risque.txt`).
     pub regenerated_by: Option<Text>,
+    /// Conseil affiché avec la règle (par exemple : où régler la taille d'un cache).
+    pub tip: Option<Text>,
+    pub screen: Screen,
     pub targets: Vec<Target>,
     pub scope: Scope,
     pub gain: Gain,
@@ -295,6 +309,9 @@ struct RuleRaw {
     name: Text,
     explanation: Text,
     regenerated_by: Option<Text>,
+    tip: Option<Text>,
+    #[serde(default)]
+    screen: Screen,
     #[serde(default)]
     targets: Vec<String>,
     scope: Option<ScopeRaw>,
@@ -415,6 +432,12 @@ pub fn load(source: &str) -> Result<RuleSet, LoadError> {
             (None, Status::Safe) => errors.push(format!("{id} : une règle « safe » doit dire qui régénère ces données (regenerated-by)")),
             (None, Status::Review) => {}
         }
+        if let Some(t) = &r.tip {
+            check_text(&mut errors, &id, "tip", t, 300);
+        }
+        if r.screen == Screen::Games && (r.status == Status::Safe || r.category != Category::Games) {
+            errors.push(format!("{id} : une règle de l'onglet Jeux est « review » et de catégorie « games »"));
+        }
         let for_rule = |v: Var| v.allowed_for_rules() && (v != Var::SystemDrive || r.action == Action::Command);
         let mut targets = Vec::new();
         for t in &r.targets {
@@ -502,6 +525,8 @@ pub fn load(source: &str) -> Result<RuleSet, LoadError> {
             name: r.name,
             explanation: r.explanation,
             regenerated_by: r.regenerated_by,
+            tip: r.tip,
+            screen: r.screen,
             targets,
             scope,
             gain: r.gain,

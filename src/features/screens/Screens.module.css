@@ -7,17 +7,29 @@
   overflow: hidden;
 }
 
+/* Explorer fluide, colonne Recommandations bornée (360 à 440 px) : la treemap prend le reste. */
 .split {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 24vw, 440px);
 }
 
 .aside {
-  flex: 1 1 400px;
   min-width: 0;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+}
+
+/* Fenêtre étroite : la colonne passe sous la treemap. */
+@media (width < 1000px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .aside {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
 }
 
 .stub {

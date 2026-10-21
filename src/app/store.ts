@@ -8,6 +8,7 @@ import type {
   CleanPlan,
   CleanProgress,
   CleanReport,
+  CleanRequest,
   NodeId,
   ScanMethod,
   ScanProgress,
@@ -41,24 +42,27 @@ export interface ScanState {
 export interface CleanUi {
   /** loading : plan en préparation ; confirm ; permanent : seconde confirmation (saisie) ; running ; report ; error. */
   step: "closed" | "loading" | "confirm" | "permanent" | "running" | "report" | "error";
-  ids: string[];
+  request: CleanRequest | null;
   mode: CleanMode;
   plan: CleanPlan | null;
   progress: CleanProgress | null;
   report: CleanReport | null;
   message: string | null;
   cancelling: boolean;
+  /** « Continuer sans point de restauration » coché (actions système sans point préalable). */
+  waiveRestorePoint: boolean;
 }
 
 export const CLEAN_CLOSED: CleanUi = {
   step: "closed",
-  ids: [],
+  request: null,
   mode: "trash",
   plan: null,
   progress: null,
   report: null,
   message: null,
   cancelling: false,
+  waiveRestorePoint: false,
 };
 
 export interface State {

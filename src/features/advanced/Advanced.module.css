@@ -1,0 +1,392 @@
+/* Nettoyage avancé : prolonge la DA de la maquette (conteneurs à bord fin, chiffres et chemins en
+   mono, pastels de statut). Tout y est « À vérifier » : pas de hachures « sans risque ». */
+
+.tab {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 320px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.toolLabel {
+  font-size: var(--fs-12);
+  color: var(--text-label);
+}
+
+.notice,
+.warning {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--r-pop);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.notice {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-soft);
+}
+
+.warning {
+  background: var(--st-review);
+  color: var(--text-1);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-label);
+}
+
+.empty {
+  padding: 24px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-pop);
+  background: var(--bg-app);
+  text-align: center;
+  font-size: var(--fs-12-5);
+  color: var(--text-label);
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: var(--st-review);
+  font-size: var(--fs-11-5);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.summaryText {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12-5);
+  color: var(--text-1);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-3);
+}
+
+/* Listes : groupes (dossier, doublons) ou liste simple, rangées séparées par un trait doux. */
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.group,
+.list {
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  overflow: hidden;
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.groupLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.groupPath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-2);
+}
+
+.groupTitle {
+  flex: 1 1 auto;
+  font-size: var(--fs-12-5);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.groupMeta {
+  flex: none;
+  font-size: var(--fs-11-5);
+  color: var(--text-label-sunken);
+}
+
+.groupSize {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border-soft);
+}
+
+.row[data-checked] {
+  background: var(--bg-sunken);
+}
+
+.rowLabel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 90px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.check {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--check-accent);
+  cursor: pointer;
+}
+
+.check:disabled {
+  cursor: not-allowed;
+}
+
+.rowText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-12-5);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.rowPath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-label);
+}
+
+.rowMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-11-5);
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+.row[data-checked] .rowPath,
+.row[data-checked] .rowMeta {
+  color: var(--text-label-sunken);
+}
+
+.rowSize {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12-5);
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.tag,
+.keep {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-10-5);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.tag {
+  background: var(--st-keep);
+}
+
+.keep {
+  background: var(--st-safe);
+}
+
+/* Avancement des doublons. */
+.progress {
+  flex: 1 1 320px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.meter {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: var(--r-bar);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.meter span {
+  display: block;
+  height: 100%;
+  background: var(--bar-review);
+  transition: width var(--dur-fast) var(--ease);
+}
+
+/* Gouffres système. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  overflow: hidden;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.cardTitle {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--fs-12-5);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px 14px;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.cardBody p {
+  margin: 0;
+}
+
+.command {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 4px 8px;
+  border-radius: var(--r-field);
+  background: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+
+.restore {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+}
+
+.restoreText {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.oldest {
+  padding: 4px 8px;
+  border-radius: var(--r-field);
+  background: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-2);
+}
+
+/* Pied : sélection et bouton « Nettoyer », collé en bas du conteneur. */
+.bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-container);
+}
+
+.barSummary {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12-5);
+  color: var(--text-1);
+}
+
+.barActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

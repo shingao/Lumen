@@ -20,7 +20,7 @@ use scan::model::F_HARDLINK_DUP;
 use scan::{Kind, NodeId, Scan};
 
 use crate::pattern::{glob, path_components, Env, Pattern, States};
-use crate::schema::{Action, Activity, Category, Rule, RuleSet, Scope, Status};
+use crate::schema::{Action, Activity, Category, Rule, RuleSet, Scope, Screen, Status};
 use crate::{fsread, git};
 
 const ATTR_SYSTEM: u32 = 0x4;
@@ -530,7 +530,8 @@ pub fn analyze(set: &RuleSet, scan: &Scan, ctx: &Context) -> Analysis {
     let mut gain_review = vec![0u64; n];
     for i in (0..n).rev() {
         let top = engine.top[i];
-        if top != NONE {
+        // Règle d'un autre onglet (Jeux) : statut et couleur seulement, aucun gain sur l'écran Analyse.
+        if top != NONE && set.rules[recos[top as usize].rule].screen == Screen::Analyse {
             let own = counted_allocated(scan, i as u32).0;
             if set.rules[recos[top as usize].rule].status == Status::Safe {
                 gain_safe[i] = own;

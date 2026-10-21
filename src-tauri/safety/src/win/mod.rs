@@ -3,14 +3,30 @@
 //! Testé uniquement sur Windows (CI), avec de vraies fixtures (voir `tests.rs`).
 #![allow(unsafe_code)]
 
+pub mod content;
 mod effects;
+mod elevated;
 mod recycle;
 mod restore;
+pub mod sinks;
 #[cfg(test)]
 mod tests;
 mod volume;
 
 pub use effects::{tool_dirs, WinEffects};
+
+/// Lit (en administrateur, une demande UAC) les clichés instantanés et points de restauration
+/// du lecteur dans `out` (JSON). Lecture seule : aucune suppression.
+pub fn read_restore_points(drive: crate::commands::Drive, out: crate::commands::OutputFile, cancel: &std::sync::atomic::AtomicBool) -> crate::exec::CommandRun {
+    let command = crate::commands::OfficialCommand::RestorePointsList { drive, out };
+    crate::exec::Effects::run_elevated(&WinEffects::new(), &command, cancel)
+}
+
+/// Ouvre « Protection du système » de Windows (aucun argument).
+pub fn open_system_protection() -> Result<(), String> {
+    let layout = system_layout().map_err(|e| e.to_string())?;
+    elevated::open_system_protection(&layout.windows)
+}
 pub use restore::{in_recycle_bin, restore, RestoreError};
 pub use volume::{long_path, profile_list, volume_facts};
 
@@ -246,6 +262,10 @@ impl Probe for WinProbe {
     /// Ouverture sans aucun partage : échoue si un autre programme a l'élément ouvert.
     fn volume_facts(&self, path: &WinPath) -> Result<VolumeFacts, ProbeError> {
         volume_facts(path)
+    }
+
+    fn content_hash(&self, path: &WinPath) -> Result<[u8; 32], ProbeError> {
+        content::hash_file(path, content::Digest::Full, None)
     }
 
     fn is_locked(&self, path: &WinPath) -> Result<bool, ProbeError> {

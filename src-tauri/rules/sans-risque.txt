@@ -46,18 +46,6 @@
   cible : %LOCALAPPDATA%\uv\cache (la cible entière)
   régénéré par : uv retélécharge les paquets à la prochaine installation.
 
-[caches-shaders] Caches de shaders (DirectX, NVIDIA, AMD)
-  action : suppression (Corbeille par défaut, via safety)
-  cible : %LOCALAPPDATA%\D3DSCache (son contenu)
-  cible : %LOCALAPPDATA%\NVIDIA\DXCache (son contenu)
-  cible : %LOCALAPPDATA%\NVIDIA\GLCache (son contenu)
-  cible : %LOCALAPPDATA%\NVIDIA Corporation\NV_Cache (son contenu)
-  cible : %LOCALAPPDATA%\AMD\DxCache (son contenu)
-  cible : %LOCALAPPDATA%\AMD\DxcCache (son contenu)
-  cible : %LOCALAPPDATA%\AMD\VkCache (son contenu)
-  cible : %LOCALAPPDATA%\AMD\GLCache (son contenu)
-  régénéré par : Windows et les pilotes NVIDIA / AMD recompilent les shaders au prochain lancement.
-
 [artefacts-projets-actifs] Artefacts de build (node_modules, .next, target…)
   action : suppression (Corbeille par défaut, via safety)
   projets sous : %USERPROFILE% ; jamais sous : %USERPROFILE%\AppData, %LOCALAPPDATA%, %APPDATA%, %USERPROFILE%\.*, %USERPROFILE%\scoop, %DOWNLOADS%

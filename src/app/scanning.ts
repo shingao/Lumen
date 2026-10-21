@@ -1,6 +1,7 @@
 // Analyse : lancement, annulation, suivi des événements du backend.
 
 import { backend, isTauri } from "../ipc/client";
+import { onScanDone } from "./navigation";
 import type { ScanMethod, ScanTarget } from "../ipc/types";
 import { useStore } from "./store";
 
@@ -19,6 +20,7 @@ function subscribe(): void {
       if (!ours(e.summary.scanId)) return;
       useStore.setState({ node: null });
       setScan({ id: e.summary.scanId, status: "done", summary: e.summary, progress: null, message: null });
+      void onScanDone(e.summary.scanId);
       // Cochés par défaut : les éléments sans risque seulement (un « À vérifier » ne l'est jamais).
       if (isTauri) {
         void backend

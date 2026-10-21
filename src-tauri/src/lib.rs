@@ -4,6 +4,7 @@
 //! recommandations, KPI), nettoyage par `safety` (plan, confirmation, recontrôle complet,
 //! exécution) et journal SQLite.
 
+mod advanced;
 mod analysis;
 mod cleanup;
 #[cfg(test)]
@@ -28,10 +29,12 @@ pub fn helper_entry() -> Option<i32> {
 }
 
 pub fn run() {
+    advanced::ipc::mark_session_start();
     let result = tauri::Builder::default()
         .manage(scanning::ScanState::default())
         .manage(cleanup::CleanState::default())
         .manage(cleanup::JournalState::default())
+        .manage(advanced::ipc::AdvancedState::default())
         .invoke_handler(tauri::generate_handler![
             scanning::app_info,
             scanning::volumes_list,
@@ -39,6 +42,7 @@ pub fn run() {
             scanning::scan_cancel,
             scanning::scan_summary,
             scanning::scan_tree,
+            scanning::scan_find,
             scanning::recommendations,
             scanning::recommendation_detail,
             scanning::rule_kpis,
@@ -50,6 +54,14 @@ pub fn run() {
             cleanup::journal_detail,
             cleanup::journal_script,
             cleanup::journal_restore,
+            advanced::ipc::dormant_find,
+            advanced::ipc::largest_files,
+            advanced::ipc::duplicates_start,
+            advanced::ipc::duplicates_cancel,
+            advanced::ipc::system_sinks,
+            advanced::ipc::advanced_plan,
+            advanced::ipc::restore_points_read,
+            advanced::ipc::open_system_protection,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {

@@ -68,6 +68,9 @@ pub trait Effects {
     /// Lance une commande officielle (binaire résolu par son chemin complet, délai maximal,
     /// sorties capturées).
     fn run_command(&self, command: &OfficialCommand, cancel: &AtomicBool) -> CommandRun;
+    /// Lance une commande « administrateur » de la liste fermée, élevée (UAC), par son chemin
+    /// complet sous `%SystemRoot%` et avec ses arguments fixes ; seulement si le plan l'autorise.
+    fn run_elevated(&self, command: &OfficialCommand, cancel: &AtomicBool) -> CommandRun;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +83,8 @@ pub enum CommandStatus {
     NotFound,
     /// Demande des droits d'administrateur : à lancer depuis le script, dans une console élevée.
     NeedsElevation,
+    /// Élévation refusée par l'utilisateur (fenêtre UAC).
+    Declined,
     Cancelled,
     Error(String),
 }
@@ -95,9 +100,20 @@ pub struct CommandRun {
     pub stdout: String,
     pub stderr: String,
     pub duration_ms: u64,
+    /// Fichier de sortie de la commande (journal de DISM), rattaché au journal de Lumen.
+    pub log: Option<String>,
 }
 
 impl CommandRun {
+    /// La commande a-t-elle fait son travail ? (un point de restauration déjà récent compte.)
+    pub fn satisfied(&self) -> bool {
+        match self.status {
+            CommandStatus::Succeeded => true,
+            CommandStatus::Failed(code) => self.command.satisfied_by(code),
+            _ => false,
+        }
+    }
+
     pub fn new(command: &OfficialCommand, status: CommandStatus) -> CommandRun {
         CommandRun {
             command: command.clone(),
@@ -108,6 +124,7 @@ impl CommandRun {
             stdout: String::new(),
             stderr: String::new(),
             duration_ms: 0,
+            log: None,
         }
     }
 }
@@ -199,6 +216,8 @@ pub struct Report {
     pub items: Vec<ItemReport>,
     pub volumes: Vec<VolumeSpace>,
     pub cancelled: bool,
+    /// Arrêt avant les actions : un prérequis obligatoire n'a pas été rempli.
+    pub aborted: Option<String>,
 }
 
 impl Report {
@@ -401,34 +420,47 @@ pub(crate) fn run<P: Probe, E: Effects, F: FnMut(Event)>(
     let vols = volumes(plan);
     let before: Vec<Option<u64>> = vols.iter().map(|v| effects.free_bytes(v)).collect();
     let mut report =
-        Report { mode: plan.mode(), fingerprint: plan.fingerprint(), commands: Vec::new(), items: Vec::new(), volumes: Vec::new(), cancelled: false };
+        Report {
+            mode: plan.mode(),
+            fingerprint: plan.fingerprint(),
+            commands: Vec::new(),
+            items: Vec::new(),
+            volumes: Vec::new(),
+            cancelled: false,
+            aborted: None,
+        };
 
     // Commandes d'abord : les prérequis (gradle --stop…) doivent précéder les suppressions.
     let total = plan.commands().len();
     for (index, planned) in plan.commands().iter().enumerate() {
-        if cancel.load(Ordering::SeqCst) {
-            report.cancelled = true;
+        if report.aborted.is_some() || cancel.load(Ordering::SeqCst) {
+            report.cancelled |= report.aborted.is_none();
             let mut run = CommandRun::new(&planned.command, CommandStatus::Cancelled);
             run.role = planned.role;
             report.commands.push(run);
             continue;
         }
         on_event(Event::Command { index, total, command: planned.command.clone() });
-        let mut run = if planned.command.needs_elevation() {
-            CommandRun::new(&planned.command, CommandStatus::NeedsElevation)
-        } else {
-            effects.run_command(&planned.command, cancel)
+        let mut run = match (planned.command.needs_elevation(), plan.elevated()) {
+            (false, _) => effects.run_command(&planned.command, cancel),
+            (true, true) => effects.run_elevated(&planned.command, cancel),
+            (true, false) => CommandRun::new(&planned.command, CommandStatus::NeedsElevation),
         };
         run.role = planned.role;
+        if planned.required && !run.satisfied() {
+            report.aborted = Some(format!("prérequis non rempli ({}) : rien d'autre n'a été fait", planned.command.explanation()));
+        }
         on_event(Event::CommandDone { index, status: run.status.clone() });
         report.commands.push(run);
     }
 
     let total = plan.items().len();
+    // Exemplaires d'un groupe de doublons qui sont dans le plan : jamais comptés comme gardés.
+    let planned: Vec<WinPath> = plan.items().iter().map(|i| i.path.clone()).collect();
     for (index, item) in plan.items().iter().enumerate() {
         let path = item.requested.display_string();
-        if report.cancelled || cancel.load(Ordering::SeqCst) {
-            report.cancelled = true;
+        if report.aborted.is_some() || report.cancelled || cancel.load(Ordering::SeqCst) {
+            report.cancelled |= report.aborted.is_none();
             report.items.push(ItemReport {
                 path,
                 authority: item.authority.clone(),
@@ -440,7 +472,7 @@ pub(crate) fn run<P: Probe, E: Effects, F: FnMut(Event)>(
             continue;
         }
         on_event(Event::Item { index, total, path: path.clone(), bytes: item.bytes });
-        let r = run_item(plan.mode(), item, index, checker, effects, cancel, &mut on_event);
+        let r = run_item(plan.mode(), item, &planned, index, checker, effects, cancel, &mut on_event);
         if r.outcome == ItemOutcome::Cancelled {
             report.cancelled = true;
         }
@@ -456,9 +488,11 @@ pub(crate) fn run<P: Probe, E: Effects, F: FnMut(Event)>(
     report
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_item<P: Probe, E: Effects, F: FnMut(Event)>(
     mode: DeleteMode,
     item: &Validated,
+    planned: &[WinPath],
     index: usize,
     checker: &Checker<'_, P>,
     effects: &E,
@@ -481,6 +515,7 @@ fn run_item<P: Probe, E: Effects, F: FnMut(Event)>(
         expected: item.expected,
         bytes: item.bytes,
         contents: item.contents.clone(),
+        hash: item.hash,
     };
     let fresh = match checker.check(&target) {
         Verdict::Accepted(v) => v,
@@ -505,6 +540,36 @@ fn run_item<P: Probe, E: Effects, F: FnMut(Event)>(
                 .and_then(|f| recycle_allowed(&f, fresh.bytes).map_err(Refusal::NoRecycleBin));
             if let Err(refusal) = ready {
                 report.outcome = ItemOutcome::Refused(refusal);
+                return report;
+            }
+        }
+    }
+
+    // Doublon : un autre exemplaire du groupe doit être encore intact (même identité, même
+    // empreinte), puis le contenu de celui-ci est relu : s'il a changé, il est sauté.
+    if let (Authority::Duplicates(id), Some(hash)) = (&fresh.authority, fresh.hash) {
+        let keeper_ok = checker.allow.duplicate_group(*id, &fresh.path).is_some_and(|g| {
+            g.members.iter().filter(|m| m.path != fresh.path && !planned.contains(&m.path)).any(|m| {
+                checker.probe.facts(&m.path).is_ok_and(|f| {
+                    !f.attributes.reparse_point
+                        && f.file_id == m.expected.file_id
+                        && f.size == m.expected.size
+                        && f.modified == m.expected.modified
+                }) && checker.probe.content_hash(&m.path).is_ok_and(|h| h == m.hash)
+            })
+        });
+        if !keeper_ok {
+            report.outcome = ItemOutcome::Skipped("aucun autre exemplaire intact : celui-ci est gardé".into());
+            return report;
+        }
+        match checker.probe.content_hash(&fresh.path) {
+            Ok(h) if h == hash => {}
+            Ok(_) => {
+                report.outcome = ItemOutcome::Skipped("contenu modifié depuis la recherche de doublons".into());
+                return report;
+            }
+            Err(e) => {
+                report.outcome = ItemOutcome::Skipped(e.to_string());
                 return report;
             }
         }

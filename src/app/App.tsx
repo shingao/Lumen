@@ -6,11 +6,13 @@ import { Palette } from "../features/palette/Palette";
 import { AnalyseScreen } from "../features/screens/AnalyseScreen";
 import { CleanDialog } from "../features/cleanup/CleanDialog";
 import { JournalScreen } from "../features/journal/JournalScreen";
-import { CleanupScreen, DevScreen, GamesScreen, TimelineScreen } from "../features/screens/OtherScreens";
+import { CleanupScreen } from "../features/advanced/CleanupScreen";
+import { DevScreen, GamesScreen, TimelineScreen } from "../features/screens/OtherScreens";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { TitleBar } from "../features/titlebar/TitleBar";
 import { screenLabel } from "./commands";
-import { matchShortcut } from "./shortcuts";
+import { goBack, goForward } from "./navigation";
+import { matchShortcut, navigationButton, navigationKey } from "./shortcuts";
 import { SCREENS, type Screen, useStore } from "./store";
 import { toggleTheme } from "./theme";
 import styles from "./App.module.css";
@@ -32,8 +34,26 @@ export function App() {
   const go = useStore((s) => s.go);
 
   useEffect(() => {
+    // Précédent / suivant : seulement sur l'écran Analyse, sans fenêtre ouverte par-dessus.
+    const canNavigate = () => {
+      const s = useStore.getState();
+      return s.screen === "analyse" && !s.settingsOpen && !s.paletteOpen && s.clean.step === "closed" && s.openReco === null;
+    };
+    const navigate = (to: "back" | "forward" | null) => {
+      if (to === null || !canNavigate()) return false;
+      if (to === "back") goBack();
+      else goForward();
+      return true;
+    };
+    const onMouse = (e: MouseEvent) => {
+      if (navigate(navigationButton(e))) e.preventDefault();
+    };
     const onKey = (e: KeyboardEvent) => {
       const s = useStore.getState();
+      if (navigate(navigationKey(e))) {
+        e.preventDefault();
+        return;
+      }
       if (matchShortcut(e, "palette")) s.setPaletteOpen(!s.paletteOpen);
       else if (matchShortcut(e, "settings")) s.setSettingsOpen(!s.settingsOpen);
       else if (matchShortcut(e, "theme")) void toggleTheme();
@@ -43,7 +63,11 @@ export function App() {
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("mouseup", onMouse);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mouseup", onMouse);
+    };
   }, []);
 
   const View = VIEWS[screen];

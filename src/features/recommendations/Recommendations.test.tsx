@@ -49,7 +49,8 @@ describe("Recommandations", () => {
     await screen.findByText("Cache npm");
     fireEvent.click(screen.getByRole("button", { name: "Tout sélectionner (sans risque)" }));
     const { checked } = useStore.getState();
-    expect(checked).toContain("d3d");
+    expect(checked).toContain("temp");
+    expect(checked).not.toContain("d3d");
     expect(checked).not.toContain("android");
     expect(checked).not.toContain("ollama");
   });

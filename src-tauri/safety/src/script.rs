@@ -270,8 +270,8 @@ fn command_lines(s: &mut String, cmd: &OfficialCommand, role: CommandRole, resol
     };
     s.push_str(&format!("\n# {what} : {}\n", cmd.explanation()));
     let program = cmd.program();
-    let (exe, mut args) = if program.is_system_tool() {
-        (format!("(Join-Path $env:SystemRoot {})", ps_quote(&format!("System32\\{}", program.binary()))), Vec::new())
+    let (exe, mut args) = if let Some(rel) = program.system_path() {
+        (format!("(Join-Path $env:SystemRoot {})", ps_quote(&rel.join("\\"))), Vec::new())
     } else {
         match resolved {
             Some((exe, prefix)) => (ps_quote(&exe), prefix.iter().map(|a| ps_quote(a)).collect()),
@@ -445,9 +445,9 @@ mod tests {
     #[test]
     fn commandes_par_chemin_complet() {
         let p = plan(&["a.bin"], DeleteMode::Permanent).with_commands(vec![
-            PlannedCommand { command: OfficialCommand::DiskCleanup(crate::commands::Drive::parse("C").unwrap()), role: CommandRole::Action, measured: None, bytes: 0 },
-            PlannedCommand { command: OfficialCommand::NpmCacheClean, role: CommandRole::Action, measured: None, bytes: 0 },
-            PlannedCommand { command: OfficialCommand::GradleStop, role: CommandRole::Prerequisite, measured: None, bytes: 0 },
+            PlannedCommand::action(OfficialCommand::DiskCleanup(crate::commands::Drive::parse("C").unwrap()), None, 0),
+            PlannedCommand::action(OfficialCommand::NpmCacheClean, None, 0),
+            PlannedCommand::prerequisite(OfficialCommand::GradleStop, false),
         ]);
         let resolve = |c: &OfficialCommand| match c {
             OfficialCommand::NpmCacheClean => Some(("C:\\Program Files\\nodejs\\node.exe".to_owned(), vec!["C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js".to_owned()])),

@@ -10,13 +10,11 @@
   overflow: auto;
 }
 
-/* Maquette : largeur max 1440, padding 16/20/20, gap 14. */
+/* Pleine largeur, fluide : marges latérales de 28 px (la maquette, en 1440, en avait 20). */
 .main {
   min-height: 100%;
   width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 16px 20px 20px;
+  padding: 16px 28px 24px;
   display: flex;
   flex-direction: column;
   gap: 14px;

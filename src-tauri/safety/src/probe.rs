@@ -43,6 +43,12 @@ pub enum ProbeError {
     Os(i32),
     #[error("chemin renvoyé par Windows illisible : {0}")]
     BadPath(String),
+    #[error("fichier dans le cloud : jamais rapatrié ni lu")]
+    Cloud,
+    #[error("date de dernier accès non gelable : contenu non lu")]
+    AccessTimeNotFrozen,
+    #[error("lecture annulée")]
+    Cancelled,
 }
 
 pub trait Probe {
@@ -59,6 +65,9 @@ pub trait Probe {
     /// Noms contenus dans le dossier, lus par un handle ouvert sur le dossier lui-même (jamais à
     /// travers un lien), avec son identité : l'appelant vérifie que c'est bien le dossier attendu.
     fn list(&self, dir: &WinPath) -> Result<Listing, ProbeError>;
+    /// BLAKE3 du contenu complet d'un fichier ordinaire : la seule lecture de contenu de Lumen,
+    /// date de dernier accès gelée, E/S basse priorité, jamais un fichier cloud ni un lien.
+    fn content_hash(&self, path: &WinPath) -> Result<[u8; 32], ProbeError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +93,8 @@ pub(crate) mod memory {
         /// Cible d'une jonction ou d'un lien symbolique.
         pub target: Option<WinPath>,
         pub locked: bool,
+        /// Contenu (doublons) ; à défaut, dérivé de l'identité.
+        pub content: Option<Vec<u8>>,
     }
 
     #[derive(Default)]
@@ -116,7 +127,7 @@ pub(crate) mod memory {
                 modified: 133_000_000_000_000_000,
                 contains_git: false,
             };
-            let entry = Entry { path: path.clone(), facts, target: target.map(|t| WinPath::parse(t).unwrap()), locked: false };
+            let entry = Entry { content: None, path: path.clone(), facts, target: target.map(|t| WinPath::parse(t).unwrap()), locked: false };
             self.entries.borrow_mut().insert(key(&path), entry);
             path
         }
@@ -145,6 +156,24 @@ pub(crate) mod memory {
             if let Some(e) = self.entries.borrow_mut().get_mut(&key(path)) {
                 f(e);
             }
+        }
+
+        /// Fichier au contenu donné (doublons).
+        pub fn file_with(&self, raw: &str, content: &[u8]) -> WinPath {
+            let p = self.file(raw, content.len() as u64);
+            self.update(&p, |e| e.content = Some(content.to_vec()));
+            p
+        }
+
+        /// Second nom (lien physique) d'un fichier existant : même identité, même contenu.
+        pub fn hard_link(&self, raw: &str, existing: &WinPath) -> WinPath {
+            let src = self.entries.borrow().get(&key(existing)).cloned();
+            let p = WinPath::parse(raw).unwrap();
+            if let Some(mut e) = src {
+                e.path = p.clone();
+                self.entries.borrow_mut().insert(key(&p), e);
+            }
+            p
         }
 
         /// Retire l'élément et tout ce qu'il contient (effet d'une suppression).
@@ -187,7 +216,7 @@ pub(crate) mod memory {
             let facts = self.facts(&real).unwrap();
             let contents = (facts.attributes.directory && !facts.attributes.reparse_point).then(|| self.tree(&real));
             let bytes = contents.as_ref().map_or(facts.size, |c| c.iter().map(|n| n.bytes).sum());
-            crate::check::Target { path: raw.into(), authority, expected: crate::check::Expected::from_facts(&facts), bytes, contents }
+            crate::check::Target { path: raw.into(), authority, expected: crate::check::Expected::from_facts(&facts), bytes, contents, hash: None }
         }
 
         /// Résout les alias 8.3 et les liens des composants intermédiaires, comme Windows.
@@ -247,6 +276,20 @@ pub(crate) mod memory {
                 .collect();
             names.sort();
             Ok(Listing { file_id: entry.facts.file_id, names })
+        }
+
+        fn content_hash(&self, path: &WinPath) -> Result<[u8; 32], ProbeError> {
+            let real = self.resolve(path)?;
+            let entries = self.entries.borrow();
+            let e = entries.get(&key(&real)).ok_or(ProbeError::NotFound)?;
+            if e.facts.attributes.directory || e.target.is_some() {
+                return Err(ProbeError::Os(5));
+            }
+            if e.facts.attributes.cloud {
+                return Err(ProbeError::Cloud);
+            }
+            let fallback = e.facts.file_id.id.to_le_bytes().to_vec();
+            Ok(*blake3::hash(e.content.as_deref().unwrap_or(&fallback)).as_bytes())
         }
 
         fn volume_facts(&self, path: &WinPath) -> Result<VolumeFacts, ProbeError> {

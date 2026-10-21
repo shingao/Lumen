@@ -91,25 +91,6 @@ action = "command"
 commands = ["uv-cache-clean"]
 
 [[rule]]
-id = "caches-shaders"
-status = "safe"
-category = "tools"
-name = { fr = "Caches de shaders (DirectX, NVIDIA, AMD)", en = "Shader caches (DirectX, NVIDIA, AMD)" }
-explanation = { fr = "Windows et les pilotes graphiques reconstruisent ces caches au lancement des jeux, au prix de quelques saccades la première fois.", en = "Windows and the graphics drivers rebuild these caches when games start, with a little stutter the first time." }
-regenerated-by = { fr = "Windows et les pilotes NVIDIA / AMD recompilent les shaders au prochain lancement.", en = "Windows and the NVIDIA / AMD drivers compile the shaders again on the next launch." }
-targets = [
-  '%LOCALAPPDATA%\D3DSCache',
-  '%LOCALAPPDATA%\NVIDIA\DXCache',
-  '%LOCALAPPDATA%\NVIDIA\GLCache',
-  '%LOCALAPPDATA%\NVIDIA Corporation\NV_Cache',
-  '%LOCALAPPDATA%\AMD\DxCache',
-  '%LOCALAPPDATA%\AMD\DxcCache',
-  '%LOCALAPPDATA%\AMD\VkCache',
-  '%LOCALAPPDATA%\AMD\GLCache',
-]
-scope = "contents"
-
-[[rule]]
 id = "artefacts-projets-actifs"
 status = "safe"
 category = "code"
@@ -241,6 +222,31 @@ explanation = { fr = "Copie de ton ancienne installation de Windows, gardée pou
 targets = ['%SYSTEMDRIVE%\Windows.old']
 action = "command"
 commands = ["disk-cleanup-system-drive"]
+
+# --- Onglet Jeux (jalon 8) : statut et couleur dans la treemap, jamais proposé sur l'écran Analyse --
+
+# Les caches de shaders sont reconstruits, mais au prix de premiers lancements plus longs et de
+# saccades : ce n'est pas « sans risque » pour un joueur. Steam (shadercache dans Program Files)
+# est déjà classé « Jeux » par la zone `jeux` ; Program Files est dans la denylist de `safety`.
+[[rule]]
+id = "caches-shaders"
+status = "review"
+category = "games"
+screen = "games"
+name = { fr = "Caches de shaders (DirectX, NVIDIA, AMD)", en = "Shader caches (DirectX, NVIDIA, AMD)" }
+explanation = { fr = "Les jeux recompileront leurs shaders : premiers lancements plus longs et saccades temporaires.", en = "Games will compile their shaders again: longer first launches and temporary stutter." }
+tip = { fr = "La taille maximale du cache se règle dans le panneau de configuration NVIDIA (Taille du cache du shader) ou dans AMD Software (Graphismes › Cache de shaders).", en = "The maximum cache size is set in the NVIDIA Control Panel (Shader Cache Size) or in AMD Software (Graphics › Shader Cache)." }
+targets = [
+  '%LOCALAPPDATA%\D3DSCache',
+  '%LOCALAPPDATA%\NVIDIA\DXCache',
+  '%LOCALAPPDATA%\NVIDIA\GLCache',
+  '%LOCALAPPDATA%\NVIDIA Corporation\NV_Cache',
+  '%LOCALAPPDATA%\AMD\DxCache',
+  '%LOCALAPPDATA%\AMD\DxcCache',
+  '%LOCALAPPDATA%\AMD\VkCache',
+  '%LOCALAPPDATA%\AMD\GLCache',
+]
+scope = "contents"
 
 # --- Classement (couleur de la légende, aucune action) ----------------------------------------
 
