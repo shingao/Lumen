@@ -33,6 +33,11 @@ import type {
   ScanProgress,
   ScanSummary,
   Settings,
+  DailyStatus,
+  DatabaseInfo,
+  TimelineCompare,
+  TimelineData,
+  TimelineSeries,
   TreeNode,
   TreeSlice,
   Volume,
@@ -258,7 +263,7 @@ export function createTauriBackend(): Backend {
         reviewCount: rules?.reviewCount ?? 0,
         // Ce que l'analyse n'a pas couvert sur ce disque : système, applis, autres dossiers.
         unanalyzed: summary ? Math.max(0, used - summary.allocated) : 0,
-        trend7d: 0,
+        trend7d: (await invoke<number | null>("timeline_trend", { target }).catch(() => null)) ?? 0,
       };
       return k;
     },
@@ -324,6 +329,17 @@ export function createTauriBackend(): Backend {
       ];
       return () => offs.forEach((p) => void p.then((off) => off()));
     },
+    timelineSeries: () => invoke<TimelineSeries[]>("timeline_series"),
+    timeline: (series) => invoke<TimelineData>("timeline_data", { series }),
+    timelineTrend: (target) => invoke<number | null>("timeline_trend", { target }),
+    timelineCompare: (from, to) => invoke<TimelineCompare>("timeline_compare", { from, to }),
+    timelineDaily: (enabled) => invoke<DailyStatus>("timeline_daily", { enabled }),
+    onTimelineChanged(listener) {
+      const off = listen("timeline:changed", () => listener());
+      return () => void off.then((f) => f());
+    },
+    database: () => invoke<DatabaseInfo>("timeline_database"),
+    purgeSnapshots: () => invoke<DatabaseInfo>("timeline_purge"),
     systemSinks: () => invoke<SystemSinks>("system_sinks"),
     readRestorePoints: () => invoke<RestorePoints>("restore_points_read"),
     openSystemProtection: () => invoke("open_system_protection"),

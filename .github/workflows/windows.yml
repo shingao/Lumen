@@ -86,8 +86,8 @@ jobs:
           node-version: 22
       - run: node scripts/check-safety-tests.mjs
 
-  # Scanner : tests Windows (dont MFT = parcours sur les fixtures, en administrateur), banc
-  # sur 200 000 fichiers générés et mémoire mesurée sur le scan de C:, résumés dans le run.
+  # Scanner : tests Windows (dont MFT = parcours sur les fixtures, en administrateur). Bloquant
+  # sur chaque PR ; le banc d'essai, lui, est un job à part (plus bas).
   scan:
     needs: [safety, safety-portable]
     runs-on: windows-latest
@@ -148,6 +148,21 @@ jobs:
       - name: Tests du scanner et des règles (parcours, MFT, assistant élevé, dernier accès, git)
         working-directory: src-tauri
         run: cargo test -p scan -p rules -- --nocapture
+
+  # Banc d'essai du scanner (200 000 fichiers générés, puis C:\ complet en parcours et en MFT,
+  # mémoire mesurée), résultats dans le résumé du run. Hors du chemin bloquant : il prend de 10 à
+  # 40 min selon le runner, donc seulement sur main après merge, ou à la main (workflow_dispatch).
+  bench:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [safety, safety-portable]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
       - name: Banc d'essai
         working-directory: src-tauri
         shell: pwsh

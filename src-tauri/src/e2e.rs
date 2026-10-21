@@ -134,7 +134,7 @@ fn nettoyage_reel_d_un_faux_profil() {
 
     // Journal complet, puis restauration de node_modules depuis la Corbeille.
     let mut journal = Journal::open(&root.path().join("lumen.db")).unwrap();
-    let meta = ActionMeta { kind: "recos", without_restore_point: false, started_at: 1, finished_at: 2, title: "E2E", planned_bytes: plan.total_bytes(), script: "# script" };
+    let meta = ActionMeta { kind: "recos", without_restore_point: false, started_at: 1, finished_at: 2, title: "E2E", planned_bytes: plan.total_bytes(), script: "# script", volume_key: None };
     let action = journal.record(&meta, &report).unwrap();
     let items = journal.items(action, 1000).unwrap();
     let nm = items.iter().find(|i| i.path.ends_with("\\Projets\\app\\node_modules")).expect("node_modules au journal");

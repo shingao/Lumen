@@ -32,6 +32,8 @@ pub enum LumenError {
     UnknownAction,
     #[error("restauration impossible : {0}")]
     Restore(String),
+    #[error("Timeline : {0}")]
+    Timeline(String),
 }
 
 /// Les commandes IPC renvoient le message lisible, jamais la structure interne.

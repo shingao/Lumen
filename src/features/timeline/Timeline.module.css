@@ -1,0 +1,339 @@
+/* Timeline : prolonge la DA de la maquette (bandeau de KPI, conteneurs à bord fin, chiffres en
+   mono, pastille verte des nettoyages comme le « sans risque »). */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-12);
+  color: var(--text-label);
+}
+
+.select {
+  min-width: 0;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-field);
+  background: var(--bg-container);
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: var(--fs-12-5);
+}
+
+.notice,
+.warning {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--r-pop);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.notice {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-soft);
+}
+
+.warning {
+  background: var(--st-review);
+  color: var(--text-1);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-label);
+}
+
+/* Bandeau : même construction que les KPI (filets de 1 px entre les cellules). */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  overflow: hidden;
+}
+
+.cell {
+  min-width: 0;
+  background: var(--bg-container);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cellLabel {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-label);
+}
+
+.cellValue {
+  font-family: var(--font-mono);
+  font-size: var(--fs-18);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--ls-tight);
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.cellSub {
+  min-height: 1.3em;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  overflow: hidden;
+}
+
+.chart {
+  position: relative;
+  height: 300px;
+}
+
+.svg {
+  display: block;
+}
+
+.chartEmpty {
+  margin: 0;
+  padding: 48px 16px;
+  text-align: center;
+  font-size: var(--fs-12-5);
+  color: var(--text-label);
+}
+
+.grid {
+  stroke: var(--border-soft);
+}
+
+.axisY,
+.axisX {
+  font-family: var(--font-mono);
+  font-size: var(--fs-10-5);
+  fill: var(--text-label);
+}
+
+.axisY {
+  text-anchor: end;
+  dominant-baseline: middle;
+}
+
+.axisX {
+  text-anchor: middle;
+}
+
+.axisX[data-edge="start"] {
+  text-anchor: start;
+}
+
+.axisX[data-edge="end"] {
+  text-anchor: end;
+}
+
+.area {
+  fill: var(--bg-sunken);
+}
+
+.line {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.dot {
+  fill: var(--bg-container);
+  stroke: var(--text-2);
+  stroke-width: 1.25;
+}
+
+.pick {
+  fill: none;
+  stroke: var(--text-1);
+  stroke-width: 1.5;
+}
+
+.pickLabel {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  font-weight: var(--fw-semibold);
+  fill: var(--text-1);
+  text-anchor: middle;
+}
+
+.guide {
+  stroke: var(--border);
+}
+
+/* Repère d'un nettoyage de Lumen : trait pointillé et pastille « −44,2 Go nettoyés ». */
+.markerLine {
+  stroke: var(--st-safe-dot);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.marker {
+  position: absolute;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--st-safe);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.tip {
+  position: absolute;
+  z-index: 5;
+  padding: 6px 9px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-1);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.projection {
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-12-5);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.compare {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.compareBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.sectionTitle {
+  margin: 0 8px 0 0;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.total {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+.diff {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.diffList {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  overflow: hidden;
+}
+
+.diffTitle {
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-sunken);
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+
+.diffNone {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: var(--fs-12);
+  color: var(--text-label);
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rows li + li {
+  border-top: 1px solid var(--border-soft);
+}
+
+.row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-2);
+}
+
+.rowLink {
+  cursor: pointer;
+}
+
+.rowLink:hover {
+  background: var(--bg-sunken);
+  color: var(--text-1);
+}
+
+.rowPath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.up {
+  flex: none;
+  color: var(--delta-review);
+}
+
+.down {
+  flex: none;
+  color: var(--delta-safe);
+}

@@ -352,7 +352,6 @@ export const KPI = {
   freeNow: 73.8,
   freeAfter: 118,
   unanalyzed: 142,
-  trend7d: 18,
 };
 
 // Disque D: (données) : un petit jeu de tuiles pour montrer le sélecteur et la catégorie Jeux.

@@ -109,6 +109,24 @@ async function resolve(scanId: number | null, path: string | null): Promise<Node
   }
 }
 
+/** Ouvre l'Explorer zoomé sur un dossier (chemin complet), depuis un autre écran : dans
+ * l'analyse affichée si elle porte sur cette cible, sinon après l'analyse de la cible. Renvoie
+ * faux si le dossier n'existe pas dans l'analyse affichée. */
+export async function openPath(target: ScanTarget, path: string): Promise<boolean> {
+  const s = useStore.getState();
+  s.go("analyse");
+  const scanId = s.scan.summary?.scanId ?? null;
+  if (sameTarget(s.target, target) && scanId !== null && s.scan.status === "done") {
+    const node = await resolve(scanId, path);
+    if (node === null) return false;
+    goTo(node);
+    return true;
+  }
+  goToTarget(target);
+  useNav.setState({ pending: path });
+  return true;
+}
+
 /** Fin d'une analyse : rouvre le dossier demandé par « Précédent » / « Suivant », s'il existe encore. */
 export async function onScanDone(scanId: number): Promise<void> {
   const { pending } = useNav.getState();

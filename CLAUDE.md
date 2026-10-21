@@ -27,6 +27,7 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 - Treemap squarified maison : `src/core/treemap/squarify.ts` (2 niveaux, gap 3 px).
 - Analyse : crate `src-tauri/scan/` — parcours parallèle maison (rayon) par handle de dossier (`FileIdExtdDirectoryInfo`, puis chaque fichier ouvert par file ID pour ses attributs seulement), MFT pour NTFS en administrateur (assistant élevé `--lumen-mft-scan`).
 - Journal des nettoyages : SQLite (rusqlite `bundled`) dans `%LOCALAPPDATA%\Lumen\lumen.db` (`src-tauri/src/journal.rs`, schéma versionné) ; nettoyage côté appli : `src-tauri/src/cleanup.rs` (recommandations → cibles, autorisations et commandes pour `safety`, IPC du plan et du journal) ; nettoyage avancé : `src-tauri/src/advanced/` (dormants, gros fichiers, doublons avec cache des empreintes dans le journal, gouffres système, IPC `advanced_plan`), mêmes plan, exécution et journal.
+- Timeline : `src-tauri/src/timeline/` (`snapshot.rs` tailles agrégées par dossier sur 4 niveaux, jamais de fichiers ; `store.rs` SQL ; `retention.rs` ; `projection.rs` ; `diff.rs` ; `mod.rs` IPC `timeline_*` et snapshot quotidien), dans la même base que le journal (migrations `MIGRATIONS` de `journal.rs`, chacune testée depuis une base vide et depuis la version précédente). **Un volume est identifié par son GUID** (à défaut numéro de série + système de fichiers), **jamais par sa lettre** ; racines et chemins des snapshots relatifs au volume. Une série = volume + racine + méthode : on ne compare jamais deux séries (refus expliqué, pas de faux delta). Snapshot à chaque analyse et un par jour seulement tant que l'appli tourne (`dailyTick` côté front, jamais d'UAC, ni service ni tâche planifiée). Front : `src/app/timeline.ts`, `src/features/timeline/`, `src/core/timeline.ts` ; ouverture d'un dossier dans l'Explorer depuis un autre écran : `openPath` de `src/app/navigation.ts`.
 
 ## Tokens (résumé — détail dans `src/styles/tokens.css`)
 
@@ -134,6 +135,7 @@ npm run icon             # icônes depuis design/app-icon.svg
 node scripts/check-safety-tests.mjs   # tests de safety/ : présents, exécutés, aucun ignoré (tous sous Windows)
 cd src-tauri && LUMEN_UPDATE_RULE_LISTS=1 cargo test -p rules   # régénère rules/sans-risque.txt après un changement de règle « Sans risque »
 cd src-tauri && cargo run --release -p scan --example bench -- generate <dossier> 200000   # puis walk <dossier>, mft <dossier>
+# Banc d'essai en CI : job `bench`, seulement sur main après merge ou par Actions › Windows › Run workflow (résultats dans le résumé du run)
 cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo audit
 cd src-tauri && cargo clippy -p safety --target x86_64-pc-windows-msvc --all-targets   # depuis Linux : vérifie safety::win (blake3 en feature « pure » le temps de la commande)
 ```

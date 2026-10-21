@@ -651,7 +651,8 @@ pub fn advanced_plan(
         let dism_log = lumen_dir(&app, "logs").and_then(|dir| OutputFile::new(&dir, &format!("dism-{}.log", stamp(unix_secs()))).ok());
         let ctx = SystemContext { drive, hiberfil: sinks.hiberfil, restore: restore.as_ref(), not_after: oldest_not_after(unix_secs(), session_start()), dism_log };
         let sel = select_system(&ctx, actions, *restore_point)?;
-        return cleanup::prepare(&clean, &sel, mode, "Gouffres système".into(), "system", &|p| p.to_owned());
+        let volume_key = crate::timeline::volume_key(&format!("{drive}:"));
+        return cleanup::prepare(&clean, &sel, mode, "Gouffres système".into(), ("system", volume_key), &|p| p.to_owned());
     }
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
     let display = display_of(&entry);
@@ -676,7 +677,8 @@ pub fn advanced_plan(
     if sel.targets.is_empty() {
         return Err(LumenError::Plan("aucun élément choisi".into()));
     }
-    cleanup::prepare(&clean, &sel, mode, title.into(), kind, &display)
+    let volume_key = crate::timeline::volume_key(&entry.volume);
+    cleanup::prepare(&clean, &sel, mode, title.into(), (kind, volume_key), &display)
 }
 
 #[cfg(test)]

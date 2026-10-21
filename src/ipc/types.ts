@@ -469,3 +469,117 @@ export type CleanRequest =
   | { kind: "largest"; ids: number[] }
   | { kind: "duplicates"; ids: number[] }
   | { kind: "system"; actions: SystemAction[]; restorePoint: boolean };
+
+// --- Timeline (jalon 7) ---------------------------------------------------------------------
+
+/** Série de snapshots comparables : un volume (par son GUID), une racine, une méthode. */
+export interface SeriesKey {
+  volumeId: number;
+  /** Racine relative au volume (« \ » pour le volume entier). */
+  root: string;
+  method: "walk" | "mft";
+}
+
+export interface TimelineSeries extends SeriesKey {
+  label: string;
+  fileSystem: string;
+  /** Lettre actuelle ; null si le volume n'est pas monté. */
+  letter: string | null;
+  /** Lettre au dernier snapshot (elle peut avoir changé depuis). */
+  lastLetter: string;
+  profile: boolean;
+  target: ScanTarget | null;
+  count: number;
+  first: number;
+  last: number;
+  /** Snapshot le plus récent de la série (comparaison avec une autre série). */
+  lastId: number;
+}
+
+export interface TimelinePoint {
+  id: number;
+  at: number;
+  used: number;
+  source: "scan" | "daily";
+}
+
+/** Nettoyage de Lumen, marqué sur la courbe. */
+export interface TimelineMarker {
+  actionId: number;
+  at: number;
+  bytes: number;
+  title: string;
+  kind: CleanKind;
+}
+
+export interface TimelineProjection {
+  /** `tooFew` : moins de 5 points sur 30 jours ; `flat` : pente nulle ou négative. */
+  status: "tooFew" | "flat" | "growing";
+  points: number;
+  bytesPerDay: number | null;
+  daysToFull: number | null;
+}
+
+export interface TimelineData {
+  points: TimelinePoint[];
+  markers: TimelineMarker[];
+  projection: TimelineProjection;
+  free: number | null;
+  total: number | null;
+  trend7d: number | null;
+  /** Chemin complet actuel de la racine (pour ouvrir l'Explorer), null si le volume est absent. */
+  base: string | null;
+  target: ScanTarget | null;
+}
+
+export interface FolderChange {
+  /** Relatif à la racine de la série. */
+  path: string;
+  before: number | null;
+  after: number | null;
+  delta: number;
+}
+
+export interface TimelineDiff {
+  grown: FolderChange[];
+  shrunk: FolderChange[];
+  added: FolderChange[];
+  removed: FolderChange[];
+  total: number;
+}
+
+export interface SnapshotRef {
+  id: number;
+  at: number;
+  used: number;
+  root: string;
+  method: "walk" | "mft";
+  letter: string;
+}
+
+export interface TimelineCompare {
+  comparable: boolean;
+  reason: "volume" | "root" | "method" | null;
+  from: SnapshotRef;
+  to: SnapshotRef;
+  diff: TimelineDiff | null;
+  /** Dossiers plus petits non gardés dans les snapshots. */
+  minBytes: number;
+  base: string | null;
+  target: ScanTarget | null;
+}
+
+export interface DailyStatus {
+  state: "off" | "idle" | "running" | "waiting";
+  label: string | null;
+  lastAt: number | null;
+  lastOutcome: "done" | "failed" | "cancelled" | null;
+  /** Séries analysées par la MFT, sans snapshot quotidien faute de droits d'administrateur. */
+  needsAdmin: number;
+}
+
+export interface DatabaseInfo {
+  bytes: number;
+  snapshots: number;
+  series: number;
+}

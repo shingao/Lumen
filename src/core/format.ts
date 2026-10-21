@@ -89,6 +89,16 @@ export function formatDate(time: number, locale: Locale): string {
   return new Intl.DateTimeFormat(INTL[locale], { day: "2-digit", month: "2-digit", year: "numeric" }).format(time);
 }
 
+/** Jour et mois abrégé, pour les axes : « 21 oct. » / « Oct 21 ». */
+export function formatDay(time: number, locale: Locale): string {
+  return new Intl.DateTimeFormat(INTL[locale], { day: "numeric", month: "short" }).format(time);
+}
+
+/** Date et heure, pour choisir un snapshot : « 21/10/2026 14:05 ». */
+export function formatDateTime(time: number, locale: Locale): string {
+  return new Intl.DateTimeFormat(INTL[locale], { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(time);
+}
+
 /**
  * Langue de l'interface d'après les langues du système, dans leur ordre de préférence.
  * Le français est la langue de référence : c'est aussi le repli si aucune langue n'est reconnue.

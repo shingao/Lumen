@@ -12,6 +12,7 @@ mod e2e;
 mod error;
 mod journal;
 mod scanning;
+mod timeline;
 
 pub use error::LumenError;
 
@@ -35,6 +36,7 @@ pub fn run() {
         .manage(cleanup::CleanState::default())
         .manage(cleanup::JournalState::default())
         .manage(advanced::ipc::AdvancedState::default())
+        .manage(timeline::DailyState::default())
         .invoke_handler(tauri::generate_handler![
             scanning::app_info,
             scanning::volumes_list,
@@ -62,6 +64,13 @@ pub fn run() {
             advanced::ipc::advanced_plan,
             advanced::ipc::restore_points_read,
             advanced::ipc::open_system_protection,
+            timeline::timeline_series,
+            timeline::timeline_data,
+            timeline::timeline_trend,
+            timeline::timeline_compare,
+            timeline::timeline_database,
+            timeline::timeline_purge,
+            timeline::timeline_daily,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {

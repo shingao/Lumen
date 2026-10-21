@@ -10,11 +10,54 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 4 | Moteur de règles, recommandations et KPI calculés | **fait — validé** (PR #2 mergée) |
 | 5 | Scripts, copie, exécution (simulation, confirmation, journal) | **fait — validé** (PR #3 mergée, testé en Sandbox) |
 | 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | **fait — validé en lecture seule** (PR #4 mergée) ; nettoyage réel **non vérifié en réel** (Sandbox), gouffres système **non vérifiés en réel** (VM) et désactivés par défaut |
-| 7 | Snapshots et Timeline | à faire |
+| 7 | Snapshots et Timeline | **fait — validé** (testé sur PC ; PR #5) |
 | 8 | Dev et Jeux | à faire |
 | 9 | Déplacement intelligent, recherche instantanée, export de rapport | à faire |
 | 10 | Onboarding et astuces contextuelles | à faire |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | à faire |
+
+---
+
+## Jalon 7 — snapshots et Timeline
+
+### Livré
+
+- **Base SQLite, schéma v4** (`src-tauri/src/journal.rs`, même base que le journal : `%LOCALAPPDATA%\Lumen\lumen.db`) : migrations versionnées dans l'ordre (`MIGRATIONS`), chacune dans une transaction. **Testées depuis une base vide** (toutes les tables et colonnes présentes, version 4) **et depuis la version précédente** (base v3 du jalon 6 avec un nettoyage et une empreinte en cache : rien de perdu, réouverture sans rejouer de migration), en plus des tests v1 et v2 existants.
+- **Volumes identifiés par leur GUID** (`\\?\Volume{…}\`, lu par `GetVolumeNameForVolumeMountPointW`), à défaut par numéro de série + système de fichiers (lecteurs sans GUID) — **jamais par leur lettre**, qui n'est qu'un dernier état connu (`volumes.letter`). Les racines et les chemins des snapshots sont relatifs au volume, sans lettre : une clé USB analysée en E: puis branchée en F: garde sa série ; un autre disque qui prend la lettre E: en a une autre (test `changement_de_lettre_de_volume`). Test Windows : le GUID de C: est lu, stable, unique parmi les volumes.
+- **Snapshot agrégé par dossier** (`timeline/snapshot.rs`) : tailles allouées et nombres de fichiers des dossiers sur **4 niveaux au plus**, **jamais la liste des fichiers** ni un fichier seul ; dossiers de moins de 1 Mio non gardés (comptés dans leur parent), au plus 5 000 dossiers (les plus gros, donc toujours avec leurs parents). Chemins mis en commun entre snapshots (`snapshot_paths`).
+- **Comparable seulement dans une même série** = même volume + même racine + même méthode (parcours ou MFT). Sinon la comparaison est refusée et l'interface dit pourquoi (« méthodes d'analyse différentes (parcours / MFT) », « pas le même dossier », « pas le même disque ») au lieu d'afficher un faux delta.
+- **Rétention** (`timeline/retention.rs`), appliquée à chaque écriture, série par série : tous les snapshots des 7 derniers jours, puis un par jour jusqu'à 30 jours, un par semaine (du lundi) jusqu'à 6 mois, un par mois au-delà ; dans chaque case, le plus récent. Test sur **un historique synthétique d'un an** (4 snapshots par jour → environ 80) : rien de perdu sur 7 jours, au plus un par jour / semaine / mois ensuite, idempotente, et un mois plus tard aucun mois n'est vidé. Les chemins qui ne servent plus sont oubliés.
+- **Taille de la base dans les Paramètres** (« Historique de la Timeline » : taille, snapshots, séries, règle de rétention) avec **« Purger… »** puis confirmation : supprime tous les snapshots et compacte la base (`VACUUM`) ; **le journal des nettoyages est gardé** (il sert à restaurer depuis la Corbeille).
+- **Snapshots** : un à la fin de **chaque analyse** (sans bloquer l'affichage), et un **snapshot quotidien automatique seulement si l'appli tourne** — ni service ni tâche planifiée : l'interface le demande au backend une minute après le démarrage puis toutes les 30 minutes (`timeline_daily`) ; il reprend en arrière-plan les séries que l'utilisateur a analysées lui-même dans les 30 derniers jours et dont le dernier snapshot a plus de 20 h, sans toucher à l'analyse affichée ; une analyse lancée par l'utilisateur l'interrompt. **Jamais d'UAC** : une série analysée par la MFT n'a pas de snapshot quotidien sans droits d'administrateur, et l'écran le dit. Réglage « Snapshot quotidien » respecté.
+- **Repères des nettoyages** sur la courbe : chaque nettoyage retient désormais son volume (`actions.volume_key`, ceux d'avant sont retrouvés par le numéro de série de leurs éléments) ; le repère montre ce qu'il a retiré **de la racine de la série** (éléments supprimés sous cette racine ; gouffres système : gain mesuré, seulement sur la série du disque entier) : pastille verte « −44,2 Go nettoyés », date et titre en infobulle.
+- **Projection** (`timeline/projection.rs`) : régression linéaire (moindres carrés) **sur les 30 derniers jours, seulement avec au moins 5 points**, ce que les nettoyages de Lumen ont libéré étant rajouté aux points suivants (**les sauts dus aux nettoyages sont exclus**). Pente nulle ou négative (moins de 1 Mio par jour) : **pas de projection, un message neutre**. Sinon : « Au rythme des 30 derniers jours (9,9 Go par semaine, nettoyages de Lumen exclus), le disque sera plein dans environ 7 semaines. » (espace libre au dernier snapshot). Tests sur des séries connues (pente exacte, bruit symétrique, moins de 5 points, points hors fenêtre, plate, décroissante, saut de 44 Gio corrigé).
+- **Diff entre deux dates** (`timeline/diff.rs`) : top des dossiers qui ont **le plus grossi** et **le plus rétréci**, **nouveaux** et **disparus** ; un parent dont un seul sous-dossier porte au moins 90 % de la variation s'efface devant lui ; un dossier nouveau ne cite pas ses sous-dossiers. **Un clic ouvre l'Explorer zoomé sur le dossier** (dans l'analyse affichée si c'est la même cible, sinon après l'analyse de la cible, dans l'historique précédent / suivant) ; un dossier disparu ou un disque absent n'est pas cliquable. Test sur deux snapshots de fixtures.
+- **Écran Timeline** : choix de la série (« C: Système · dossier utilisateur · parcours »), période 7 j / 30 j / 3 mois / Tout, bandeau Utilisé / 7 derniers jours / Libre, courbe maison (SVG, graduations rondes, survol avec date, taille et origine du snapshot, points A et B de la comparaison), projection, état du snapshot quotidien, comparaison. Disque absent ou dont la lettre a changé : dit en une phrase. Le KPI « +18 Go / 7 j » de l'écran Analyse vient maintenant des snapshots (absent tant que l'historique est trop court).
+
+### Décisions
+
+- **Une seule base** pour le journal et les snapshots (le plan d'architecture le prévoyait) : les migrations restent linéaires et les repères des nettoyages se lisent par une simple requête.
+- **Jours, semaines et mois de la rétention en UTC** : à quelques heures près à minuit, sans dépendre du fuseau.
+- **Seuil des snapshots à 1 Mio** (et non 50 Mo comme dans le plan) avec un plafond de 5 000 dossiers : la comparaison voit les dossiers moyens ; « nouveau » peut aussi vouloir dire « passé au-dessus du seuil », ce que l'écran dit sous la comparaison. Taille typique : 50 à 150 Ko par snapshot.
+- **Variation sur 7 jours** = dernier snapshot moins le dernier pris il y a au moins 7 jours (pas de valeur tant que l'historique est plus court).
+- **Snapshot quotidien = une analyse complète en arrière-plan** (parcours, ou MFT seulement si l'appli est déjà élevée) : c'est le seul moyen d'avoir des tailles par dossier exactes ; elle cède la place à toute analyse de l'utilisateur.
+- **CI : banc d'essai du scanner hors du chemin bloquant** (demande à la validation) : il prenait de 10 à 40 min selon le runner. Job `bench` à part, lancé seulement sur `main` après merge et à la main (`workflow_dispatch`), résultats dans le résumé du run ; les tests fonctionnels du scanner (job `scan`) restent bloquants sur chaque PR.
+- Comparer avec une autre série reste possible dans la liste (« Autres séries (non comparables) ») pour que le refus soit visible et expliqué plutôt que caché.
+
+### Écarts avec la maquette
+
+- La maquette n'a pas d'écran Timeline détaillé : il reprend sa DA (conteneur rayon 16, bandeau construit comme les KPI, chiffres et chemins en mono, pastille verte des nettoyages, listes à bord fin). Captures : `design/captures/jalon-7/` (27 à 32 ; 01 à 26 refaites).
+
+### Test manuel (jalon 7)
+
+1. Analyse le dossier utilisateur : la Timeline montre une série « C: … · dossier utilisateur · parcours » avec 1 snapshot ; Paramètres › Historique de la Timeline affiche la taille de la base.
+2. Crée un dossier de 2 Go dans Documents, relance l'analyse, puis Timeline › Comparer : le dossier est dans « Nouveaux » ; un clic ouvre l'Explorer zoomé dessus, et ← revient où tu étais.
+3. Nettoie le cache npm (ou autre) depuis l'écran Analyse, relance l'analyse : un repère « −X Go nettoyés » apparaît sur la courbe, à la date du nettoyage.
+4. « Scan rapide (admin) » du même dossier : une seconde série « … · MFT » apparaît ; la comparer avec un snapshot du parcours affiche le refus (« méthodes d'analyse différentes ») sans liste.
+5. Clé USB : analyse-la, change sa lettre dans « Gestion des disques », analyse-la à nouveau : une seule série, avec la phrase « Ce disque était en E:… ». Débranche-la : la série reste consultable, « Disque absent ».
+6. Laisse Lumen ouvert plus de 20 h (ou avance l'horloge de la VM) : un snapshot quotidien apparaît (« Dernier snapshot quotidien : … ») sans fenêtre UAC ; désactive « Snapshot quotidien » : plus rien ne se lance.
+7. Avec moins de 5 snapshots sur 30 jours : « La projection demande au moins 5 snapshots… ». Avec un disque stable : message neutre, pas de date.
+8. Paramètres › Purger… › Supprimer tout l'historique : la Timeline est vide, la taille de la base baisse, le Journal est intact.
 
 ---
 

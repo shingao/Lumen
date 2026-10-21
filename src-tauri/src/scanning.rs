@@ -152,7 +152,7 @@ pub struct TreeSliceDto {
 
 pub(crate) struct Entry {
     pub(crate) scan: Scan,
-    volume: String,
+    pub(crate) volume: String,
     notice: Option<&'static str>,
     /// Règles appliquées (absent hors de Windows ou si les règles livrées sont invalides).
     pub(crate) applied: Option<Applied>,
@@ -252,7 +252,7 @@ fn with_fallback(
     }
 }
 
-mod platform {
+pub(crate) mod platform {
     use super::*;
 
     #[cfg(windows)]
@@ -375,6 +375,8 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
     // a demandé le scan rapide. Sinon (exFAT, FAT32, réseau…), parcours.
     let use_mft = mft_capable && (method == ScanMethod::Fast || platform::elevated());
 
+    // L'analyse de l'utilisateur passe avant un snapshot quotidien en cours.
+    crate::timeline::cancel_daily(&app);
     let cancel = Arc::new(AtomicBool::new(false));
     let id = {
         let mut inner = state.0.lock().map_err(|_| LumenError::ScanRunning)?;
@@ -428,9 +430,12 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
                     let dto = summary(id, &entry);
                     // Une seule analyse gardée en mémoire : la dernière.
                     inner.results.clear();
-                    inner.results.insert(id, entry);
+                    inner.results.insert(id, entry.clone());
                     drop(inner);
                     let _ = app.emit("scan:done", dto);
+                    // Snapshot de la Timeline (tailles agrégées par dossier) ; un échec n'empêche
+                    // jamais l'analyse d'être affichée.
+                    let _ = crate::timeline::record_scan(&app, &entry.scan, "scan");
                 }
                 Err(e) => {
                     drop(inner);
@@ -455,6 +460,11 @@ pub fn scan_cancel(state: State<'_, ScanState>, scan_id: u32) {
 
 fn entry(state: &State<'_, ScanState>, scan_id: u32) -> Result<Arc<Entry>, LumenError> {
     entry_of(state, scan_id)
+}
+
+/// Une analyse de l'utilisateur est-elle en cours ?
+pub(crate) fn is_running(state: &ScanState) -> bool {
+    state.0.lock().map_or(true, |i| i.running.is_some())
 }
 
 pub(crate) fn entry_of(state: &ScanState, scan_id: u32) -> Result<Arc<Entry>, LumenError> {
