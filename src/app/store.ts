@@ -2,7 +2,19 @@
 
 import { create } from "zustand";
 import type { Locale } from "../core/format";
-import type { AppInfo, NodeId, ScanMethod, ScanProgress, ScanSummary, ScanTarget, Settings } from "../ipc/types";
+import type {
+  AppInfo,
+  CleanMode,
+  CleanPlan,
+  CleanProgress,
+  CleanReport,
+  NodeId,
+  ScanMethod,
+  ScanProgress,
+  ScanSummary,
+  ScanTarget,
+  Settings,
+} from "../ipc/types";
 
 export type Screen = "analyse" | "timeline" | "cleanup" | "dev" | "games" | "journal";
 export const SCREENS: readonly Screen[] = ["analyse", "timeline", "cleanup", "dev", "games", "journal"];
@@ -25,6 +37,30 @@ export interface ScanState {
   message: string | null;
 }
 
+/** Nettoyage en cours d'affichage : plan à confirmer, exécution, bilan. */
+export interface CleanUi {
+  /** loading : plan en préparation ; confirm ; permanent : seconde confirmation (saisie) ; running ; report ; error. */
+  step: "closed" | "loading" | "confirm" | "permanent" | "running" | "report" | "error";
+  ids: string[];
+  mode: CleanMode;
+  plan: CleanPlan | null;
+  progress: CleanProgress | null;
+  report: CleanReport | null;
+  message: string | null;
+  cancelling: boolean;
+}
+
+export const CLEAN_CLOSED: CleanUi = {
+  step: "closed",
+  ids: [],
+  mode: "trash",
+  plan: null,
+  progress: null,
+  report: null,
+  message: null,
+  cancelling: false,
+};
+
 export interface State {
   screen: Screen;
   settingsOpen: boolean;
@@ -46,6 +82,9 @@ export interface State {
   openReco: string | null;
   hoverReco: string | null;
   toast: Toast | null;
+  clean: CleanUi;
+  /** Incrémenté à chaque entrée ajoutée au journal ou restauration (rechargement de l'écran). */
+  journalVersion: number;
 
   go(screen: Screen): void;
   setSettingsOpen(open: boolean): void;
@@ -60,6 +99,8 @@ export interface State {
   setHoverReco(id: string | null): void;
   showToast(text: string): void;
   dismissToast(): void;
+  setClean(patch: Partial<CleanUi>): void;
+  bumpJournal(): void;
 }
 
 let toastId = 0;
@@ -81,6 +122,8 @@ export const useStore = create<State>()((set) => ({
   openReco: null,
   hoverReco: null,
   toast: null,
+  clean: CLEAN_CLOSED,
+  journalVersion: 0,
 
   go: (screen) => set({ screen, settingsOpen: false }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
@@ -96,4 +139,6 @@ export const useStore = create<State>()((set) => ({
   setHoverReco: (hoverReco) => set({ hoverReco }),
   showToast: (text) => set({ toast: { id: ++toastId, text } }),
   dismissToast: () => set({ toast: null }),
+  setClean: (patch) => set((s) => ({ clean: { ...s.clean, ...patch } })),
+  bumpJournal: () => set((s) => ({ journalVersion: s.journalVersion + 1 })),
 }));

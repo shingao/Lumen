@@ -4,7 +4,9 @@ import { Segmented } from "../components/Segmented";
 import { useT } from "../i18n";
 import { Palette } from "../features/palette/Palette";
 import { AnalyseScreen } from "../features/screens/AnalyseScreen";
-import { CleanupScreen, DevScreen, GamesScreen, JournalScreen, TimelineScreen } from "../features/screens/OtherScreens";
+import { CleanDialog } from "../features/cleanup/CleanDialog";
+import { JournalScreen } from "../features/journal/JournalScreen";
+import { CleanupScreen, DevScreen, GamesScreen, TimelineScreen } from "../features/screens/OtherScreens";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { TitleBar } from "../features/titlebar/TitleBar";
 import { screenLabel } from "./commands";
@@ -61,6 +63,7 @@ export function App() {
         </main>
       </div>
       {paletteOpen && <Palette />}
+      <CleanDialog />
       <Toast />
     </div>
   );

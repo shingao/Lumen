@@ -25,7 +25,8 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 - CSS fait main : CSS modules (`*.module.css`) + variables de `tokens.css`. Stylelint interdit hex/rgb/hsl, `ms`/`s`, tailles et graisses en dur hors `src/styles/tokens*.css`.
 - Polices embarquées : Inter (variable) et JetBrains Mono via `@fontsource` (aucun CDN).
 - Treemap squarified maison : `src/core/treemap/squarify.ts` (2 niveaux, gap 3 px).
-- Analyse : crate `src-tauri/scan/` — parcours parallèle maison (rayon) par handle de dossier (`FileIdExtdDirectoryInfo`, puis chaque fichier ouvert par file ID pour ses attributs seulement), MFT pour NTFS en administrateur (assistant élevé `--lumen-mft-scan`). À venir : SQLite (rusqlite) dans `%LOCALAPPDATA%\Lumen\`.
+- Analyse : crate `src-tauri/scan/` — parcours parallèle maison (rayon) par handle de dossier (`FileIdExtdDirectoryInfo`, puis chaque fichier ouvert par file ID pour ses attributs seulement), MFT pour NTFS en administrateur (assistant élevé `--lumen-mft-scan`).
+- Journal des nettoyages : SQLite (rusqlite `bundled`) dans `%LOCALAPPDATA%\Lumen\lumen.db` (`src-tauri/src/journal.rs`, schéma versionné) ; nettoyage côté appli : `src-tauri/src/cleanup.rs` (recommandations → cibles, autorisations et commandes pour `safety`, IPC du plan et du journal).
 
 ## Tokens (résumé — détail dans `src/styles/tokens.css`)
 
@@ -60,13 +61,13 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 ## Règles de sécurité (non négociables)
 
 - Toute suppression, tout déplacement et toute commande passent par **un seul crate Rust `src-tauri/safety/`**.
-  - Logique pure, testable partout : `path.rs` (canonisation lexicale), `denylist.rs`, `allow.rs` (liste blanche), `check.rs` (pipeline dans l'ordre), `plan.rs` (plan, simulation, empreinte BLAKE3, confirmation), `script.rs` (PowerShell), `commands.rs` (liste fermée des commandes officielles). Tests portables avec une sonde en mémoire (`probe::memory`).
-  - Appels Win32 : `safety::win` uniquement (`WinProbe`, dossiers connus, Corbeille `IFileOperation`), seul endroit avec `unsafe`. Ses tests (`win/tests.rs`) tournent **uniquement sur Windows, sur de vraies fixtures** (jonctions, symlinks, 8.3, `\\?\`, file ID, verrous, SYSTEM, chemins longs Unicode, Corbeille) : jamais de sonde simulée.
+  - Logique pure, testable partout : `path.rs` (canonisation lexicale), `denylist.rs`, `allow.rs` (liste blanche), `check.rs` (pipeline dans l'ordre), `plan.rs` (plan avec contenu attendu des dossiers et commandes, simulation, empreinte BLAKE3, confirmation, `execute` seul point d'entrée), `exec.rs` (recontrôle complet au moment de l'action, effets derrière le trait `Effects`), `script.rs` (PowerShell autonome), `commands.rs` (liste fermée, résolution des binaires par chemin complet). Tests portables avec une sonde en mémoire (`probe::memory`).
+  - Appels Win32 : `safety::win` uniquement (`WinProbe`, liste de dossier par handle, dossiers connus, `WinEffects` : Corbeille `IFileOperation` avec emplacement `$R…`, définitif par handle, commandes dans un objet job ; `restore.rs` : restauration depuis la Corbeille), seul endroit avec `unsafe` et `Command::new`. Ses tests (`win/tests.rs`) tournent **uniquement sur Windows, sur de vraies fixtures** (jonctions, symlinks, 8.3, `\\?\`, file ID, verrous, SYSTEM, chemins longs Unicode, Corbeille) : jamais de sonde simulée.
   - Chaque test de `safety/` est listé dans `src-tauri/safety/required-tests.txt` ; `node scripts/check-safety-tests.mjs` échoue si un test manque, est ignoré, échoue ou n'est pas exécuté. Ajouter tout nouveau test à cette liste.
-  - Exécution réelle verrouillée par `plan::REAL_EXECUTION_ENABLED = false` (assertion de compilation) jusqu'au jalon 5 : seule la simulation est exposée. Le front n'envoie jamais de chemin libre : seulement des ids d'éléments du scan, des ids de règles ou de sélections. `clippy.toml` interdit `std::fs::remove_*`, `rename`, `copy`, `Command::new` ailleurs.
+  - Exécution réelle (jalon 5) : `plan::execute` après l'empreinte du plan affiché (+ seconde confirmation du définitif) ; **chaque élément repasse les 6 étapes au moment de l'action, contenu des dossiers compris, élément par élément** ; tout ce qui a changé est sauté et signalé, jamais supprimé, et un dossier qui a changé n'est jamais traité d'un bloc. Définitif : identité relue sur le handle ouvert, jamais à travers un lien. Commandes : chemin complet résolu (jamais le PATH seul), prérequis d'abord, délai maximal, sorties capturées ; jamais de commande « administrateur » lancée par Lumen. Le front n'envoie jamais de chemin libre : seulement des ids d'éléments du scan, des ids de règles ou de sélections. `clippy.toml` interdit `std::fs::remove_*`, `rename`, `copy`, `Command::new` ailleurs.
 - Avant chaque action, dans l'ordre : canonisation (`\\?\`, 8.3, casse, `..`) → liste blanche (règle ou sélection Dormants/Doublons) → denylist → aucun reparse point sur le chemin ni ses parents → anti-TOCTOU (file ID, taille, date de modif identiques au scan) → fichier non verrouillé (sinon ignoré et compté).
 - Corbeille par défaut (`IFileOperation`, annulable). Suppression définitive : option désactivée par défaut, double confirmation (taille + nombre). Commande officielle préférée à `Remove-Item`. Simulation par défaut ; exécution réelle après confirmation montrant total et liste. Un « À vérifier » n'est jamais coché par défaut.
-- Scripts générés : `-WhatIf` par défaut, chemins absolus validés par `safety/` uniquement, commentés.
+- Scripts générés (`safety::script`) : chemins absolus validés par `safety/` uniquement, commentés, **simulation par défaut** (`-WhatIf` tant que `-Executer` n'est pas donné), et leurs propres garde-fous puisqu'ils s'exécutent hors de `safety` : refus au-delà de 24 h, `Test-Path`, refus si l'élément ou un parent est un lien, si la taille ou la date diffère de la génération, hors disque fixe ; Corbeille via `Microsoft.VisualBasic.FileIO`, jamais `Remove-Item -Recurse` ; `ErrorAction Stop` par élément ; journal dans un fichier. Testés par Pester en CI (`scripts/ci/script.Tests.ps1`).
 - Denylist codée en dur : `C:\Windows`, `Program Files`, `Program Files (x86)`, `ProgramData` (seules les commandes officielles des gouffres système y touchent) ; racines de volumes, EFI, `\Boot`, `\EFI`, `bootmgr`, `BOOTNXT` ; `System Volume Information`, `$Recycle.Bin`, `$Extend`, tout `$*` NTFS ; `pagefile.sys`, `swapfile.sys`, `hiberfil.sys` ; ruches (`NTUSER.DAT*`, `UsrClass.dat*`, `System32\config`) ; profils `Default`, `Public` et autres utilisateurs ; attribut SYSTEM ; un dossier contenant `.git` n'est jamais supprimé en entier ; **secrets et configurations**, où qu'ils soient (même dans un cache) : `.npmrc`, `.yarnrc*`, `.git-credentials`, `.netrc`, clés `id_rsa*`/`id_ed25519*`, `*.jks`/`*.keystore`/`*.pfx`/`*.p12`/`*.kdbx`/`*.ppk`, stockage des navigateurs et applis Electron (`Cookies`, `Login Data`, `Web Data`, `Local Storage`, `Session Storage`, `IndexedDB`, `Sessions`, `logins.json`, `key4.db`…), et dans le profil `~\.ssh`, `~\.aws`, `~\.azure`, `~\.kube`, `~\.gnupg`, `~\.gradle\gradle.properties`, `~\.gradle\init.d`, `~\.m2\settings*.xml`, `~\.cargo\credentials*`, `~\.cargo\config*`, `~\.docker\config.json`, `~\.android\adbkey*` (et leurs dossiers parents).
 - Déplacement intelligent : copie → vérification **BLAKE3 obligatoire** → jonction créée **et testée** (lecture d'un fichier à travers elle) → suppression **définitive** de l'original, annoncée comme telle ; rollback possible avant la suppression ; « Annuler le déplacement » recopie depuis la cible et retire la jonction.
 - Sans droits admin par défaut ; élévation (assistant séparé) seulement pour le scan MFT et les actions système, expliquée en une phrase.
@@ -75,6 +76,7 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 - **Aucun accès réseau, aucune télémétrie.**
 - Aucun `unwrap()`/`expect()`/`panic!` en production (lints clippy `deny`). Erreurs `thiserror` avec message français (`src-tauri/src/error.rs`).
 - Si un test de `safety/` échoue, est ignoré ou manque, le build est bloqué : le job CI `safety` (Windows) passe avant tous les autres.
+- Toute nouvelle forme de suppression ou de déplacement réelle : test de bout en bout sur la CI Windows (faux profil, vérification de ce qui part et de ce qui reste, comme `src-tauri/src/e2e.rs`), et premier essai manuel dans Windows Sandbox ou une VM, jamais d'abord sur le PC principal.
 
 ## Structure
 
@@ -84,13 +86,13 @@ docs/PLAN.md       architecture validée
 src/
   app/             App, store (zustand), thème/langue, raccourcis, commandes palette, accès données
   components/      Segmented, Button, Toggle, Menu, Toast, StatusDot, icônes, style des popovers
-  features/        titlebar, kpi, explorer (treemap, légende), recommendations, detail, screens, settings, palette
+  features/        titlebar, kpi, explorer (treemap, légende), recommendations, detail, cleanup (confirmation, progression, bilan), journal, screens, settings, palette
   core/            logique pure testée : format, squarify, fuzzy, contrast
   ipc/             backend.ts (contrat), client.ts + tauri.ts (seuls contacts Tauri), mock/ (données de la maquette, analyse simulée), types.ts
   i18n/            fr.ts, en.ts
   styles/          tokens.css, fonts.css, global.css (+ contrast.test.ts)
 src-tauri/         Rust (workspace) : lib.rs, error.rs, scanning.rs (commandes de l'analyse), analysis.rs (règles → DTO) ; safety/ (crate garde-fou) ; scan/ (crate d'analyse) ; rules/ (moteur de règles, rules.toml, sans-risque.txt)
-scripts/           captures.mjs, make-icon.mjs, check-safety-tests.mjs
+scripts/           captures.mjs, make-icon.mjs, check-safety-tests.mjs ; ci/script.Tests.ps1 (Pester : script généré sur fixtures)
 ```
 
 Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `components/`, `app/` ; seuls `ipc/client.ts` et `ipc/tauri.ts` importent `@tauri-apps/*`.

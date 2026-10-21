@@ -36,7 +36,3 @@ export function DevScreen() {
 export function GamesScreen() {
   return <ScreenStub title="screen.games.title" subtitle="screen.games.subtitle" empty="screen.games.empty" milestone={8} />;
 }
-
-export function JournalScreen() {
-  return <ScreenStub title="screen.journal.title" subtitle="screen.journal.subtitle" empty="screen.journal.empty" milestone={5} />;
-}

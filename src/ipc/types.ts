@@ -192,3 +192,136 @@ export interface Settings {
   explorerMenu: boolean;
   logsFolder: string;
 }
+
+// --- Nettoyage (jalon 5) -------------------------------------------------------------------
+
+/** Corbeille (par défaut) ou suppression définitive (option des réglages, double confirmation). */
+export type CleanMode = "trash" | "permanent";
+
+export interface PlanItem {
+  path: string;
+  size: number;
+  directory: boolean;
+  rule: string;
+  ruleName: string;
+}
+
+export interface PlanCommand {
+  line: string;
+  explanation: string;
+  prerequisite: boolean;
+  needsElevation: boolean;
+  size: number;
+}
+
+/** Plan validé par safety, à confirmer : rien n'est fait tant qu'il ne l'est pas. */
+export interface CleanPlan {
+  planId: number;
+  /** Empreinte du plan affiché : l'exécution n'accepte que celle-ci. */
+  fingerprint: string;
+  mode: CleanMode;
+  total: number;
+  /** Éléments supprimés + commandes officielles qui sont des actions. */
+  count: number;
+  items: PlanItem[];
+  moreItems: number;
+  commands: PlanCommand[];
+  volumes: { volume: string; free: number | null }[];
+  refused: { path: string; reason: string }[];
+  skippedLocked: number;
+}
+
+export interface CleanProgress {
+  planId: number;
+  phase: "command" | "item" | "verify";
+  index: number;
+  total: number;
+  label: string;
+  verified: number;
+  freed: number;
+}
+
+export type ItemOutcome = "done" | "partial" | "skipped" | "refused" | "failed" | "cancelled";
+export type CommandOutcome = "succeeded" | "failed" | "timedOut" | "notFound" | "needsElevation" | "cancelled" | "error";
+
+export interface CleanReport {
+  planId: number;
+  actionId: number | null;
+  status: "ok" | "partial" | "failed" | "cancelled";
+  mode: CleanMode;
+  /** Somme estimée de ce qui est parti. */
+  freed: number;
+  /** Gain réel : espace libre du disque avant et après (null si illisible). */
+  measured: number | null;
+  done: number;
+  partial: number;
+  skipped: number;
+  refused: number;
+  failed: number;
+  cancelled: number;
+  items: {
+    path: string;
+    planned: number;
+    freed: number;
+    outcome: ItemOutcome;
+    reason: string | null;
+    issues: { path: string; reason: string }[];
+    moreIssues: number;
+  }[];
+  commands: { line: string; status: CommandOutcome; detail: string | null }[];
+  journalError: string | null;
+}
+
+export type CleanEvent =
+  | { type: "progress"; progress: CleanProgress }
+  | { type: "done"; report: CleanReport }
+  | { type: "failed"; planId: number; message: string };
+
+export interface JournalAction {
+  id: number;
+  startedAt: number;
+  finishedAt: number;
+  title: string;
+  method: CleanMode;
+  status: CleanReport["status"];
+  bytesPlanned: number;
+  bytesFreed: number;
+  bytesMeasured: number | null;
+  itemsDone: number;
+  itemsPartial: number;
+  itemsSkipped: number;
+  itemsRefused: number;
+  itemsFailed: number;
+  itemsCancelled: number;
+}
+
+export interface JournalItem {
+  id: number;
+  path: string;
+  ruleId: string | null;
+  directory: boolean;
+  size: number;
+  method: CleanMode;
+  result: "done" | "failed" | "left" | "skipped" | "refused" | "cancelled";
+  reason: string | null;
+  restoredAt: number | null;
+  /** Encore dans la Corbeille, emplacement d'origine libre : « Restaurer » possible. */
+  restorable: boolean;
+}
+
+export interface JournalCommand {
+  role: "prerequisite" | "action";
+  program: string | null;
+  args: string[];
+  status: CommandOutcome;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}
+
+export interface JournalDetail {
+  action: JournalAction;
+  items: JournalItem[];
+  commands: JournalCommand[];
+}

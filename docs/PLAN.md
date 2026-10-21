@@ -361,6 +361,7 @@ Pour une **commande officielle**, on valide la règle (programme dans la liste f
 - Commande officielle préférée quand elle existe (le panneau de détail le dit, comme la maquette : « ces fichiers ne passent pas par la Corbeille »).
 - Simulation par défaut partout ; une vraie exécution exige une confirmation qui montre le total et la liste.
 - Scripts : générés uniquement depuis un `Plan` validé, chemins absolus entre apostrophes (apostrophes doublées, caractères de contrôle refusés), `-WhatIf` par défaut via une fonction `SupportsShouldProcess` qui envoie à la Corbeille (`Microsoft.VisualBasic.FileIO`), commentaires en français.
+- *Jalon 5 (réalisé)* : au moment de l'action, chaque élément repasse les 6 étapes, et le contenu des dossiers est relu par handle et recontrôlé élément par élément contre ce que le scan a vu ; seuls les sous-ensembles intacts partent. Suppression définitive par handle (`FileDispositionInfoEx`, identité relue sur le handle ouvert), pas par `IFileOperation`. Commandes officielles résolues par leur chemin complet, dans un objet job avec délai maximal et sorties capturées ; jamais de commande « administrateur » lancée par Lumen. Restauration : `$R…` / `$I…` vérifiés (chemin d'origine et file ID), renommage sans écraser. Scripts autonomes : expiration 24 h, liens et taille/date revérifiés, `-Executer` pour agir (simulation par défaut). Détail dans `PROGRESS.md`.
 
 ### 6.4 Élévation
 

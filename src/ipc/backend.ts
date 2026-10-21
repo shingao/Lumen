@@ -4,6 +4,11 @@
 import type { Locale } from "../core/format";
 import type {
   AppInfo,
+  CleanEvent,
+  CleanMode,
+  CleanPlan,
+  JournalAction,
+  JournalDetail,
   Kpis,
   NodeId,
   Recommendation,
@@ -31,8 +36,19 @@ export interface Backend {
   kpis(target: ScanTarget, summary: ScanSummary | null): Promise<Kpis>;
   recommendations(scanId: number): Promise<Recommendation[]>;
   recommendation(id: string): Promise<RecommendationDetail>;
-  /** Script PowerShell des recommandations données, avec ou sans -WhatIf. */
-  script(ids: readonly string[], whatIf: boolean): Promise<string>;
+  /** Script PowerShell des recommandations données (simulation par défaut, garde-fous embarqués). */
+  script(scanId: number, ids: readonly string[]): Promise<string>;
+  /** Plan validé par safety pour les recommandations cochées ; rien n'est fait. */
+  planCleanup(scanId: number, ids: readonly string[], mode: CleanMode): Promise<CleanPlan>;
+  /** Exécution réelle du plan affiché (son empreinte), avancement et bilan par `onCleanEvent`. */
+  executePlan(planId: number, fingerprint: string, permanentAcknowledged: boolean): Promise<void>;
+  cancelPlan(planId: number): Promise<void>;
+  onCleanEvent(listener: (event: CleanEvent) => void): () => void;
+  journal(): Promise<JournalAction[]>;
+  journalDetail(actionId: number): Promise<JournalDetail>;
+  journalScript(actionId: number): Promise<string>;
+  /** « Restaurer depuis la Corbeille » d'un élément du journal. */
+  restore(itemId: number): Promise<void>;
   search(query: string, limit: number): Promise<SearchHit[]>;
   settings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;

@@ -21,9 +21,11 @@ fn builtin() -> &'static Result<RuleSet, String> {
     RULES.get_or_init(|| rules::builtin().map_err(|e| e.to_string()))
 }
 
-/// Profil de l'utilisateur, pour afficher `~\…`.
+/// Règles appliquées à une analyse, avec ce qu'il faut pour agir ensuite : variables des règles
+/// (pour retrouver la cible de chaque élément couvert) et profil (pour afficher `~\…`).
 pub struct Applied {
     pub analysis: Analysis,
+    pub env: rules::Env,
     profile: Option<String>,
 }
 
@@ -46,7 +48,7 @@ fn context() -> Option<(rules::Env, safety::denylist::DenyList, Option<String>)>
 }
 
 /// FILETIME actuel.
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     (unix + 11_644_473_600) * 10_000_000
 }
@@ -61,12 +63,24 @@ pub fn apply(scan: &Scan) -> Option<Applied> {
         }
     };
     let (env, deny, profile) = context()?;
-    let ctx = rules::Context { env: &env, deny: &deny, now: now(), read_disk: true };
+    Some(apply_with(set, scan, env, &deny, profile, now()))
+}
+
+/// Règles appliquées avec des variables et une denylist données (machine réelle, ou faux profil
+/// des tests de bout en bout).
+pub(crate) fn apply_with(set: &RuleSet, scan: &Scan, env: rules::Env, deny: &safety::denylist::DenyList, profile: Option<String>, now: i64) -> Applied {
+    let ctx = rules::Context { env: &env, deny, now, read_disk: true };
     let analysis = rules::analyze(set, scan, &ctx);
     for d in &analysis.disabled {
         eprintln!("règle {} : cible {} neutralisée ({})", d.rule, d.target, d.reason);
     }
-    Some(Applied { analysis, profile })
+    Applied { analysis, env, profile }
+}
+
+/// Règles livrées (`rules.toml`), validées une fois (tests de bout en bout).
+#[cfg(all(test, windows))]
+pub(crate) fn rules() -> Option<&'static RuleSet> {
+    builtin().as_ref().ok()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -186,12 +200,12 @@ fn status_name(s: Status) -> &'static str {
 }
 
 impl Applied {
-    fn set(&self) -> Option<&'static RuleSet> {
+    pub(crate) fn set(&self) -> Option<&'static RuleSet> {
         builtin().as_ref().ok()
     }
 
     /// `C:\Users\Arthur\AppData\…` → `~\AppData\…`.
-    fn display(&self, path: &str) -> String {
+    pub(crate) fn display(&self, path: &str) -> String {
         match &self.profile {
             Some(p) if path.len() >= p.len() && path[..p.len()].eq_ignore_ascii_case(p) && path[p.len()..].starts_with('\\') => {
                 format!("~{}", &path[p.len()..])
@@ -341,7 +355,7 @@ impl Applied {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use rules::schema::Var;
     use safety::denylist::{DenyList, SystemLayout};
@@ -358,7 +372,7 @@ mod tests {
     }
 
     /// Profil analysé : un cache npm (commande officielle) et un cache de shaders (suppression).
-    fn applied() -> (Applied, Scan) {
+    pub(crate) fn applied() -> (Applied, Scan) {
         let mut b = Builder::new(&e("Arthur", Kind::Dir, 0));
         let appdata = b.add_children(0, &[e("AppData", Kind::Dir, 0)]).start;
         let local = b.add_children(appdata, &[e("Local", Kind::Dir, 0)]).start;
@@ -380,7 +394,7 @@ mod tests {
         let deny = DenyList::new(&layout);
         let ctx = rules::Context { env: &env, deny: &deny, now: now(), read_disk: false };
         let analysis = rules::analyze(builtin().as_ref().unwrap(), &scan, &ctx);
-        (Applied { analysis, profile: Some("C:\\Users\\Arthur".into()) }, scan)
+        (Applied { analysis, env, profile: Some("C:\\Users\\Arthur".into()) }, scan)
     }
 
     #[test]

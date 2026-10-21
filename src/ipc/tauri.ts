@@ -10,6 +10,12 @@ import { DEFAULT_SETTINGS } from "./mock";
 import type {
   AppInfo,
   Category,
+  CleanEvent,
+  CleanPlan,
+  CleanProgress,
+  CleanReport,
+  JournalAction,
+  JournalDetail,
   Kpis,
   NodeKind,
   Recommendation,
@@ -95,6 +101,11 @@ interface VolumeDto {
   total: number;
   free: number;
   mftCapable: boolean;
+}
+
+/** Plan tel que le renvoie Rust : nom de règle en (fr, en). */
+interface PlanDto extends Omit<CleanPlan, "items"> {
+  items: (Omit<CleanPlan["items"][number], "ruleName"> & { ruleName: [string, string] })[];
 }
 
 const SETTINGS_KEY = "lumen-settings";
@@ -265,8 +276,35 @@ export function createTauriBackend(): Backend {
       return detail;
     },
 
-    // Script complet généré par safety : jalon 5.
-    script: () => Promise.resolve(""),
+    // Script généré par safety pour le plan des recommandations données (simulation par défaut).
+    async script(scanId, ids) {
+      const plan = await invoke<PlanDto>("plan_create", { scanId, recos: ids, mode: "trash" });
+      return invoke<string>("plan_script", { planId: plan.planId });
+    },
+
+    async planCleanup(scanId, ids, mode) {
+      const dto = await invoke<PlanDto>("plan_create", { scanId, recos: ids, mode });
+      const plan: CleanPlan = { ...dto, items: dto.items.map((i) => ({ ...i, ruleName: locale === "en" ? i.ruleName[1] : i.ruleName[0] })) };
+      return plan;
+    },
+
+    executePlan: (planId, fingerprint, permanentAcknowledged) => invoke("plan_execute", { planId, fingerprint, permanentAcknowledged }),
+
+    cancelPlan: (planId) => invoke("plan_cancel", { planId }),
+
+    onCleanEvent(listener) {
+      const offs = [
+        listen<CleanProgress>("clean:progress", (e) => listener({ type: "progress", progress: e.payload })),
+        listen<CleanReport>("clean:done", (e) => listener({ type: "done", report: e.payload })),
+        listen<{ planId: number; message: string }>("clean:failed", (e) => listener({ type: "failed", ...e.payload } satisfies CleanEvent)),
+      ];
+      return () => offs.forEach((p) => void p.then((off) => off()));
+    },
+
+    journal: () => invoke<JournalAction[]>("journal_list"),
+    journalDetail: (actionId) => invoke<JournalDetail>("journal_detail", { actionId }),
+    journalScript: (actionId) => invoke<string>("journal_script", { actionId }),
+    restore: (itemId) => invoke("journal_restore", { itemId }),
 
     // Recherche dans l'index du scan : jalon 9.
     search: () => Promise.resolve([]),

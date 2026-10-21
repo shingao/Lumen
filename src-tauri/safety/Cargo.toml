@@ -16,10 +16,15 @@ windows = { version = "0.62", features = [
   "Win32_Security",
   "Win32_Storage_FileSystem",
   "Win32_System_Com",
+  "Win32_System_JobObjects",
   "Win32_System_Registry",
+  "Win32_System_Threading",
   "Win32_UI_Shell",
   "Win32_UI_Shell_Common",
 ] }
+
+# `#[implement]` (sink de IFileOperation) génère des chemins `::windows_core`.
+windows-core = "0.62"
 
 [target.'cfg(windows)'.dev-dependencies]
 junction = "1"

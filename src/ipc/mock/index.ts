@@ -5,7 +5,12 @@ import type { Locale } from "../../core/format";
 import { GIB } from "../../core/format";
 import { fuzzyFilter } from "../../core/fuzzy";
 import type {
+  CleanEvent,
+  CleanPlan,
+  CleanReport,
   Crumb,
+  JournalAction,
+  JournalDetail,
   Kpis,
   NodeId,
   Recommendation,
@@ -22,6 +27,8 @@ import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
 
 const SETTINGS_KEY = "lumen-dev-settings";
+/** Durée d'une étape du nettoyage simulé. */
+const MOCK_STEP_MS = 120;
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "system",
@@ -237,6 +244,15 @@ export function createMockBackend(now: () => number = Date.now): Backend {
 
   const resolved = <T>(value: T): Promise<T> => Promise.resolve(value);
 
+  // Nettoyage simulé : même déroulé que l'appli (plan, confirmation, avancement, bilan, journal).
+  const plans = new Map<number, CleanPlan>();
+  const cancelled = new Set<number>();
+  let nextPlan = 0;
+  const cleanListeners = new Set<(e: CleanEvent) => void>();
+  const emitClean = (e: CleanEvent) => cleanListeners.forEach((fn) => fn(e));
+  const journalActions: JournalAction[] = [];
+  const journalDetails = new Map<number, JournalDetail>();
+
   return {
     setLocale(next) {
       locale = next;
@@ -347,9 +363,173 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       return resolved(detail);
     },
 
-    script(ids, whatIf) {
-      const parts = RECOS.filter((r) => ids.includes(r.id)).map((r) => scriptLines(r, whatIf).join("\n"));
+    script(_scanId, ids) {
+      const parts = RECOS.filter((r) => ids.includes(r.id)).map((r) => scriptLines(r, true).join("\n"));
       return resolved(parts.join("\n\n"));
+    },
+
+    planCleanup(_scanId, ids, mode) {
+      const chosen = RECOS.filter((r) => ids.includes(r.id));
+      const commands = chosen
+        .filter((r) => r.id === "npm")
+        .flatMap((r) => [
+          { line: "npm cache clean --force", explanation: l({ fr: "Outil officiel : vide le cache npm", en: "Official tool: clears the npm cache" }), prerequisite: false, needsElevation: false, size: gb(r.size) },
+          { line: "npm cache verify", explanation: l({ fr: "Vérifie l'intégrité du cache npm", en: "Checks the npm cache integrity" }), prerequisite: false, needsElevation: false, size: 0 },
+        ]);
+      const items = chosen
+        .filter((r) => r.id !== "npm")
+        .flatMap((r) => r.files.map(([path, size]) => ({ path: l(path), size: gb(size), directory: true, rule: r.id, ruleName: l(r.name) })));
+      const total = items.reduce((a, i) => a + i.size, 0) + commands.reduce((a, c) => a + c.size, 0);
+      const plan: CleanPlan = {
+        planId: ++nextPlan,
+        fingerprint: (nextPlan * 2654435761).toString(16).padStart(64, "0"),
+        mode,
+        total,
+        count: items.length + commands.filter((c) => c.size > 0 || !c.prerequisite).length,
+        items,
+        moreItems: 0,
+        commands,
+        volumes: [{ volume: "C:\\", free: gb(KPI.freeNow) }],
+        refused: [],
+        skippedLocked: 0,
+      };
+      plans.set(plan.planId, plan);
+      return resolved(plan);
+    },
+
+    executePlan(planId, fingerprint, permanentAcknowledged) {
+      const plan = plans.get(planId);
+      if (!plan || plan.fingerprint !== fingerprint) return Promise.reject(new Error("le plan a changé depuis sa confirmation : rien n'a été fait"));
+      if (plan.mode === "permanent" && !permanentAcknowledged) return Promise.reject(new Error("la suppression définitive demande une seconde confirmation"));
+      plans.delete(planId);
+      cancelled.delete(planId);
+      const steps = [...plan.commands.map((c) => ({ label: c.line, size: c.size, command: true })), ...plan.items.map((i) => ({ label: i.path, size: i.size, command: false }))];
+      const started = Date.now();
+      let freed = 0;
+      let index = 0;
+      const finish = (wasCancelled: boolean) => {
+        const done = Math.min(index, plan.items.length + plan.commands.length);
+        const report: CleanReport = {
+          planId,
+          actionId: journalActions.length + 1,
+          status: wasCancelled ? "cancelled" : "ok",
+          mode: plan.mode,
+          freed,
+          measured: freed,
+          done: Math.max(0, done - plan.commands.length),
+          partial: 0,
+          skipped: 0,
+          refused: 0,
+          failed: 0,
+          cancelled: plan.items.length - Math.max(0, done - plan.commands.length),
+          items: plan.items.map((i, k) => ({
+            path: i.path,
+            planned: i.size,
+            freed: k < done - plan.commands.length ? i.size : 0,
+            outcome: k < done - plan.commands.length ? "done" : "cancelled",
+            reason: null,
+            issues: [],
+            moreIssues: 0,
+          })),
+          commands: plan.commands.map((c, k) => ({ line: c.line, status: k < done ? "succeeded" : "cancelled", detail: null })),
+          journalError: null,
+        };
+        const action: JournalAction = {
+          id: report.actionId ?? 0,
+          startedAt: started,
+          finishedAt: Date.now(),
+          title: [...new Set(plan.items.map((i) => i.ruleName))].join(", ") || plan.commands.map((c) => c.line).join(", "),
+          method: plan.mode,
+          status: report.status,
+          bytesPlanned: plan.total,
+          bytesFreed: freed,
+          bytesMeasured: freed,
+          itemsDone: report.done,
+          itemsPartial: 0,
+          itemsSkipped: 0,
+          itemsRefused: 0,
+          itemsFailed: 0,
+          itemsCancelled: report.cancelled,
+        };
+        journalActions.unshift(action);
+        journalDetails.set(action.id, {
+          action,
+          items: report.items.map((i, k) => ({
+            id: action.id * 1000 + k,
+            path: i.path,
+            ruleId: plan.items[k]?.rule ?? null,
+            directory: true,
+            size: i.planned,
+            method: plan.mode,
+            result: i.outcome === "done" ? "done" : "cancelled",
+            reason: null,
+            restoredAt: null,
+            restorable: i.outcome === "done" && plan.mode === "trash",
+          })),
+          commands: plan.commands.map((c, k) => ({
+            role: c.prerequisite ? "prerequisite" : "action",
+            program: "C:\\Program Files\\nodejs\\node.exe",
+            args: c.line.split(" ").slice(1),
+            status: k < done ? "succeeded" : "cancelled",
+            exitCode: k < done ? 0 : null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1200,
+          })),
+        });
+        emitClean({ type: "done", report });
+      };
+      const step = () => {
+        if (cancelled.has(planId) || index >= steps.length) {
+          finish(cancelled.has(planId));
+          return;
+        }
+        const s = steps[index] as (typeof steps)[number];
+        const commandsLeft = index < plan.commands.length;
+        emitClean({
+          type: "progress",
+          progress: { planId, phase: s.command ? "command" : "item", index, total: commandsLeft ? plan.commands.length : plan.items.length, label: s.label, verified: 0, freed },
+        });
+        setTimeout(() => {
+          freed += s.size;
+          index += 1;
+          step();
+        }, MOCK_STEP_MS);
+      };
+      setTimeout(step, 0);
+      return resolved(undefined);
+    },
+
+    cancelPlan(planId) {
+      cancelled.add(planId);
+      return resolved(undefined);
+    },
+
+    onCleanEvent(listener) {
+      cleanListeners.add(listener);
+      return () => cleanListeners.delete(listener);
+    },
+
+    journal: () => resolved([...journalActions]),
+
+    journalDetail(actionId) {
+      const d = journalDetails.get(actionId);
+      return d ? resolved(structuredClone(d)) : Promise.reject(new Error("entrée du journal inconnue"));
+    },
+
+    journalScript: (actionId) => resolved(`# Lumen · ${journalDetails.get(actionId)?.action.title ?? ""}`),
+
+    restore(itemId) {
+      for (const d of journalDetails.values()) {
+        const item = d.items.find((i) => i.id === itemId);
+        if (item) {
+          if (!item.restorable) return Promise.reject(new Error("restauration impossible : l'élément n'est plus dans la Corbeille"));
+          item.restorable = false;
+          item.restoredAt = Date.now();
+          return resolved(undefined);
+        }
+      }
+      return Promise.reject(new Error("entrée du journal inconnue"));
     },
 
     search(query, limit) {

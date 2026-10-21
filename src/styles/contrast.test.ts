@@ -69,6 +69,8 @@ describe.each(Object.entries(themes))("contraste AA, thème %s", (_name, tokens)
       }
     }
     for (const fg of ["--text-1", "--text-label-sunken"]) check(fg, solid("--bg-sunken"), "--bg-sunken");
+    // Nettoyage et journal : chemins, tailles et détails sur la surface en creux.
+    for (const fg of ["--text-2", "--text-3"]) check(fg, solid("--bg-sunken"), "--bg-sunken");
   });
 
   it("boutons", () => {

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { openCleanup } from "../../app/cleaning";
 import { useCopyFlash } from "../../app/clipboard";
 import { useRecommendation } from "../../app/data";
 import { useStore } from "../../app/store";
@@ -7,6 +8,7 @@ import { ChevronLeftIcon, CloseSmallIcon, InfoIcon } from "../../components/icon
 import { StatusDot } from "../../components/StatusDot";
 import { formatBytes } from "../../core/format";
 import { currentT, useT } from "../../i18n";
+import { backend, isTauri } from "../../ipc/client";
 import styles from "./DetailPanel.module.css";
 
 /** Panneau de détail d'une recommandation : remplace la liste dans la colonne de droite. */
@@ -14,6 +16,7 @@ export function DetailPanel({ id }: { id: string }) {
   const t = useT();
   const close = () => useStore.getState().setOpenReco(null);
   const showToast = useStore((s) => s.showToast);
+  const scanId = useStore((s) => s.scan.summary?.scanId ?? null);
   const reco = useRecommendation(id);
   // Simulation -WhatIf activée par défaut, à chaque ouverture.
   const [whatIf, setWhatIf] = useState(true);
@@ -114,14 +117,17 @@ export function DetailPanel({ id }: { id: string }) {
           <Button
             variant="primary"
             onClick={() =>
-              void copy(lines.join("\n")).then(
-                (ok) => ok && showToast(currentT()(hasWhatIf && whatIf ? "preview.scriptCopied" : "preview.scriptCopiedReal")),
-              )
+              // Dans l'appli : le script complet généré par safety (simulation par défaut, garde-fous).
+              isTauri && scanId !== null
+                ? void copy(backend.script(scanId, [reco.id])).then((ok) => ok && showToast(currentT()("preview.scriptCopied")))
+                : void copy(lines.join("\n")).then(
+                    (ok) => ok && showToast(currentT()(hasWhatIf && whatIf ? "preview.scriptCopied" : "preview.scriptCopiedReal")),
+                  )
             }
           >
             {copied ? t("reco.copied") : t("reco.copyScript")}
           </Button>
-          <Button variant="clean" onClick={() => showToast(currentT()("preview.later", { n: 5 }))}>
+          <Button variant="clean" onClick={() => openCleanup([reco.id])}>
             {reco.status === "safe" ? t("detail.cleanSafe", { size }) : t("detail.cleanReview")}
           </Button>
         </div>

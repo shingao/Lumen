@@ -19,13 +19,19 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::UI::Shell::{SHQueryRecycleBinW, SHQUERYRBINFO};
 
-use super::{long_path, profile_list, recycle, rule_variables, short_path, system_layout, volume_facts, WinProbe};
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
+
+use super::effects::run_process;
+use super::{in_recycle_bin, long_path, profile_list, recycle, restore, rule_variables, short_path, system_layout, volume_facts, RestoreError, WinEffects, WinProbe};
 use crate::bin::{DriveKind, RecycleBlock};
 use crate::allow::{Allowlist, Authority, RuleGrant, Scope};
-use crate::check::{Change, Checker, Expected, Refusal, SkipReason, Target, Verdict};
+use crate::check::{Change, Checker, Expected, ExpectedNode, Refusal, SkipReason, Target, Verdict};
+use crate::commands::OfficialCommand;
 use crate::denylist::{DenyList, DenyReason};
+use crate::exec::{CommandStatus, Effects, IssueReason, ItemOutcome, RemoveError, Unit};
 use crate::path::WinPath;
-use crate::plan::{execute, simulate, Confirmation, DeleteMode, ExecError, Plan};
+use crate::plan::{execute, simulate, Confirmation, DeleteMode, Plan};
 use crate::probe::Probe;
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -56,10 +62,13 @@ impl Fixture {
         Checker { probe: &WinProbe, deny: &self.deny, allow: &self.allow, now: i64::MAX }
     }
 
-    /// Cible « telle que le scan l'aurait vue » maintenant.
+    /// Cible « telle que le scan l'aurait vue » maintenant, contenu compris pour un dossier.
     fn target(&self, raw: &str) -> Target {
-        let facts = WinProbe.facts(&WinProbe.canonicalize(&wp(raw)).unwrap()).unwrap();
-        Target { path: raw.into(), authority: Authority::Rule(RULE.into()), expected: Expected::from_facts(&facts), bytes: facts.size }
+        let real = WinProbe.canonicalize(&wp(raw)).unwrap();
+        let facts = WinProbe.facts(&real).unwrap();
+        let contents = (facts.attributes.directory && !facts.attributes.reparse_point).then(|| tree(&real));
+        let bytes = contents.as_ref().map_or(facts.size, |c| c.iter().map(|n| n.bytes).sum());
+        Target { path: raw.into(), authority: Authority::Rule(RULE.into()), expected: Expected::from_facts(&facts), bytes, contents }
     }
 
     fn check(&self, t: &Target) -> Verdict {
@@ -80,6 +89,23 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// Contenu d'un dossier tel que le scan l'enregistre (liste par handle, identité de chaque élément).
+fn tree(dir: &WinPath) -> Vec<ExpectedNode> {
+    WinProbe
+        .list(dir)
+        .unwrap()
+        .names
+        .iter()
+        .map(|name| {
+            let p = dir.join(name).unwrap();
+            let facts = WinProbe.facts(&p).unwrap();
+            let children = if facts.attributes.directory && !facts.attributes.reparse_point { tree(&p) } else { Vec::new() };
+            let bytes = if facts.attributes.directory { children.iter().map(|c| c.bytes).sum() } else { facts.size };
+            ExpectedNode { name: name.clone(), expected: Expected::from_facts(&facts), bytes, children }
+        })
+        .collect()
 }
 
 fn wp(raw: &str) -> WinPath {
@@ -194,7 +220,7 @@ fn fixture_progra_1_vers_program_files_refuse() {
     let checker = Checker { probe: &WinProbe, deny: &deny, allow: &allow, now: i64::MAX };
     let facts = WinProbe.facts(&pf).unwrap();
     let short = short_path(&pf).unwrap();
-    let t = Target { path: short.clone(), authority: Authority::Rule("volume".into()), expected: Expected::from_facts(&facts), bytes: 0 };
+    let t = Target { path: short.clone(), authority: Authority::Rule("volume".into()), expected: Expected::from_facts(&facts), bytes: 0, contents: None };
     let v = checker.check(&t);
     if short.contains('~') {
         assert_eq!(v.refusal(), Some(&Refusal::Denied(DenyReason::ProgramFiles)), "{short} : {v:?}");
@@ -221,7 +247,7 @@ fn fixture_prefixe_verbatim_et_casse() {
     let hosts = win.join("System32\\drivers\\etc\\hosts").unwrap();
     let facts = WinProbe.facts(&hosts).unwrap();
     for raw in [hosts.verbatim(), hosts.display_string().to_lowercase(), format!("{}\\..\\{}", win.display_string(), "Windows\\System32\\drivers\\etc\\hosts")] {
-        let t = Target { path: raw.clone(), authority: Authority::Rule("volume".into()), expected: Expected::from_facts(&facts), bytes: 0 };
+        let t = Target { path: raw.clone(), authority: Authority::Rule("volume".into()), expected: Expected::from_facts(&facts), bytes: 0, contents: None };
         assert!(matches!(checker.check(&t).refusal(), Some(Refusal::Denied(_))), "{raw}");
     }
 }
@@ -395,8 +421,7 @@ fn fixture_simulation_ne_touche_a_rien() {
     let plan = Plan::build(&f.checker(), &[f.target(&s(&a)), f.target(&s(&b))], DeleteMode::Trash);
     let dry = simulate(&plan);
     assert_eq!((dry.items, dry.bytes), (2, 6));
-    let confirmation = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: true };
-    assert_eq!(execute(&plan, &confirmation), Err(ExecError::RealExecutionDisabled));
+    let _ = crate::script::render("Simulation", &plan, |_| None, 0);
     assert!(a.exists() && b.exists());
 }
 
@@ -413,11 +438,16 @@ fn fixture_corbeille_ifileoperation() {
     let f = Fixture::new("corbeille");
     let p = f.file("a recycler é.txt", b"lumen");
     let path = canonical(&p);
-    let drive = format!("{}\\", &path.display_string()[..2]);
-    let before = recycle_bin_items(&drive);
-    recycle(&path, 5).unwrap();
+    let id = WinProbe.facts(&path).unwrap().file_id;
+    let recycled = recycle(&path, 5).unwrap();
     assert!(!p.exists(), "le fichier doit avoir quitté son dossier");
-    assert_eq!(recycle_bin_items(&drive), before + 1, "le fichier doit être dans la Corbeille, pas détruit");
+    // Dans la Corbeille, pas détruit : même contenu, même identité, fiche $I qui le désigne
+    // (vérifié sur l'élément lui-même : d'autres tests utilisent la Corbeille en parallèle).
+    let bin = recycled.bin_path.expect("emplacement dans la Corbeille");
+    assert!(bin.contains("$Recycle.Bin") || bin.contains("$RECYCLE.BIN"), "{bin}");
+    assert_eq!(fs::read(&bin).unwrap(), b"lumen");
+    assert!(in_recycle_bin(&bin, &path, id));
+    assert!(recycle_bin_items(&format!("{}\\", &path.display_string()[..2])) >= 1);
 }
 
 #[test]
@@ -532,4 +562,174 @@ fn fixture_variables_des_regles() {
     for n in ["LOCALAPPDATA", "APPDATA", "TEMP"] {
         assert_eq!(deny.check(&get(n).join("lumen-sonde").unwrap()), None, "{n}");
     }
+}
+
+fn run_plan(f: &Fixture, plan: &Plan) -> crate::exec::Report {
+    let ok = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: true };
+    execute(plan, &ok, &f.checker(), &WinEffects::new(), &AtomicBool::new(false), |_| {}).unwrap()
+}
+
+#[test]
+fn fixture_liste_par_handle() {
+    let f = Fixture::new("liste");
+    for i in 0..1500 {
+        f.file(&format!("dossier é ü\\fichier au nom assez long pour remplir le tampon {i:04}.txt"), b"x");
+    }
+    let dir = canonical(&f.cache.join("dossier é ü"));
+    let listing = WinProbe.list(&dir).unwrap();
+    assert_eq!(listing.names.len(), 1500);
+    assert_eq!(listing.file_id, WinProbe.facts(&dir).unwrap().file_id);
+    assert!(listing.names.iter().all(|n| n.starts_with("fichier au nom")));
+    // Une jonction ne se liste jamais : elle n'est pas suivie.
+    let link = f.cache.join("lien");
+    junction::create(windows_dir(), &link).unwrap();
+    assert!(WinProbe.list(&canonical(&f.cache).join("lien").unwrap()).is_err());
+}
+
+#[test]
+fn fixture_execution_reelle_recontrole_complet() {
+    let f = Fixture::new("execution");
+    let a = f.file("sous\\a.bin", b"aaaa");
+    let b = f.file("sous\\b.bin", b"bb");
+    let c = f.file("c.txt", b"ccc");
+    let plan = Plan::build(&f.checker(), &[f.target(&s(&f.cache.join("sous"))), f.target(&s(&c))], DeleteMode::Trash);
+    assert_eq!(plan.items().len(), 2);
+    // Après la confirmation : b.bin est modifié, un fichier apparaît.
+    OpenOptions::new().append(true).open(&b).unwrap().write_all(b"!").unwrap();
+    let new = f.file("sous\\nouveau.txt", b"n");
+
+    let report = run_plan(&f, &plan);
+    assert_eq!(report.items[0].outcome, ItemOutcome::Partial, "{report:#?}");
+    assert_eq!(report.items[1].outcome, ItemOutcome::Done, "{report:#?}");
+    assert!(!a.exists() && !c.exists());
+    assert!(b.exists() && new.exists(), "un élément modifié ou apparu n'est jamais supprimé");
+    assert!(f.cache.join("sous").exists());
+    let reasons: Vec<&IssueReason> = report.items[0].issues.iter().map(|i| &i.reason).collect();
+    assert!(reasons.contains(&&IssueReason::New) && reasons.iter().any(|r| matches!(r, IssueReason::Changed(_))), "{reasons:?}");
+    assert!(report.volumes.iter().all(|v| v.before.is_some() && v.after.is_some()));
+
+    // Le fichier parti à la Corbeille se restaure depuis le journal (même identité).
+    let unit = &report.items[1].units[0];
+    let bin = unit.result.as_ref().unwrap().bin_path.clone().expect("emplacement dans la Corbeille");
+    let original = canonical(&f.cache).join("c.txt").unwrap();
+    assert!(in_recycle_bin(&bin, &original, unit.file_id));
+    restore(&bin, &original, unit.file_id).unwrap();
+    assert_eq!(fs::read(&c).unwrap(), b"ccc");
+    assert_eq!(WinProbe.facts(&original).unwrap().file_id, unit.file_id);
+    assert!(!in_recycle_bin(&bin, &original, unit.file_id));
+    assert!(matches!(restore(&bin, &original, unit.file_id), Err(RestoreError::Gone | RestoreError::Mismatch)));
+}
+
+#[test]
+fn fixture_restauration_sans_ecraser() {
+    let f = Fixture::new("restauration");
+    let p = f.file("doc.txt", b"ancien");
+    let path = canonical(&p);
+    let id = WinProbe.facts(&path).unwrap().file_id;
+    let bin = recycle(&path, 6).unwrap().bin_path.expect("emplacement dans la Corbeille");
+    // Un nouveau fichier occupe la place : jamais écrasé.
+    f.file("doc.txt", b"nouveau");
+    assert_eq!(restore(&bin, &path, id), Err(RestoreError::Occupied));
+    assert_eq!(fs::read(&p).unwrap(), b"nouveau");
+    // Emplacements forgés ou autre élément : refusés.
+    assert_eq!(restore("C:\\Windows\\System32\\kernel32.dll", &path, id), Err(RestoreError::InvalidBinPath));
+    let other = canonical(&f.cache).join("autre.txt").unwrap();
+    assert_eq!(restore(&bin, &other, id), Err(RestoreError::Mismatch));
+    fs::remove_file(&p).unwrap();
+    restore(&bin, &path, id).unwrap();
+    assert_eq!(fs::read(&p).unwrap(), b"ancien");
+}
+
+#[test]
+fn adversarial_jonction_substituee_apres_le_plan() {
+    let f = Fixture::new("substitution");
+    let victim = f.root.join("victime");
+    fs::create_dir_all(&victim).unwrap();
+    File::create(victim.join("precieux.txt")).unwrap().write_all(b"!").unwrap();
+    f.file("sous\\lib\\x.js", b"x");
+    f.file("sous\\a.js", b"a");
+    let plan = Plan::build(&f.checker(), &[f.target(&s(&f.cache.join("sous")))], DeleteMode::Permanent);
+    // Entre le plan et l'action, `lib` devient une jonction vers un dossier hors du cache.
+    fs::remove_dir_all(f.cache.join("sous\\lib")).unwrap();
+    junction::create(&victim, f.cache.join("sous\\lib")).unwrap();
+
+    let report = run_plan(&f, &plan);
+    assert!(victim.join("precieux.txt").exists(), "jamais à travers une jonction");
+    assert!(f.cache.join("sous\\lib").exists(), "la jonction est laissée et signalée");
+    assert!(!f.cache.join("sous\\a.js").exists());
+    assert_eq!(report.items[0].outcome, ItemOutcome::Partial);
+    assert!(report.items[0].issues.iter().any(|i| i.reason == IssueReason::ReparsePoint));
+}
+
+#[test]
+fn adversarial_definitif_identite_relue_sur_le_handle() {
+    let f = Fixture::new("handle");
+    f.file("sous\\a.bin", b"aaaa");
+    let dir = canonical(&f.cache.join("sous"));
+    let facts = WinProbe.facts(&dir).unwrap();
+    let unit = Unit { path: dir.clone(), expected: Expected::from_facts(&facts), bytes: 4, children: tree(&dir) };
+    // Le fichier vérifié est remplacé par un autre de même nom, même taille.
+    fs::remove_file(f.cache.join("sous\\a.bin")).unwrap();
+    f.file("sous\\a.bin", b"bbbb");
+    assert_eq!(WinEffects::new().delete(&unit), Err(RemoveError::Changed));
+    assert_eq!(fs::read(f.cache.join("sous\\a.bin")).unwrap(), b"bbbb");
+    assert!(f.cache.join("sous").exists());
+}
+
+#[test]
+fn fixture_definitif_par_handle() {
+    let f = Fixture::new("definitif");
+    let ro = f.file("sous\\profond\\lecture-seule.txt", b"r");
+    let mut perms = fs::metadata(&ro).unwrap().permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(&ro, perms).unwrap();
+    f.file("sous\\b.txt", b"b");
+    let plan = Plan::build(&f.checker(), &[f.target(&s(&f.cache.join("sous")))], DeleteMode::Permanent);
+    let report = run_plan(&f, &plan);
+    assert_eq!(report.items[0].outcome, ItemOutcome::Done, "{report:#?}");
+    assert!(!f.cache.join("sous").exists());
+    assert!(f.cache.exists());
+}
+
+#[test]
+fn fixture_commande_officielle_par_chemin_complet() {
+    let fx = WinEffects::new();
+    // Ollama n'est pas installé sur la machine de CI : introuvable, jamais lancé par son seul nom.
+    if fx.resolve(&OfficialCommand::OllamaRm(crate::commands::ModelName::parse("x").unwrap())).is_none() {
+        let run = fx.run_command(&OfficialCommand::OllamaRm(crate::commands::ModelName::parse("x").unwrap()), &AtomicBool::new(false));
+        assert_eq!(run.status, CommandStatus::NotFound);
+    }
+    // Node.js est installé sur la machine de CI : npm passe par node.exe + npm-cli.js, chemins complets.
+    if std::env::var_os("CI").is_some() {
+        let (exe, args) = fx.resolve(&OfficialCommand::NpmCacheVerify).expect("node.exe sur la CI");
+        assert!(exe.display_string().to_lowercase().ends_with("\\node.exe"), "{exe}");
+        assert!(args[0].to_lowercase().ends_with("npm-cli.js"), "{args:?}");
+        let run = fx.run_command(&OfficialCommand::NpmCacheVerify, &AtomicBool::new(false));
+        assert_eq!(run.status, CommandStatus::Succeeded, "{run:#?}");
+        assert!(!run.stdout.is_empty() || !run.stderr.is_empty());
+        assert!(WinPath::parse(run.program.as_deref().unwrap()).is_ok());
+    }
+    // Outils système : uniquement System32.
+    let (dism, _) = fx.resolve(&OfficialCommand::DismComponentCleanup).unwrap();
+    assert!(dism.display_string().to_lowercase().ends_with("\\system32\\dism.exe"), "{dism}");
+}
+
+#[test]
+fn fixture_commande_delai_depasse_arbre_arrete() {
+    let cmd = system_layout().unwrap().windows.join("System32").unwrap().join("cmd.exe").unwrap();
+    let args: Vec<String> = ["/d", "/c", "ping -n 60 127.0.0.1"].iter().map(|a| (*a).to_owned()).collect();
+    let run = run_process(&OfficialCommand::NpmCacheVerify, &cmd, &args, None, Duration::from_secs(2), &AtomicBool::new(false));
+    assert_eq!(run.status, CommandStatus::TimedOut);
+    // Les sorties ne se ferment que si ping (petit-enfant) est arrêté lui aussi.
+    assert!(run.duration_ms < 20_000, "{}", run.duration_ms);
+    let cancelled = run_process(&OfficialCommand::NpmCacheVerify, &cmd, &args, None, Duration::from_secs(60), &AtomicBool::new(true));
+    assert_eq!(cancelled.status, CommandStatus::Cancelled);
+    let ok = run_process(&OfficialCommand::NpmCacheVerify, &cmd, &["/d".into(), "/c".into(), "exit 3".into()], None, Duration::from_secs(30), &AtomicBool::new(false));
+    assert_eq!(ok.status, CommandStatus::Failed(3));
+}
+
+#[test]
+fn fixture_espace_libre_du_volume() {
+    let f = Fixture::new("espace");
+    assert!(WinEffects::new().free_bytes(&canonical(&f.cache)).unwrap() > 0);
 }

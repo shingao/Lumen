@@ -30,6 +30,24 @@ impl Expected {
     }
 }
 
+/// Ce que le scan a vu dans un dossier, élément par élément : au moment de l'action, chaque
+/// élément est recontrôlé contre cette liste, et tout ce qui a changé ou est apparu est laissé.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpectedNode {
+    pub name: String,
+    pub expected: Expected,
+    /// Espace occupé selon le scan (cumulé pour un dossier).
+    pub bytes: u64,
+    pub children: Vec<ExpectedNode>,
+}
+
+impl ExpectedNode {
+    /// Nombre d'éléments, celui-ci compris.
+    pub fn count(&self) -> u64 {
+        1 + self.children.iter().map(ExpectedNode::count).sum::<u64>()
+    }
+}
+
 /// Un élément à traiter, tel que le scan l'a enregistré. Le chemin vient du scan, jamais du front.
 #[derive(Debug, Clone)]
 pub struct Target {
@@ -38,6 +56,8 @@ pub struct Target {
     pub expected: Expected,
     /// Espace occupé selon le scan (cumulé pour un dossier), pour les totaux affichés.
     pub bytes: u64,
+    /// Dossier : son contenu tel que le scan l'a vu (obligatoire). Fichier : `None`.
+    pub contents: Option<Vec<ExpectedNode>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +92,10 @@ pub enum Refusal {
     TooRecent,
     #[error("Corbeille indisponible : {0}")]
     NoRecycleBin(RecycleBlock),
+    #[error("fichier dans le cloud : jamais touché")]
+    Cloud,
+    #[error("contenu du dossier inconnu : rien n'est fait sans la liste de l'analyse")]
+    ContentsUnknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,8 +113,14 @@ pub struct Validated {
     pub facts: Facts,
     pub authority: Authority,
     pub bytes: u64,
+    /// Identité vue par le scan, recontrôlée au moment de l'action.
+    pub expected: Expected,
+    /// Contenu attendu d'un dossier, recontrôlé élément par élément au moment de l'action.
+    pub contents: Option<Vec<ExpectedNode>>,
 }
 
+// Verdict éphémère, aussitôt consommé : la taille de `Accepted` est sans importance.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     Accepted(Validated),
@@ -179,6 +209,9 @@ impl<P: Probe> Checker<'_, P> {
                 return Err(Refusal::ReparsePoint(p.display_string()));
             }
         }
+        if facts.attributes.cloud {
+            return Err(Refusal::Cloud);
+        }
 
         // 5. Anti-TOCTOU : même fichier qu'au scan.
         let e = &target.expected;
@@ -190,6 +223,9 @@ impl<P: Probe> Checker<'_, P> {
         }
         // Un dossier change de date dès qu'un fichier y bouge : son contenu sera revérifié élément
         // par élément au moment de l'action. Un fichier doit être strictement identique.
+        if e.directory && target.contents.is_none() {
+            return Err(Refusal::ContentsUnknown);
+        }
         if !e.directory {
             if facts.size != e.size {
                 return Err(Refusal::Changed(Change::Size));
@@ -216,6 +252,8 @@ impl<P: Probe> Checker<'_, P> {
             facts,
             authority: target.authority.clone(),
             bytes: target.bytes,
+            expected: target.expected,
+            contents: target.contents.clone(),
         }))
     }
 }
@@ -277,7 +315,7 @@ mod tests {
         fn target(&self, raw: &str, rule: &str) -> Target {
             let path = WinPath::parse(raw).unwrap();
             let facts = self.probe.facts(&self.probe.canonicalize(&path).unwrap()).unwrap();
-            Target { path: raw.into(), authority: Authority::Rule(rule.into()), expected: Expected::from_facts(&facts), bytes: facts.size }
+            Target { path: raw.into(), authority: Authority::Rule(rule.into()), expected: Expected::from_facts(&facts), bytes: facts.size, contents: None }
         }
 
         fn verdict(&self, raw: &str, rule: &str) -> Verdict {
@@ -434,6 +472,7 @@ mod tests {
             authority: Authority::Selection(3),
             expected: Expected::from_facts(&facts),
             bytes: facts.size,
+            contents: None,
         };
         assert!(w.checker().check(&t).is_accepted());
         let other = Target { authority: Authority::Selection(4), ..t };

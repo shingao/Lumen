@@ -17,6 +17,8 @@ pub struct Attributes {
     pub directory: bool,
     pub reparse_point: bool,
     pub system: bool,
+    /// Fichier ou dossier dans le cloud (OneDrive…) : jamais ouvert, listé ni supprimé.
+    pub cloud: bool,
 }
 
 /// État d'un élément lu sans suivre son dernier composant s'il est un lien.
@@ -54,6 +56,15 @@ pub trait Probe {
     fn is_locked(&self, path: &WinPath) -> Result<bool, ProbeError>;
     /// Type de lecteur et état de la Corbeille du volume qui porte `path`.
     fn volume_facts(&self, path: &WinPath) -> Result<VolumeFacts, ProbeError>;
+    /// Noms contenus dans le dossier, lus par un handle ouvert sur le dossier lui-même (jamais à
+    /// travers un lien), avec son identité : l'appelant vérifie que c'est bien le dossier attendu.
+    fn list(&self, dir: &WinPath) -> Result<Listing, ProbeError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listing {
+    pub file_id: FileId,
+    pub names: Vec<String>,
 }
 
 /// Sonde en mémoire pour les tests portables de la logique (pas pour les tests Windows).
@@ -67,6 +78,8 @@ pub(crate) mod memory {
 
     #[derive(Debug, Clone)]
     pub struct Entry {
+        /// Chemin avec sa casse d'origine.
+        pub path: WinPath,
         pub facts: Facts,
         /// Cible d'une jonction ou d'un lien symbolique.
         pub target: Option<WinPath>,
@@ -97,13 +110,13 @@ pub(crate) mod memory {
             let mut id = self.next_id.borrow_mut();
             *id += 1;
             let facts = Facts {
-                attributes: Attributes { directory, reparse_point: target.is_some(), system: false },
+                attributes: Attributes { directory, reparse_point: target.is_some(), system: false, cloud: false },
                 file_id: FileId { volume_serial: 0xC0DE, id: *id },
                 size,
                 modified: 133_000_000_000_000_000,
                 contains_git: false,
             };
-            let entry = Entry { facts, target: target.map(|t| WinPath::parse(t).unwrap()), locked: false };
+            let entry = Entry { path: path.clone(), facts, target: target.map(|t| WinPath::parse(t).unwrap()), locked: false };
             self.entries.borrow_mut().insert(key(&path), entry);
             path
         }
@@ -134,12 +147,47 @@ pub(crate) mod memory {
             }
         }
 
+        /// Retire l'élément et tout ce qu'il contient (effet d'une suppression).
+        pub fn remove(&self, path: &WinPath) {
+            self.entries.borrow_mut().retain(|_, e| !e.path.starts_with(path));
+        }
+
+        pub fn exists(&self, raw: &str) -> bool {
+            self.entries.borrow().contains_key(&key(&WinPath::parse(raw).unwrap()))
+        }
+
         /// Remplace un fichier par un autre de même nom, même taille et même date (nouvel ID).
         pub fn replace(&self, path: &WinPath) {
             let mut id = self.next_id.borrow_mut();
             *id += 1;
             let new_id = *id;
             self.update(path, |e| e.facts.file_id.id = new_id);
+        }
+
+        /// Contenu d'un dossier tel qu'un scan le verrait maintenant (pour construire des cibles).
+        pub fn tree(&self, dir: &WinPath) -> Vec<crate::check::ExpectedNode> {
+            let Ok(listing) = self.list(dir) else { return Vec::new() };
+            listing
+                .names
+                .iter()
+                .map(|name| {
+                    let path = dir.join(name).unwrap();
+                    let facts = self.facts(&path).unwrap();
+                    let children = if facts.attributes.directory && !facts.attributes.reparse_point { self.tree(&path) } else { Vec::new() };
+                    let bytes = if facts.attributes.directory { children.iter().map(|c| c.bytes).sum() } else { facts.size };
+                    crate::check::ExpectedNode { name: name.clone(), expected: crate::check::Expected::from_facts(&facts), bytes, children }
+                })
+                .collect()
+        }
+
+        /// Cible « telle que le scan l'aurait vue » maintenant, contenu compris pour un dossier.
+        pub fn target(&self, raw: &str, authority: crate::allow::Authority) -> crate::check::Target {
+            let path = WinPath::parse(raw).unwrap();
+            let real = self.canonicalize(&path).unwrap();
+            let facts = self.facts(&real).unwrap();
+            let contents = (facts.attributes.directory && !facts.attributes.reparse_point).then(|| self.tree(&real));
+            let bytes = contents.as_ref().map_or(facts.size, |c| c.iter().map(|n| n.bytes).sum());
+            crate::check::Target { path: raw.into(), authority, expected: crate::check::Expected::from_facts(&facts), bytes, contents }
         }
 
         /// Résout les alias 8.3 et les liens des composants intermédiaires, comme Windows.
@@ -183,6 +231,22 @@ pub(crate) mod memory {
         fn is_locked(&self, path: &WinPath) -> Result<bool, ProbeError> {
             let real = self.resolve(path)?;
             Ok(self.entries.borrow().get(&key(&real)).ok_or(ProbeError::NotFound)?.locked)
+        }
+
+        fn list(&self, dir: &WinPath) -> Result<Listing, ProbeError> {
+            let entries = self.entries.borrow();
+            let entry = entries.get(&key(dir)).ok_or(ProbeError::NotFound)?;
+            if !entry.facts.attributes.directory || entry.target.is_some() {
+                return Err(ProbeError::Os(267));
+            }
+            let depth = dir.components().len() + 1;
+            let mut names: Vec<String> = entries
+                .values()
+                .filter(|e| e.path.components().len() == depth && e.path.starts_with(dir))
+                .filter_map(|e| e.path.components().last().cloned())
+                .collect();
+            names.sort();
+            Ok(Listing { file_id: entry.facts.file_id, names })
         }
 
         fn volume_facts(&self, path: &WinPath) -> Result<VolumeFacts, ProbeError> {

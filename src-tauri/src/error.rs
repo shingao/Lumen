@@ -20,6 +20,18 @@ pub enum LumenError {
     ScanRunning,
     #[error("{0}")]
     Scan(#[from] scan::ScanError),
+    #[error("plan de nettoyage : {0}")]
+    Plan(String),
+    #[error("plan inconnu ou déjà exécuté : rien n'a été fait")]
+    UnknownPlan,
+    #[error("un nettoyage est déjà en cours")]
+    CleanRunning,
+    #[error("{0}")]
+    Journal(String),
+    #[error("entrée du journal inconnue")]
+    UnknownAction,
+    #[error("restauration impossible : {0}")]
+    Restore(String),
 }
 
 /// Les commandes IPC renvoient le message lisible, jamais la structure interne.

@@ -7,14 +7,62 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 1 | Projet Tauri, UI statique fidèle à la maquette (données mockées), navigation, thèmes, Paramètres et palette en squelette | **fait — validé** |
 | 2 | Module `safety/` complet + tests (bloquants en CI) | **fait — validé** |
 | 3 | Scanner Rust (parcours parallèle puis MFT), progression, sélecteur de disque réel | **fait — validé** (PR #1 mergée) |
-| 4 | Moteur de règles, recommandations et KPI calculés | **fait — à tester** |
-| 5 | Scripts, copie, exécution (simulation, confirmation, journal) | à faire |
+| 4 | Moteur de règles, recommandations et KPI calculés | **fait — validé** (PR #2 mergée) |
+| 5 | Scripts, copie, exécution (simulation, confirmation, journal) | **fait — à tester** (dans Windows Sandbox ou une VM d'abord) |
 | 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | à faire |
 | 7 | Snapshots et Timeline | à faire |
 | 8 | Dev et Jeux | à faire |
 | 9 | Déplacement intelligent, recherche instantanée, export de rapport | à faire |
 | 10 | Onboarding et astuces contextuelles | à faire |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | à faire |
+
+---
+
+## Jalon 5 — scripts, exécution, journal
+
+Première vraie suppression. **À tester d'abord dans Windows Sandbox ou une VM**, pas sur le PC principal.
+
+### Livré
+
+- **Exécution réelle dans `safety`** (`exec.rs`, logique pure ; effets réels dans `safety::win`) : `plan::execute` est le seul point d'entrée, après vérification de l'empreinte du plan affiché (et de la seconde confirmation pour le définitif). Le verrou de compilation du jalon 2 est retiré.
+  - **Recontrôle complet au moment de l'action** : chaque élément du plan repasse les 6 étapes ; un dossier est **relu élément par élément** (handle ouvert sur le dossier lui-même, identité vérifiée) et chaque élément qu'il contient repasse liste blanche, denylist (secrets compris), liens, fichiers cloud, identité / taille / date, âge minimum de la règle et verrou, contre ce que le scan avait vu (le plan porte le contenu attendu de chaque dossier, couvert par l'empreinte BLAKE3).
+  - **Tout ce qui a changé est sauté et signalé, jamais supprimé** : élément apparu, modifié, remplacé, devenu lien, verrouillé, protégé. Un dossier qui a changé n'est jamais traité d'un bloc : seuls ses sous-ensembles intacts partent.
+  - **Corbeille** par `IFileOperation`, un élément par opération (bilan exact), pré-contrôle du volume refait juste avant, `FOF_WANTNUKEWARNING` ; un « sink » note l'emplacement de l'élément dans la Corbeille (`$R…`) pour la restauration.
+  - **Définitif** (option) : du plus profond au plus haut, chaque élément est ouvert sans suivre les liens, son identité est **relue sur le handle ouvert** puis il est marqué pour suppression sur ce même handle (`FileDispositionInfoEx`, POSIX). Un élément substitué entre le contrôle et l'action (jonction, autre fichier de même nom et taille) n'est jamais supprimé ; un dossier qui a reçu un nouvel élément reste.
+  - **Progression** élément par élément, **annulable entre deux éléments** (et pendant le recontrôle d'un gros dossier), **échecs partiels** gérés : on continue, puis bilan libéré / sauté / refusé / échoué / annulé avec la raison. **Gain réel mesuré** par l'espace libre des volumes avant et après, en plus de la somme estimée.
+- **Commandes officielles** : binaire **résolu par son chemin complet** (emplacements d'installation connus, puis entrées absolues du PATH ; fichier ordinaire, ni lien ni cloud ; jamais le dossier courant ni un dossier temporaire) ; npm lancé par `node.exe` + `npm-cli.js` (pas de `npm.cmd`), outils système depuis `System32` seulement. **Prérequis d'abord** (`gradle --stop` avant les caches Gradle), **délai maximal** par commande, sans console ni shell, dans un **objet job** (tout l'arbre de processus est arrêté au délai ou à l'annulation), **stdout/stderr capturés** dans le journal. Une commande qui demande l'administrateur n'est jamais lancée par Lumen : elle est signalée et reste dans le script.
+- **Script copié** (`script.rs`), qui s'exécute hors de `safety` et embarque ses propres garde-fous : date de génération dans l'en-tête et **refus au-delà de 24 h** ; pour chaque chemin `Test-Path`, **refus si l'élément ou un parent est un lien** (attribut ReparsePoint) ou un fichier cloud, **refus si la taille ou la date diffère de la génération** (dossier : nombre de fichiers et de dossiers, taille totale, date la plus récente, mesurés sans jamais entrer dans un lien ; un dossier qui contient un lien est refusé), refus hors d'un disque local fixe ; Corbeille via `Microsoft.VisualBasic.FileIO` (`SendToRecycleBin`), **jamais `Remove-Item -Recurse`** ; **simulation par défaut** (`-WhatIf` actif tant que `-Executer` n'est pas donné), `$ErrorActionPreference = 'Stop'` élément par élément, **journal dans un fichier**, bilan et code de sortie. Commandes écrites avec le chemin complet résolu par Lumen, revérifié avant lancement.
+- **Journal SQLite** (`%LOCALAPPDATA%\Lumen\lumen.db`, WAL, schéma versionné) : chaque nettoyage (méthode, empreinte, bilan, prévu / libéré / mesuré, **script équivalent**), chaque élément (méthode, résultat, taille, raison, file ID, emplacement dans la Corbeille), chaque commande (chemin complet, arguments, statut, code de sortie, sorties). **« Restaurer depuis la Corbeille »** tant que c'est possible : seulement un `$R…` de la Corbeille de l'utilisateur dont le `$I…` désigne le chemin d'origine du journal et dont le file ID est celui de l'élément supprimé ; renommage vers l'emplacement d'origine **sans jamais écraser**, parents sans lien.
+- **Appli** : `plan_create` (rien n'est fait), `plan_script`, `plan_execute` (empreinte du plan affiché), `plan_cancel`, `journal_list` / `journal_detail` / `journal_script` / `journal_restore`. Les autorisations viennent des règles elles-mêmes (cible développée, portée, âge minimum ; artefacts de projet entiers), le contenu attendu des dossiers de l'analyse.
+- **Interface** : fenêtre de **confirmation** (total, nombre d'éléments, **liste dépliable**, méthode — Corbeille / commande officielle / les deux —, disque et espace libre, éléments refusés par `safety`) ; le bouton porte le total (« Mettre 43,4 Go à la Corbeille ») ; **définitif** seulement si autorisé dans Paramètres, en **seconde confirmation où il faut taper le total ou « SUPPRIMER »** ; progression avec annulation ; **bilan** (libéré, mesuré sur le disque, faits / sautés / refusés / échoués avec la raison, statut des commandes), puis « Voir le journal » ou « Relancer l'analyse ». **Écran Journal** : chaque nettoyage, ses éléments, ses commandes et leurs sorties, restauration, copie du script exécuté. « Copier le script » copie désormais le script complet de `safety`.
+- **Tests** : `safety` 73 tests portables + 37 Windows (dont fixtures réelles : jonction substituée après le plan, identité relue sur le handle, lecture seule, liste par handle de 1 500 noms, délai dépassé qui arrête petit-enfant compris, Corbeille puis restauration sans écraser, commande npm résolue par son chemin complet) ; **Pester** sur le script généré (simulation par défaut, Corbeille, fichier modifié après génération, jonction piégée sur l'élément / un parent / dans le contenu, script expiré, définitif) ; journal SQLite ; sélection → cibles / autorisations / commandes ; parcours complet de l'interface (vitest) ; **bout en bout sur la CI Windows** : faux profil analysé, nettoyage réel des recommandations sans risque, puis vérification de ce qui est parti (Corbeille) et de ce qui est intact (`%TEMP%` récent, projet sans verrou, documents, `~\.ssh`, Téléchargements), journal complet, restauration.
+
+### Décisions
+
+- **Définitif par handle plutôt que par `IFileOperation`** : identité relue sur le handle ouvert, jamais à travers un lien ; plus strict que le Shell, qui travaille par chemin.
+- **Un élément par opération de Corbeille** : un échec n'interrompt pas les autres et le bilan dit exactement ce qui est parti.
+- **Commandes « administrateur » jamais lancées par Lumen au jalon 5** (Nettoyage de disque, DISM…) : signalées, laissées au script (console élevée) ; les actions système passeront par l'assistant élevé avec leurs propres garde-fous (jalon 6).
+- **npm sur son cache par défaut** : `npm cache clean --force` vide le cache configuré de npm ; le gain réel est mesuré par l'espace libre, même s'il diffère du dossier analysé.
+- **Script : `-Executer` pour agir.** La simulation est le comportement par défaut, sans rien à retenir ; `-WhatIf` reste accepté. Le script ne connaît pas le quota de la Corbeille de chaque volume : il ne traite que des éléments que `safety` a déjà pré-contrôlés (disque fixe, Corbeille active, taille).
+- **Un seul plan confirmable à la fois** (le dernier affiché) ; un plan exécuté ne peut pas l'être une seconde fois. Après un nettoyage, l'analyse affichée est ancienne : « Relancer l'analyse » est proposé au bilan.
+- Le journal texte mensuel prévu au plan (`logs\lumen-AAAA-MM.log`) viendra avec l'écran Logs (jalon 11) ; le journal SQLite et le journal de chaque script couvrent le besoin d'ici là.
+
+### Écarts avec la maquette
+
+- La maquette ne montre ni la confirmation ni le journal : les deux prolongent sa DA (surface des popovers, chiffres et chemins en mono, pastilles de statut, hachures vertes pour le « sans risque », bouton vert « Nettoyer »). Captures : `design/captures/jalon-5/` (12 à 16).
+
+### Test manuel (jalon 5) — dans Windows Sandbox ou une VM
+
+1. Installe Lumen dans la Sandbox, crée un faux projet (`package.json`, `package-lock.json`, `npm install`), quelques fichiers dans `%TEMP%` (dont un vieux : `(Get-Item x.tmp).LastWriteTime = (Get-Date).AddDays(-3)`), analyse le profil.
+2. « Nettoyer » : vérifie le total, le nombre d'éléments, la liste dépliée, la méthode et le disque ; le bouton affiche le total.
+3. Confirme : progression, puis bilan (libéré, mesuré sur le disque). Ouvre la Corbeille : les éléments y sont.
+4. Vérifie que les fichiers récents de `%TEMP%`, tes sources et le `package.json` sont intacts.
+5. Journal : l'action y est avec ses éléments et la sortie de `npm cache clean` ; « Restaurer depuis la Corbeille » remet `node_modules` à sa place.
+6. Recommence en modifiant un fichier de `node_modules` entre « Nettoyer » et la confirmation : il est laissé et signalé (« modifié depuis l'analyse »), le reste part.
+7. Ouvre un fichier de `%TEMP%` dans un éditeur pendant le nettoyage : il est sauté (« ouvert par un autre programme »).
+8. Paramètres › Autoriser la suppression définitive, puis « Définitif » dans la confirmation : la seconde étape exige de taper le total ou SUPPRIMER.
+9. « Copier le script », colle-le dans PowerShell : simulation par défaut (rien ne bouge), puis `-Executer` ; essaie-le après avoir modifié un fichier : refusé.
+10. Annule un gros nettoyage en cours : il s'arrête après l'élément en cours, le bilan l'indique.
 
 ---
 
@@ -46,7 +94,7 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 - **Commandes officielles : mesure seulement.** Une règle `action = "command"` (npm, Yarn, pnpm, NuGet, pip, uv, Nettoyage de disque) n'autorise aucune suppression directe ; la taille est celle des dossiers que la commande vide (« jusqu'à » pour `pnpm store prune`). Gradle reste une suppression, précédée de `gradle --stop`.
 - **pip et uv séparés** (deux règles) : chacun a sa propre commande, et l'un peut être absent.
 - **Docker / WSL (compactage)** reporté au jalon 8 (écran Dev) : le gain dépend de l'espace libre à l'intérieur du disque virtuel, qu'il faut mesurer avec WSL arrêté ; l'annoncer sans mesure serait trompeur.
-- **Détail : aperçu des commandes seulement.** Le script PowerShell complet (chemins validés par `safety`, `-WhatIf`) et la simulation arrivent au jalon 5, comme prévu au plan ; le texte du panneau le dit.
+- **Détail : aperçu des commandes seulement** au jalon 4 ; le script complet de `safety` est copié depuis le jalon 5.
 - La note de la maquette « Suppression définitive » (données factices) est corrigée : la Corbeille est la règle par défaut.
 
 ### Test manuel (jalon 4)

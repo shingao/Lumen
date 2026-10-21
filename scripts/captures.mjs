@@ -40,5 +40,39 @@ await shot("08-parametres", { act: (p) => p.getByRole("button", { name: "Paramè
 await shot("09-palette", { act: (p) => p.keyboard.press("Control+K").then(() => p.keyboard.type("grad")) });
 await shot("10-timeline-sombre", { theme: "dark", act: (p) => p.getByRole("button", { name: "Timeline", exact: true }).click() });
 await shot("11-fenetre-etroite", { width: 1100, height: 900 });
+// Jalon 5 : confirmation, seconde confirmation du définitif, bilan, journal.
+const clean = (p) => p.getByRole("button", { name: "Nettoyer", exact: true }).click();
+await shot("12-confirmation-clair", {
+  act: async (p) => {
+    await clean(p);
+    await p.getByText("Voir la liste").click();
+  },
+});
+await shot("13-confirmation-sombre", { theme: "dark", act: clean });
+await shot("14-definitif", {
+  act: async (p) => {
+    await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-settings", JSON.stringify({ permanentDelete: true })));
+    await p.reload();
+    await p.waitForSelector("#root > *");
+    await clean(p);
+    await p.getByRole("button", { name: "Définitif", exact: true }).click();
+    await p.getByRole("button", { name: /^Supprimer définitivement/ }).click();
+    await p.getByRole("textbox").fill("SUPPRIM");
+  },
+});
+const run = async (p) => {
+  await clean(p);
+  await p.getByRole("button", { name: /à la Corbeille/ }).click();
+  await p.getByText("Nettoyage terminé").waitFor({ timeout: 10000 });
+};
+await shot("15-bilan", { act: run });
+await shot("16-journal-sombre", {
+  theme: "dark",
+  act: async (p) => {
+    await run(p);
+    await p.getByRole("button", { name: "Voir le journal" }).click();
+    await p.locator("[aria-expanded]").first().click();
+  },
+});
 await browser.close();
 console.log(`captures dans ${out}`);

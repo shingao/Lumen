@@ -3,11 +3,15 @@
 //! Testé uniquement sur Windows (CI), avec de vraies fixtures (voir `tests.rs`).
 #![allow(unsafe_code)]
 
+mod effects;
 mod recycle;
+mod restore;
 #[cfg(test)]
 mod tests;
 mod volume;
 
+pub use effects::{tool_dirs, WinEffects};
+pub use restore::{in_recycle_bin, restore, RestoreError};
 pub use volume::{long_path, profile_list, volume_facts};
 
 use std::ffi::c_void;
@@ -16,11 +20,13 @@ use std::mem::size_of;
 use windows::core::{GUID, HSTRING};
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FileIdInfo, GetFileAttributesW, GetFileInformationByHandle, GetFileInformationByHandleEx,
-    GetFinalPathNameByHandleW, GetShortPathNameW, GetTempPathW, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_ID_INFO, FILE_NAME_NORMALIZED, GETFINALPATHNAMEBYHANDLE_FLAGS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_NONE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, VOLUME_NAME_DOS,
+    CreateFileW, FileFullDirectoryInfo, FileFullDirectoryRestartInfo, FileIdInfo, GetFileAttributesW, GetFileInformationByHandle,
+    GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetShortPathNameW, GetTempPathW, BY_HANDLE_FILE_INFORMATION,
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_NO_RECALL,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED, GETFINALPATHNAMEBYHANDLE_FLAGS,
+    FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_NONE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    INVALID_FILE_ATTRIBUTES, OPEN_EXISTING, VOLUME_NAME_DOS,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Shell::{
@@ -32,15 +38,16 @@ use windows::Win32::UI::Shell::{
 use crate::bin::VolumeFacts;
 use crate::denylist::SystemLayout;
 use crate::path::WinPath;
-use crate::probe::{Attributes, Facts, FileId, Probe, ProbeError};
+use crate::probe::{Attributes, Facts, FileId, Listing, Probe, ProbeError};
 
-#[cfg_attr(not(test), allow(unused_imports))]
+#[cfg(test)]
 pub(crate) use recycle::recycle;
 
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_PATH_NOT_FOUND: u32 = 3;
 const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_SHARING_VIOLATION: u32 = 32;
+const ERROR_NO_MORE_FILES: u32 = 18;
 const ERROR_BAD_NETPATH: u32 = 53;
 const ERROR_INVALID_NAME: u32 = 123;
 
@@ -79,14 +86,57 @@ impl Drop for Handle {
 }
 
 /// Ouvre l'élément lui-même : un lien n'est jamais suivi (FILE_FLAG_OPEN_REPARSE_POINT), un
-/// dossier s'ouvre comme un fichier (FILE_FLAG_BACKUP_SEMANTICS). Chemin `\\?\` : pas de limite.
+/// dossier s'ouvre comme un fichier (FILE_FLAG_BACKUP_SEMANTICS), un fichier cloud n'est jamais
+/// rapatrié (FILE_FLAG_OPEN_NO_RECALL). Chemin `\\?\` : pas de limite.
 fn open(path: &WinPath, access: u32, share: FILE_SHARE_MODE) -> Result<Handle, windows::core::Error> {
     let name = HSTRING::from(path.verbatim());
+    let flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_OPEN_NO_RECALL;
     // SAFETY : chaîne terminée par un nul possédée par `name` pendant l'appel.
-    let h = unsafe {
-        CreateFileW(&name, access, share, None, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, None)
-    }?;
+    let h = unsafe { CreateFileW(&name, access, share, None, OPEN_EXISTING, flags, None) }?;
     Ok(Handle(h))
+}
+
+fn attributes_of(a: u32) -> Attributes {
+    Attributes {
+        directory: a & FILE_ATTRIBUTE_DIRECTORY.0 != 0,
+        reparse_point: a & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0,
+        system: a & FILE_ATTRIBUTE_SYSTEM.0 != 0,
+        cloud: a & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS.0 | FILE_ATTRIBUTE_RECALL_ON_OPEN.0 | FILE_ATTRIBUTE_OFFLINE.0) != 0,
+    }
+}
+
+/// Identité et état d'un élément, lus par son handle (pas de seconde ouverture par chemin).
+struct HandleFacts {
+    attributes: Attributes,
+    file_id: FileId,
+    size: u64,
+    modified: i64,
+}
+
+fn handle_facts(h: &Handle) -> Result<HandleFacts, ProbeError> {
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY : handle valide, structure possédée.
+    unsafe { GetFileInformationByHandle(h.0, &mut info) }.map_err(|e| probe_error(&e))?;
+
+    let mut id_info = FILE_ID_INFO::default();
+    // SAFETY : handle valide, tampon de la taille annoncée.
+    let ex = unsafe {
+        GetFileInformationByHandleEx(h.0, FileIdInfo, &mut id_info as *mut FILE_ID_INFO as *mut c_void, size_of::<FILE_ID_INFO>() as u32)
+    };
+    let file_id = match ex {
+        Ok(()) => FileId { volume_serial: id_info.VolumeSerialNumber, id: u128::from_le_bytes(id_info.FileId.Identifier) },
+        // Systèmes de fichiers sans ID 128 bits : index 64 bits classique.
+        Err(_) => FileId {
+            volume_serial: u64::from(info.dwVolumeSerialNumber),
+            id: (u128::from(info.nFileIndexHigh) << 32) | u128::from(info.nFileIndexLow),
+        },
+    };
+    Ok(HandleFacts {
+        attributes: attributes_of(info.dwFileAttributes),
+        file_id,
+        size: (u64::from(info.nFileSizeHigh) << 32) | u64::from(info.nFileSizeLow),
+        modified: ((i64::from(info.ftLastWriteTime.dwHighDateTime)) << 32) | i64::from(info.ftLastWriteTime.dwLowDateTime),
+    })
 }
 
 fn share_all() -> FILE_SHARE_MODE {
@@ -95,6 +145,31 @@ fn share_all() -> FILE_SHARE_MODE {
 
 fn from_utf16(buf: &[u16]) -> Result<String, ProbeError> {
     String::from_utf16(buf).map_err(|_| ProbeError::BadPath(String::from_utf16_lossy(buf)))
+}
+
+/// Noms d'un tampon FILE_FULL_DIR_INFO (entrées chaînées par NextEntryOffset).
+fn parse_full_dir_info(raw: &[u8], names: &mut Vec<String>) -> Result<(), ProbeError> {
+    const NAME_OFFSET: usize = 68;
+    let u32_at = |o: usize| raw.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let mut off = 0usize;
+    loop {
+        let (Some(next), Some(len)) = (u32_at(off), u32_at(off + 60)) else {
+            return Err(ProbeError::BadPath("liste de dossier tronquée".into()));
+        };
+        let start = off + NAME_OFFSET;
+        let Some(name_bytes) = raw.get(start..start + len as usize) else {
+            return Err(ProbeError::BadPath("liste de dossier tronquée".into()));
+        };
+        let units: Vec<u16> = name_bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let name = from_utf16(&units)?;
+        if name != "." && name != ".." {
+            names.push(name);
+        }
+        if next == 0 {
+            return Ok(());
+        }
+        off += next as usize;
+    }
 }
 
 /// Sonde réelle, appuyée sur Win32.
@@ -129,54 +204,43 @@ impl Probe for WinProbe {
         if a == INVALID_FILE_ATTRIBUTES {
             return Err(last_error());
         }
-        Ok(Attributes {
-            directory: a & FILE_ATTRIBUTE_DIRECTORY.0 != 0,
-            reparse_point: a & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0,
-            system: a & FILE_ATTRIBUTE_SYSTEM.0 != 0,
-        })
+        Ok(attributes_of(a))
     }
 
     fn facts(&self, path: &WinPath) -> Result<Facts, ProbeError> {
         let h = open(path, FILE_READ_ATTRIBUTES.0, share_all()).map_err(|e| probe_error(&e))?;
-        let mut info = BY_HANDLE_FILE_INFORMATION::default();
-        // SAFETY : handle valide, structure possédée.
-        unsafe { GetFileInformationByHandle(h.0, &mut info) }.map_err(|e| probe_error(&e))?;
-
-        let mut id_info = FILE_ID_INFO::default();
-        // SAFETY : handle valide, tampon de la taille annoncée.
-        let ex = unsafe {
-            GetFileInformationByHandleEx(
-                h.0,
-                FileIdInfo,
-                &mut id_info as *mut FILE_ID_INFO as *mut c_void,
-                size_of::<FILE_ID_INFO>() as u32,
-            )
-        };
-        let file_id = match ex {
-            Ok(()) => FileId { volume_serial: id_info.VolumeSerialNumber, id: u128::from_le_bytes(id_info.FileId.Identifier) },
-            // Systèmes de fichiers sans ID 128 bits : index 64 bits classique.
-            Err(_) => FileId {
-                volume_serial: u64::from(info.dwVolumeSerialNumber),
-                id: (u128::from(info.nFileIndexHigh) << 32) | u128::from(info.nFileIndexLow),
-            },
-        };
-
-        let a = info.dwFileAttributes;
-        let attributes = Attributes {
-            directory: a & FILE_ATTRIBUTE_DIRECTORY.0 != 0,
-            reparse_point: a & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0,
-            system: a & FILE_ATTRIBUTE_SYSTEM.0 != 0,
-        };
-        let contains_git = attributes.directory
-            && !attributes.reparse_point
+        let f = handle_facts(&h)?;
+        let contains_git = f.attributes.directory
+            && !f.attributes.reparse_point
             && path.join(".git").map(|g| self.attributes(&g).is_ok()).unwrap_or(false);
-        Ok(Facts {
-            attributes,
-            file_id,
-            size: (u64::from(info.nFileSizeHigh) << 32) | u64::from(info.nFileSizeLow),
-            modified: ((i64::from(info.ftLastWriteTime.dwHighDateTime)) << 32) | i64::from(info.ftLastWriteTime.dwLowDateTime),
-            contains_git,
-        })
+        Ok(Facts { attributes: f.attributes, file_id: f.file_id, size: f.size, modified: f.modified, contains_git })
+    }
+
+    fn list(&self, dir: &WinPath) -> Result<Listing, ProbeError> {
+        let h = open(dir, FILE_LIST_DIRECTORY.0 | FILE_READ_ATTRIBUTES.0, share_all()).map_err(|e| probe_error(&e))?;
+        let f = handle_facts(&h)?;
+        if !f.attributes.directory || f.attributes.reparse_point || f.attributes.cloud {
+            return Err(ProbeError::Os(267)); // ERROR_DIRECTORY : pas un dossier ordinaire
+        }
+        let mut names = Vec::new();
+        // Tampon aligné sur 8 octets, 64 Kio par appel.
+        let mut buf = vec![0u64; 8192];
+        let bytes = (buf.len() * 8) as u32;
+        let mut class = FileFullDirectoryRestartInfo;
+        loop {
+            // SAFETY : handle valide, tampon possédé de `bytes` octets.
+            let r = unsafe { GetFileInformationByHandleEx(h.0, class, buf.as_mut_ptr() as *mut c_void, bytes) };
+            match r {
+                Ok(()) => {}
+                Err(e) if win32_code(&e) == ERROR_NO_MORE_FILES => break,
+                Err(e) => return Err(probe_error(&e)),
+            }
+            class = FileFullDirectoryInfo;
+            // SAFETY : vue en octets du tampon de u64 possédé.
+            let raw = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, bytes as usize) };
+            parse_full_dir_info(raw, &mut names)?;
+        }
+        Ok(Listing { file_id: f.file_id, names })
     }
 
     /// Ouverture sans aucun partage : échoue si un autre programme a l'élément ouvert.
