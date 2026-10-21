@@ -5,6 +5,8 @@
 //! est complet et qu'un élément se restaure depuis la Corbeille.
 //! Jalon 6 : doublons (lecture réelle du contenu, liens physiques, groupe jamais vidé, contenu
 //! modifié juste avant la suppression) et fichiers dormants, sur un autre faux profil.
+//! Jalon 8 : purge des artefacts de faux projets depuis l'onglet Dev : seuls les artefacts
+//! partent à la Corbeille, le source et `.git` restent intacts.
 #![cfg(windows)]
 
 use std::fs::{self, OpenOptions};
@@ -254,4 +256,82 @@ fn doublons_et_dormants_d_un_faux_profil() {
     assert!(report.items.iter().all(|i| i.outcome == ItemOutcome::Done), "{report:#?}");
     assert!(!at("Documents\\vieux-rapport.pdf").exists());
     assert!(at("Documents\\recent.docx").exists() && at("Projets\\site\\vieux.psd").exists());
+}
+
+#[test]
+fn purge_des_artefacts_de_faux_projets() {
+    let root = tempfile::Builder::new().prefix("lumen-e2e-").tempdir().unwrap();
+    let p = root.path().join("Arthur");
+    let at = |rel: &str| p.join(rel);
+    // Projet web (git, lockfile) : node_modules et .next sont des artefacts ; une dépendance
+    // installée depuis git garde son propre .git dans node_modules.
+    let web = [
+        "Projets\\web\\package.json",
+        "Projets\\web\\package-lock.json",
+        "Projets\\web\\src\\index.ts",
+        "Projets\\web\\.git\\HEAD",
+        "Projets\\web\\.git\\objects\\ab\\cdef",
+        "Projets\\web\\.git\\refs\\heads\\main",
+    ];
+    for rel in web {
+        write(&at(rel), b"source");
+    }
+    write(&at("Projets\\web\\node_modules\\left-pad\\index.js"), &[1u8; 8192]);
+    write(&at("Projets\\web\\.next\\cache\\webpack.pack"), &[2u8; 8192]);
+    // Projet Rust (git) : target est un artefact.
+    let rust = ["Projets\\outil\\Cargo.toml", "Projets\\outil\\Cargo.lock", "Projets\\outil\\src\\main.rs", "Projets\\outil\\.git\\HEAD"];
+    for rel in rust {
+        write(&at(rel), b"source");
+    }
+    write(&at("Projets\\outil\\target\\debug\\outil.exe"), &[3u8; 16384]);
+
+    let real = scan::win::root_path(p.to_str().unwrap());
+    let scan = scan::walk(&scan::win::WinSource::new(&real), &real, &AtomicBool::new(false), &|_: &scan::Progress| {}).unwrap();
+    let wp = |rel: &str| WinPath::parse(&format!("{real}\\{rel}")).unwrap();
+    let mut env = rules::Env::new();
+    env.set(Var::UserProfile, WinPath::parse(&real).unwrap())
+        .set(Var::LocalAppData, wp("AppData\\Local"))
+        .set(Var::AppData, wp("AppData\\Roaming"))
+        .set(Var::Temp, wp("AppData\\Local\\Temp"))
+        .set(Var::Documents, wp("Documents"))
+        .set(Var::Downloads, wp("Downloads"))
+        .set(Var::SystemDrive, WinPath::parse("C:\\").unwrap());
+    let deny = DenyList::new(&system_layout().unwrap());
+    let applied = analysis::apply_with(analysis::rules().unwrap(), &scan, env, &deny, Some(real.clone()), analysis::now());
+
+    // Onglet Dev : les deux projets, leurs artefacts, tous cochés.
+    let projects = crate::dev::projects(&applied, &scan, &crate::dev::RealDisk);
+    let names: Vec<&str> = projects.iter().map(|x| x.name.as_str()).collect();
+    assert!(names.contains(&"web") && names.contains(&"outil"), "{names:?}");
+    let ids: Vec<i64> = projects.iter().flat_map(|x| x.artifacts.iter().map(|a| a.id)).collect();
+    let arts: Vec<String> = projects.iter().flat_map(|x| x.artifacts.iter().map(|a| a.path.clone())).collect();
+    assert_eq!(arts.len(), 3, "{arts:?}");
+    let sel = crate::dev::select_artifacts(&applied, &scan, &ids).unwrap();
+    let checker = Checker { probe: &WinProbe, deny: &deny, allow: &sel.allow, now: analysis::now() };
+    let plan = Plan::build(&checker, &sel.targets, DeleteMode::Trash);
+    assert!(plan.refused().is_empty(), "{:?}", plan.refused());
+    let confirmation = Confirmation { fingerprint: plan.fingerprint(), permanent_acknowledged: false, without_restore_point: false };
+    let report = execute(&plan, &confirmation, &checker, &WinEffects::new(), &AtomicBool::new(false), |_| {}).unwrap();
+    eprintln!("{report:#?}");
+
+    // Partis, et dans la Corbeille : seulement les artefacts.
+    for gone in ["Projets\\web\\node_modules", "Projets\\web\\.next", "Projets\\outil\\target"] {
+        assert!(!at(gone).exists(), "{gone} devait partir");
+    }
+    let units: Vec<_> = report.items.iter().flat_map(|i| &i.units).filter(|u| u.result.is_ok()).collect();
+    assert!(!units.is_empty());
+    for u in &units {
+        let bin = u.result.as_ref().unwrap().bin_path.clone().expect("emplacement dans la Corbeille");
+        assert!(in_recycle_bin(&bin, &u.path, u.file_id), "{} : {bin}", u.path);
+    }
+    // Intacts : tout le source et tout .git.
+    for keep in web.iter().chain(rust.iter()).copied() {
+        assert!(at(keep).exists(), "{keep} ne devait pas bouger");
+        assert_eq!(fs::read(at(keep)).unwrap(), b"source");
+    }
+    // Le source, .git ou un projet entier ne sont jamais des artefacts.
+    for not in ["Projets\\web\\src", "Projets\\web\\.git", "Projets\\web", "Projets\\outil\\Cargo.toml"] {
+        let n = scan.find(not).unwrap() as i64;
+        assert!(crate::dev::select_artifacts(&applied, &scan, &[n]).is_err(), "{not}");
+    }
 }
