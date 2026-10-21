@@ -159,8 +159,8 @@ export function ArrowRightIcon() {
 /** « Étendre » : flèches en diagonale (zoom sur une tuile). */
 export function ExpandIcon() {
   return (
-    <Svg size={11} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" />
+    <Svg size={13} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 2.5h3.5V6M13.5 2.5 9.25 6.75M6 13.5H2.5V10M2.5 13.5l4.25-4.25" />
     </Svg>
   );
 }

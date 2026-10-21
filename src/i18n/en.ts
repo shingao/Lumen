@@ -180,6 +180,9 @@ export const en: Record<MessageKey, string> = {
   "settings.logs": "Logs folder",
   "settings.logsOpen": "Open folder",
   "settings.version": "Version {v}",
+  "settings.experimental": "Experimental",
+  "settings.experimentalSystem": "System sinks",
+  "settings.experimentalSystemHint": "WinSxS, hibernation, restore points, Windows.old: administrator commands, not yet verified on a real machine.",
 
   "palette.label": "Search and command palette",
   "palette.placeholder": "Search for a file, a folder or a command…",
@@ -364,6 +367,8 @@ export const en: Record<MessageKey, string> = {
   "clean.go.system.other": "Run {n} system actions",
   "adv.noScan": "Run a scan from the Analysis screen first: dormant files, duplicates and large files come from it.",
   "adv.toAnalyse": "Go to analysis",
+  "adv.system.off": "System sinks are experimental: their administrator commands have not been verified on a real machine yet. Turn them on in Settings, “Experimental” section.",
+  "adv.system.settings": "Open settings",
   "adv.loading": "Searching…",
   "adv.note": "Nothing is ticked by default: neither size nor age tells whether a file is useful. Everything is checked again by safety when it runs and goes to the Recycle Bin.",
   "adv.selected.one": "{n} file ticked · {size}",

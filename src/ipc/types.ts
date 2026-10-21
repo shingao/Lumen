@@ -191,6 +191,8 @@ export interface Settings {
   lowSpaceThreshold: number;
   explorerMenu: boolean;
   logsFolder: string;
+  /** Onglet Gouffres système (commandes administrateur) : désactivé tant qu'il n'est pas vérifié en VM. */
+  experimentalSystem: boolean;
 }
 
 // --- Nettoyage (jalon 5) -------------------------------------------------------------------

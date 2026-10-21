@@ -46,6 +46,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lowSpaceThreshold: 10,
   explorerMenu: true,
   logsFolder: "%LOCALAPPDATA%\\Lumen\\logs",
+  experimentalSystem: false,
 };
 
 const gb = (n: number) => Math.round(n * GIB);

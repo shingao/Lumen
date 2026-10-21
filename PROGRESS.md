@@ -9,7 +9,7 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 3 | Scanner Rust (parcours parallèle puis MFT), progression, sélecteur de disque réel | **fait — validé** (PR #1 mergée) |
 | 4 | Moteur de règles, recommandations et KPI calculés | **fait — validé** (PR #2 mergée) |
 | 5 | Scripts, copie, exécution (simulation, confirmation, journal) | **fait — validé** (PR #3 mergée, testé en Sandbox) |
-| 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | **fait — à tester** (dans Windows Sandbox ou une VM d'abord) |
+| 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | **fait — validé en lecture seule** (PR #4 mergée) ; nettoyage réel **non vérifié en réel** (Sandbox), gouffres système **non vérifiés en réel** (VM) et désactivés par défaut |
 | 7 | Snapshots et Timeline | à faire |
 | 8 | Dev et Jeux | à faire |
 | 9 | Déplacement intelligent, recherche instantanée, export de rapport | à faire |
@@ -20,7 +20,14 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 
 ## Jalon 6 — nettoyage avancé
 
-Nouvelles formes de suppression (doublons, fichiers choisis) et premières commandes lancées en administrateur. **Onglet Gouffres système : à tester dans une VM Hyper-V avec un checkpoint pris avant** (Windows Sandbox ne gère ni les points de restauration ni l'hibernation, et DISM y fonctionne mal) ; les autres onglets en Windows Sandbox.
+Nouvelles formes de suppression (doublons, fichiers choisis) et premières commandes lancées en administrateur.
+
+> **Non vérifié en réel** (au merge de la PR #4) : l'utilisateur a testé l'appli sur son PC **en lecture seule** (analyse, navigation, onglets affichés). Restent à vérifier :
+> - **nettoyage réel** des dormants, doublons et gros fichiers — **non vérifié en réel**, à faire dans Windows Sandbox (points 1 à 6 ci-dessous) ;
+> - **gouffres système** — **non vérifiés en réel**, à faire dans une VM Hyper-V avec checkpoint (points 7 à 12). D'ici là, l'onglet est **désactivé par défaut** derrière **Paramètres › Expérimental › Gouffres système** (réglage `experimentalSystem`, faux par défaut) : sans lui, l'onglet n'affiche qu'une explication et « Ouvrir les paramètres ».
+>
+> La CI Windows couvre ces chemins (fixtures `safety::win`, bout en bout sur faux profil), mais pas une vraie machine.
+ **Onglet Gouffres système : à tester dans une VM Hyper-V avec un checkpoint pris avant** (Windows Sandbox ne gère ni les points de restauration ni l'hibernation, et DISM y fonctionne mal) ; les autres onglets en Windows Sandbox.
 
 ### Livré
 
@@ -53,11 +60,15 @@ Nouvelles formes de suppression (doublons, fichiers choisis) et premières comma
 
 - **Mise en page pleine largeur** : plus de largeur maximale ; marges latérales de 28 px ; la colonne Recommandations reste entre 360 et 440 px (`clamp(360px, 24vw, 440px)`) et la treemap prend le reste ; sous 1 000 px, la colonne passe sous la treemap. Vérifié en 1280, 1920 et 2560 px (captures 24).
 - **Précédent / suivant dans l'Explorer** (`src/app/navigation.ts`) : boutons ← et → à gauche du fil d'Ariane, grisés quand il n'y a rien à faire, infobulle « Précédent : Local » / « Suivant : DXCache ». Historique des zooms (tuile, « Étendre », fil d'Ariane) et des changements de disque. Raccourcis déclarés dans `shortcuts.ts` : Alt+← / Alt+→, Retour arrière (hors saisie de texte), boutons 4 / 5 de la souris ; seulement sur l'écran Analyse, sans fenêtre ouverte par-dessus. Un emplacement est retenu **par son chemin** : après une nouvelle analyse ou un retour sur un autre disque (qu'il faut réanalyser, l'appli ne garde que la dernière analyse), le dossier est retrouvé par `scan_find`.
-- **« Étendre »** (icône flèches en diagonale) : au survol, en haut à droite de la tuile survolée la plus profonde qui a des enfants, à tous les niveaux ; un clic zoome sur ce dossier et l'ajoute à l'historique (au clavier : Entrée sur la tuile).
+- **« Étendre »** (deux flèches opposées en diagonale ↗ ↙, trait fin comme ← → du fil d'Ariane, SVG maison) : curseur main, infobulle « Étendre : NomDuDossier » à la place de celle de la tuile ; au survol, en haut à droite de la tuile survolée la plus profonde qui a des enfants, à tous les niveaux ; un clic zoome sur ce dossier et l'ajoute à l'historique (au clavier : Entrée sur la tuile).
 - **Profondeur adaptative** : le backend envoie enfants et petits-enfants, puis jusqu'à 4 niveaux sous les dossiers d'au moins 1 % de la vue (`Scan::slice_adaptive`, nombre de nœuds borné) ; le front montre les enfants d'une sous-tuile dès qu'elle fait au moins 120 × 80 px (`core/treemap/depth.ts`). Un voile de plus par niveau garde les bords visibles (contraste AA vérifié pour 2 et 3 voiles).
 - **Shaders de jeux** (DXCache / GLCache NVIDIA, AMD, D3DSCache) : « À vérifier », catégorie Jeux, retirés des recommandations et des KPI de l'écran Analyse (champ `screen = "games"` des règles : aucun gain ni lien sur l'écran Analyse), toujours visibles dans la treemap en couleur Jeux, sans hachures. Explication pour le jalon 8 : « Les jeux recompileront leurs shaders : premiers lancements plus longs et saccades temporaires. », et un conseil (`tip`) : la taille maximale du cache se règle dans le panneau NVIDIA / AMD Software. `sans-risque.txt` régénéré. Le `shadercache` de Steam est sous Program Files (denylist) : il reste classé Jeux par la zone `jeux`, sans règle.
 - **Nœud « N autres éléments »** : statut et catégorie majoritaires (en octets) de ce qu'il regroupe, gains additionnés, recommandation commune s'il n'y en a qu'une (`Applied::aggregate`) — plus de « À garder » sur un regroupement de fichiers sans risque.
 - **Libellés rognés** : en-têtes de tuile sur une seule ligne (nom tronqué, gain à droite), taille en bas affichée seulement si elle tient en entier ; dans une sous-tuile étroite, la taille est omise plutôt que coupée.
+
+### Note pour plus tard
+
+- Revenir à un autre disque par ← relance une analyse complète (l'appli ne garde que la dernière). À faire : **garder en mémoire la dernière analyse de chaque disque visité pendant la session**, pour que ← / → soient instantanés (mémoire bornée, analyses les plus anciennes oubliées d'abord).
 
 ### Décisions
 

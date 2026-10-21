@@ -75,7 +75,7 @@ export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
   const checked = useStore((s) => s.checked);
   const toggleChecked = useStore((s) => s.toggleChecked);
   const [ref, size] = useSize<HTMLDivElement>();
-  const [hover, setHover] = useState<{ id: NodeId; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{ id: NodeId; x: number; y: number; expand: boolean } | null>(null);
   const [menu, setMenu] = useState<{ node: TreeNode; x: number; y: number } | null>(null);
   const [now] = useState(() => Date.now());
 
@@ -126,8 +126,9 @@ export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
       onPointerMove={(e) => {
         const el = (e.target as HTMLElement).closest<HTMLElement>("[data-node]");
         const id = el ? Number(el.dataset.node) : null;
+        const expand = (e.target as HTMLElement).closest("[data-expand]") !== null;
         const box = e.currentTarget.getBoundingClientRect();
-        setHover(id === null || id === PHANTOM ? null : { id, x: e.clientX - box.left, y: e.clientY - box.top });
+        setHover(id === null || id === PHANTOM ? null : { id, x: e.clientX - box.left, y: e.clientY - box.top, expand });
       }}
       onPointerLeave={() => setHover(null)}
     >
@@ -151,7 +152,13 @@ export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
         {root.children.length === 0 && <p className={styles.empty}>{t("explorer.empty")}</p>}
       </div>
 
-      {hover && hovered && !menu && (
+      {hover && hovered && !menu && hover.expand && (
+        <div role="tooltip" className={`${pop.pop} ${styles.expandTip}`} style={{ left: Math.round(hover.x + 12), top: Math.round(hover.y + 16) }}>
+          {t("explorer.expand", { name: label(hovered, t) })}
+        </div>
+      )}
+
+      {hover && hovered && !menu && !hover.expand && (
         <TileTooltip node={hovered} x={hover.x} y={hover.y} width={size.width} height={size.height} now={now} t={t} />
       )}
 
@@ -183,14 +190,12 @@ interface TileProps {
 }
 
 /** « Étendre » : zoom direct sur ce dossier (au survol ; au clavier, Entrée sur la tuile). */
-function Expand({ node, t }: { node: TreeNode; t: Translator }) {
+function Expand({ node }: { node: TreeNode }) {
   if (!node.hasChildren || node.othersCount !== null) return null;
-  const name = t("explorer.expand", { name: label(node, t) });
   return (
     <span
       aria-hidden="true"
       className={styles.expand}
-      title={name}
       data-expand={node.id}
       onClick={(e) => {
         e.stopPropagation();
@@ -241,7 +246,7 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
         onMenu(node, e.clientX, e.clientY);
       }}
     >
-      {width >= 40 && height >= 30 && <Expand node={node} t={t} />}
+      {width >= 40 && height >= 30 && <Expand node={node} />}
       {showHead && (
         <div className={styles.head}>
           <span className={styles.name}>{label(node, t)}</span>
@@ -304,7 +309,7 @@ function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, o
               onMenu(item, e.clientX, e.clientY);
             }}
           >
-            {rect.w >= 40 && rect.h >= 24 && <Expand node={item} t={t} />}
+            {rect.w >= 40 && rect.h >= 24 && <Expand node={item} />}
             {showLabel && (
               <div className={styles.childHead}>
                 <span className={styles.childName}>{label(item, t)}</span>

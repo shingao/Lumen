@@ -181,6 +181,9 @@ export const fr = {
   "settings.logs": "Dossier des logs",
   "settings.logsOpen": "Ouvrir le dossier",
   "settings.version": "Version {v}",
+  "settings.experimental": "Expérimental",
+  "settings.experimentalSystem": "Gouffres système",
+  "settings.experimentalSystemHint": "WinSxS, hibernation, points de restauration, Windows.old : commandes administrateur, pas encore vérifiées sur une vraie machine.",
 
   "palette.label": "Palette de recherche et de commandes",
   "palette.placeholder": "Rechercher un fichier, un dossier ou une commande…",
@@ -365,6 +368,8 @@ export const fr = {
   "clean.go.system.other": "Lancer {n} actions système",
   "adv.noScan": "Lance d'abord une analyse depuis l'écran Analyse : les fichiers dormants, les doublons et les gros fichiers en viennent.",
   "adv.toAnalyse": "Aller à l'analyse",
+  "adv.system.off": "Les gouffres système sont expérimentaux : leurs commandes administrateur n'ont pas encore été vérifiées sur une vraie machine. Active-les dans les Paramètres, section « Expérimental ».",
+  "adv.system.settings": "Ouvrir les paramètres",
   "adv.loading": "Recherche…",
   "adv.note": "Rien n'est coché par défaut : ni la taille ni l'âge ne disent si un fichier est utile. Tout est revérifié par safety au moment de l'action et va à la Corbeille.",
   "adv.selected.one": "{n} fichier coché · {size}",

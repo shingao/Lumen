@@ -23,7 +23,7 @@ async function scanned() {
   });
   useStore.setState({
     locale: "fr",
-    settings: { ...DEFAULT_SETTINGS },
+    settings: { ...DEFAULT_SETTINGS, experimentalSystem: true },
     scan: { id: scanId, status: "done", method: "auto", progress: null, summary, message: null },
     clean: CLEAN_CLOSED,
   });
@@ -35,6 +35,18 @@ describe("Nettoyage avancé", () => {
   beforeEach(async () => {
     useAdvanced.setState({ systemActions: [], restorePoint: true, restorePoints: { status: "idle" }, sinks: { status: "idle" } });
     await scanned();
+  });
+
+  it("gouffres système : désactivés par défaut, derrière le réglage « Expérimental »", () => {
+    expect(DEFAULT_SETTINGS.experimentalSystem).toBe(false);
+    useStore.setState({ settings: { ...DEFAULT_SETTINGS } });
+    render(<CleanupScreen />);
+    tab("Gouffres système");
+    expect(screen.getByText(/Les gouffres système sont expérimentaux/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Préparer les actions…" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ouvrir les paramètres" }));
+    expect(useStore.getState().settingsOpen).toBe(true);
+    act(() => useStore.setState({ settingsOpen: false }));
   });
 
   it("dormants : base de date affichée, rien de coché par défaut, sélection par identifiants", async () => {

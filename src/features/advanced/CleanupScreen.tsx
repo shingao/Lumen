@@ -18,6 +18,8 @@ export function CleanupScreen() {
   const [tab, setTab] = useState<CleanupTab>("dormant");
   const hasScan = useStore((s) => s.scan.summary !== null);
   const go = useStore((s) => s.go);
+  const systemOn = useStore((s) => s.settings?.experimentalSystem ?? false);
+  const openSettings = useStore((s) => s.setSettingsOpen);
   const tabs: { value: CleanupTab; label: string }[] = [
     { value: "dormant", label: t("screen.cleanup.dormant") },
     { value: "duplicates", label: t("screen.cleanup.duplicates") },
@@ -39,6 +41,13 @@ export function CleanupScreen() {
           <p>{t("adv.noScan")}</p>
           <Button variant="primary" onClick={() => go("analyse")}>
             {t("adv.toAnalyse")}
+          </Button>
+        </div>
+      ) : tab === "system" && !systemOn ? (
+        <div className={screens.empty}>
+          <p>{t("adv.system.off")}</p>
+          <Button variant="primary" onClick={() => openSettings(true)}>
+            {t("adv.system.settings")}
           </Button>
         </div>
       ) : (

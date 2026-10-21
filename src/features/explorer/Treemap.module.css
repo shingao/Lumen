@@ -210,13 +210,13 @@
   right: 4px;
   display: none;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--r-ghost);
   background: var(--bg-container);
   color: var(--text-2);
   box-shadow: 0 0 0 1px var(--border);
-  cursor: zoom-in;
+  cursor: pointer;
 }
 
 .expand:hover {
@@ -231,7 +231,18 @@
 
 .tile[data-hover] > .head,
 .child[data-hover] > .childHead {
-  padding-right: 20px;
+  padding-right: 22px;
+}
+
+/* Infobulle du bouton « Étendre » : une ligne, à la place de celle de la tuile. */
+.expandTip {
+  position: absolute;
+  z-index: 5;
+  padding: 6px 9px;
+  font-size: var(--fs-11-5);
+  color: var(--text-1);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .empty {

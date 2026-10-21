@@ -147,6 +147,16 @@ export function SettingsScreen() {
             </Row>
           </Group>
 
+          <Group title={t("settings.experimental")}>
+            <Row label={t("settings.experimentalSystem")} hint={t("settings.experimentalSystemHint")}>
+              <Toggle
+                label={t("settings.experimentalSystem")}
+                checked={settings.experimentalSystem}
+                onChange={(experimentalSystem) => set({ experimentalSystem })}
+              />
+            </Row>
+          </Group>
+
           <Group title={t("settings.help")}>
             <Row label={t("settings.tutorial")} hint={t("settings.tutorialHint")}>
               <Button variant="link" onClick={later(10)}>

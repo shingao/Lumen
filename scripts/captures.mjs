@@ -76,6 +76,16 @@ await shot("16-journal-sombre", {
 });
 // Jalon 6 : nettoyage avancé (dormants, doublons, gros fichiers, gouffres système).
 const advanced = async (p, tab) => {
+  if (tab === "Gouffres système") {
+    // Onglet expérimental : désactivé par défaut (réglage « Expérimental »).
+    await p.evaluate(() => {
+      const raw = globalThis.localStorage.getItem("lumen-dev-settings");
+      const settings = { ...(raw ? JSON.parse(raw) : {}), experimentalSystem: true };
+      globalThis.localStorage.setItem("lumen-dev-settings", JSON.stringify(settings));
+    });
+    await p.reload();
+    await p.waitForSelector("#root > *");
+  }
   await p.locator("nav").getByRole("button", { name: /^(Nettoyage|Cleanup)$/ }).click();
   if (tab) await p.getByRole("button", { name: tab, exact: true }).click();
 };
@@ -148,7 +158,15 @@ const hoverTile = async (p, name) => {
   if (box) await p.mouse.move(box.x + box.width * 0.6, box.y + 12);
   return tile;
 };
-await shot("25-etendre-survol", { width: 1920, height: 1080, act: (p) => hoverTile(p, "Captures") });
+await shot("25-etendre-survol", {
+  width: 1920,
+  height: 1080,
+  act: async (p) => {
+    const tile = await hoverTile(p, "Captures");
+    await tile.locator(":scope > [data-expand]").hover();
+    await p.getByRole("tooltip").filter({ hasText: "Étendre : Captures" }).waitFor();
+  },
+});
 await shot("26-historique-apres-etendre", {
   width: 1920,
   height: 1080,
