@@ -26,6 +26,11 @@ import type {
   SearchHit,
   Settings,
   SeriesKey,
+  DevOverview,
+  DockerImages,
+  GamesResult,
+  ShaderCaches,
+  WslDisks,
   SystemSinks,
   DailyStatus,
   DatabaseInfo,
@@ -81,6 +86,19 @@ export interface Backend {
   /** « Restaurer depuis la Corbeille » d'un élément du journal. */
   restore(itemId: number): Promise<void>;
   search(query: string, limit: number): Promise<SearchHit[]>;
+  /** Jeux installés, détectés en lecture seule chez leurs launchers. */
+  games(): Promise<GamesResult>;
+  /** Jaquette du cache local du launcher (data URL), ou null. */
+  gameCover(id: string): Promise<string | null>;
+  /** Ouvre le launcher pour désinstaller ou déplacer un jeu : Lumen ne le fait jamais lui-même. */
+  openGame(id: string, action: "uninstall" | "move"): Promise<void>;
+  /** Jeux et launchers ouverts maintenant (les caches de shaders ne se nettoient pas alors). */
+  gamesRunning(): Promise<string[]>;
+  shaderCaches(scanId: number | null): Promise<ShaderCaches>;
+  /** Projets et caches de paquets de l'analyse affichée. */
+  devOverview(scanId: number): Promise<DevOverview>;
+  dockerImages(): Promise<DockerImages>;
+  wslDisks(): Promise<WslDisks>;
   /** Séries de snapshots (une par volume, racine et méthode), la plus récente d'abord. */
   timelineSeries(): Promise<TimelineSeries[]>;
   timeline(series: SeriesKey): Promise<TimelineData>;

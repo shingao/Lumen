@@ -223,5 +223,85 @@ await shot("32-timeline-anglais", { locale: "en-US", height: 1300, act: async (p
   await p.getByRole("button", { name: "Compare", exact: true }).click();
   await p.getByRole("region", { name: "Grew" }).waitFor();
 } });
+// Jalon 8 : Jeux (launchers, shaders) et Dev (projets, caches, Docker, WSL).
+const nav = (p, name) => p.locator("nav").getByRole("button", { name, exact: true }).click();
+const experimental = async (p, key) => {
+  await p.evaluate((k) => {
+    const raw = globalThis.localStorage.getItem("lumen-dev-settings");
+    globalThis.localStorage.setItem("lumen-dev-settings", JSON.stringify({ ...(raw ? JSON.parse(raw) : {}), [k]: true }));
+  }, key);
+  await p.reload();
+  await p.waitForSelector("#root > *");
+};
+await shot("33-jeux", { act: async (p) => {
+  await p.locator("[data-level='3']").first().waitFor();
+  await nav(p, "Jeux");
+  await p.getByRole("list", { name: "Jeux installés" }).waitFor();
+} });
+await shot("34-jeux-sombre-1920", { theme: "dark", width: 1920, height: 1080, act: async (p) => {
+  await nav(p, "Jeux");
+  await p.getByRole("button", { name: "Dernière partie" }).click();
+  await p.getByText(/fichiers de launchers ignorés/).click();
+} });
+await shot("35-shaders", { act: async (p) => {
+  await p.locator("[data-level='3']").first().waitFor();
+  await nav(p, "Jeux");
+  await p.getByRole("button", { name: "Caches de shaders", exact: true }).click();
+  await p.getByRole("checkbox", { name: /Inclure les caches de shaders/ }).check();
+} });
+await shot("36-shaders-jeu-ouvert", { act: async (p) => {
+  await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-running", "steam.exe, Cyberpunk2077.exe"));
+  await p.reload();
+  await p.locator("[data-level='3']").first().waitFor();
+  await nav(p, "Jeux");
+  await p.getByRole("button", { name: "Caches de shaders", exact: true }).click();
+  await p.getByText(/Ouverts maintenant/).waitFor();
+} });
+await shot("37-dev-projets", { height: 1100, act: async (p) => {
+  await p.locator("[data-level='3']").first().waitFor();
+  await nav(p, "Dev");
+  await p.getByRole("checkbox", { name: "Cocher les artefacts de hinageshi-web" }).check();
+} });
+await shot("38-dev-purge-confirmation", { act: async (p) => {
+  await p.locator("[data-level='3']").first().waitFor();
+  await nav(p, "Dev");
+  await p.getByRole("button", { name: "Artefacts", exact: true }).click();
+  await p.getByRole("checkbox", { name: "Cocher les artefacts de kaiju-engine" }).check();
+  await p.getByRole("checkbox", { name: "Cocher les artefacts de hinageshi-web" }).check();
+  await p.getByRole("button", { name: "Purger les artefacts" }).click();
+  await p.getByText("Voir la liste").click();
+} });
+await shot("39-dev-caches-sombre", { theme: "dark", act: async (p) => {
+  await p.locator("[data-level='3']").first().waitFor();
+  await nav(p, "Dev");
+  await p.getByRole("button", { name: "Caches globaux" }).click();
+} });
+await shot("40-dev-docker", { act: async (p) => {
+  await nav(p, "Dev");
+  await p.getByRole("button", { name: "Docker", exact: true }).click();
+  await p.getByText("Supprimer ces images").waitFor();
+} });
+await shot("41-dev-wsl-desactive", { act: async (p) => {
+  await nav(p, "Dev");
+  await p.getByRole("button", { name: "Disques WSL" }).click();
+} });
+await shot("42-dev-wsl", { act: async (p) => {
+  await experimental(p, "experimentalWsl");
+  await nav(p, "Dev");
+  await p.getByRole("button", { name: "Disques WSL" }).click();
+  await p.getByRole("checkbox", { name: "Cocher Docker Desktop (données)" }).check();
+} });
+await shot("43-dev-wsl-confirmation-sombre", { theme: "dark", act: async (p) => {
+  await experimental(p, "experimentalWsl");
+  await nav(p, "Dev");
+  await p.getByRole("button", { name: "Disques WSL" }).click();
+  await p.getByRole("checkbox", { name: "Cocher Ubuntu" }).check();
+  await p.getByRole("button", { name: "Compacter" }).click();
+  await p.getByText("Voir la liste").click();
+} });
+await shot("44-jeux-anglais", { locale: "en-US", act: async (p) => {
+  await nav(p, "Games");
+  await p.getByRole("list", { name: "Installed games" }).waitFor();
+} });
 await browser.close();
 console.log(`captures dans ${out}`);

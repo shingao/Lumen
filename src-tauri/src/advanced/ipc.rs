@@ -663,6 +663,17 @@ pub fn advanced_plan(
         let volume_key = crate::timeline::volume_key(&format!("{drive}:"));
         return cleanup::prepare(&clean, &sel, mode, "Gouffres système".into(), ("system", volume_key), &|p| p.to_owned());
     }
+    // Docker et WSL ne dépendent d'aucune analyse.
+    if let AdvancedRequest::WslCompact { ids } = &request {
+        let paths = crate::dev::wsl_paths(&app.state::<crate::dev::DevState>(), ids)?;
+        let sel = crate::dev::wsl::select(&paths)?;
+        let letter = paths.first().map(|p| p.to_string_lossy().chars().take(2).collect::<String>()).unwrap_or_default();
+        return cleanup::prepare(&clean, &sel, mode, "Compactage WSL / Docker".into(), ("wsl", crate::timeline::volume_key(&letter)), &|p| p.to_owned());
+    }
+    if let AdvancedRequest::DockerPrune = request {
+        let sel = crate::dev::select_docker()?;
+        return cleanup::prepare(&clean, &sel, mode, "Images Docker sans étiquette".into(), ("docker", None), &|p| p.to_owned());
+    }
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
     if let AdvancedRequest::Shaders = request {
         let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
@@ -676,16 +687,6 @@ pub fn advanced_plan(
         let sel = crate::dev::select_artifacts(applied, &entry.scan, ids)?;
         let volume_key = crate::timeline::volume_key(&entry.volume);
         return cleanup::prepare(&clean, &sel, mode, "Artefacts de projets".into(), ("artifacts", volume_key), &|p| applied.display(p));
-    }
-    if let AdvancedRequest::WslCompact { ids } = &request {
-        let paths = crate::dev::wsl_paths(&app.state::<crate::dev::DevState>(), ids)?;
-        let sel = crate::dev::wsl::select(&paths)?;
-        let letter = paths.first().map(|p| p.to_string_lossy().chars().take(2).collect::<String>()).unwrap_or_default();
-        return cleanup::prepare(&clean, &sel, mode, "Compactage WSL / Docker".into(), ("wsl", crate::timeline::volume_key(&letter)), &|p| p.to_owned());
-    }
-    if let AdvancedRequest::DockerPrune = request {
-        let sel = crate::dev::select_docker()?;
-        return cleanup::prepare(&clean, &sel, mode, "Images Docker sans étiquette".into(), ("docker", None), &|p| p.to_owned());
     }
     let display = display_of(&entry);
     let inner = state.lock()?;

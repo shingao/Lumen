@@ -124,6 +124,7 @@ function Refused({ plan }: { plan: CleanPlan }) {
 }
 
 function Confirm({ plan }: { plan: CleanPlan }) {
+  const wsl = useStore((s) => s.clean.request?.kind === "wslCompact");
   const t = useT();
   const allowPermanent = useStore((s) => s.settings?.permanentDelete ?? false);
   const waived = useStore((s) => s.clean.waiveRestorePoint);
@@ -142,6 +143,8 @@ function Confirm({ plan }: { plan: CleanPlan }) {
       )}
       <PlanList plan={plan} />
       <Refused plan={plan} />
+      {wsl && <p className={styles.warnText}>{t("clean.wsl.note")}</p>}
+      {plan.processGuard && <p className={styles.notice}>{t("clean.guard.note")}</p>}
       {plan.elevated && <p className={styles.notice}>{t("clean.elevated.note")}</p>}
       {plan.withoutRestorePoint && (
         <div className={styles.warnText}>
