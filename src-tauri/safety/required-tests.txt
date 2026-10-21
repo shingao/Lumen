@@ -26,6 +26,7 @@ all commands::tests::arguments_en_tableau
 all commands::tests::arguments_variables_valides
 all commands::tests::binaires_par_chemin_complet
 all commands::tests::delais_maximaux
+all commands::tests::docker_seulement_les_images_listees
 all commands::tests::entrees_du_path_absolues_seulement
 all commands::tests::identifiants_et_fichiers_de_sortie_valides
 all commands::tests::outils_systeme_et_elevation

@@ -63,7 +63,7 @@ pub(crate) fn bytes_of(scan: &Scan, n: NodeId) -> u64 {
 
 /// Contenu d'un dossier tel que l'analyse l'a vu (liens et fichiers cloud compris : ils seront
 /// laissés au moment de l'action).
-fn tree(scan: &Scan, n: NodeId) -> Vec<ExpectedNode> {
+pub(crate) fn tree(scan: &Scan, n: NodeId) -> Vec<ExpectedNode> {
     scan.children(n)
         .filter_map(|c| {
             let expected = expected(scan, c)?;
@@ -75,7 +75,7 @@ fn tree(scan: &Scan, n: NodeId) -> Vec<ExpectedNode> {
 
 /// Cible de la règle qui couvre `n` : le premier dossier (lui-même ou un parent) que la règle
 /// vise, avec la portée de la règle. C'est cette autorisation que `safety` revérifie.
-fn grant_for(applied: &Applied, scan: &Scan, rule: &Rule, n: NodeId) -> Option<RuleGrant> {
+pub(crate) fn grant_for(applied: &Applied, scan: &Scan, rule: &Rule, n: NodeId) -> Option<RuleGrant> {
     let mut cur = n;
     loop {
         let path = WinPath::parse(&scan.path(cur)).ok()?;

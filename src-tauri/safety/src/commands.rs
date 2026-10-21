@@ -333,8 +333,12 @@ pub enum OfficialCommand {
     UvCacheClean,
     GradleStop,
     NugetLocalsClear,
-    /// Images Docker inutilisées (confirmation spécifique dans l'interface).
+    /// Images Docker sans étiquette (`dangling`), celles que liste `DockerDanglingImages`
+    /// (confirmation spécifique dans l'interface).
     DockerImagePrune,
+    /// Lecture seule : images Docker sans étiquette (identifiant, dépôt, étiquette, taille, âge),
+    /// une par ligne. Échoue si Docker ne tourne pas.
+    DockerDanglingImages,
     OllamaRm(ModelName),
     WslShutdown,
     /// Magasin de composants (WinSxS), sans `/ResetBase` ; sortie gardée par `/LogPath`.
@@ -475,7 +479,7 @@ impl OfficialCommand {
             UvCacheClean => Program::Uv,
             GradleStop => Program::Gradle,
             NugetLocalsClear => Program::Dotnet,
-            DockerImagePrune => Program::Docker,
+            DockerImagePrune | DockerDanglingImages => Program::Docker,
             OllamaRm(_) => Program::Ollama,
             WslShutdown => Program::Wsl,
             DismComponentCleanup(_) => Program::Dism,
@@ -498,7 +502,8 @@ impl OfficialCommand {
             UvCacheClean => v(&["cache", "clean"]),
             GradleStop => v(&["--stop"]),
             NugetLocalsClear => v(&["nuget", "locals", "all", "--clear"]),
-            DockerImagePrune => v(&["image", "prune", "--all", "--force"]),
+            DockerImagePrune => v(&["image", "prune", "--force"]),
+            DockerDanglingImages => v(&["image", "ls", "--filter", "dangling=true", "--format", "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}"]),
             OllamaRm(model) => vec!["rm".into(), model.as_str().to_owned()],
             WslShutdown => v(&["--shutdown"]),
             DismComponentCleanup(log) => {
@@ -561,13 +566,18 @@ impl OfficialCommand {
     pub fn timeout_secs(&self) -> u64 {
         use OfficialCommand::*;
         match self {
-            GradleStop | WslShutdown => 120,
+            GradleStop | WslShutdown | DockerDanglingImages => 120,
             NpmCacheClean | PnpmStorePrune | YarnCacheClean | PipCachePurge | UvCacheClean | NugetLocalsClear => 1800,
             NpmCacheVerify | DockerImagePrune | OllamaRm(_) => 900,
             DismComponentCleanup(_) | DiskCleanup(_) => 3600,
             HibernateOff | HibernateReduced | ShadowDeleteOldest { .. } | RestorePointsList { .. } => 300,
             RestorePointCreate => 900,
         }
+    }
+
+    /// Commande de lecture seule, lançable hors d'un plan (rien n'est modifié).
+    pub fn read_only(&self) -> bool {
+        matches!(self, OfficialCommand::DockerDanglingImages | OfficialCommand::RestorePointsList { .. })
     }
 
     pub fn needs_elevation(&self) -> bool {
@@ -598,7 +608,8 @@ impl OfficialCommand {
             UvCacheClean => "Outil officiel : vide le cache uv",
             GradleStop => "Arrête les démons Gradle avant de toucher à leurs caches",
             NugetLocalsClear => "Outil officiel : vide les caches locaux NuGet",
-            DockerImagePrune => "Supprime les images Docker qu'aucun conteneur n'utilise",
+            DockerImagePrune => "Supprime les images Docker sans étiquette (dangling), qu'aucun conteneur n'utilise",
+            DockerDanglingImages => "Liste les images Docker sans étiquette (aucune modification)",
             OllamaRm(_) => "Supprime le modèle d'Ollama (retéléchargeable avec ollama pull)",
             WslShutdown => "Arrête WSL et Docker avant le compactage de leur disque virtuel",
             DismComponentCleanup(_) => "Nettoie le magasin de composants de Windows (WinSxS) avec l'outil officiel",
@@ -617,6 +628,15 @@ impl OfficialCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn docker_seulement_les_images_listees() {
+        // La liste affichée et ce qui part sont les mêmes images : sans étiquette, jamais --all.
+        assert_eq!(OfficialCommand::DockerImagePrune.args(), ["image", "prune", "--force"]);
+        assert!(OfficialCommand::DockerDanglingImages.args().contains(&"dangling=true".to_owned()));
+        assert!(OfficialCommand::DockerDanglingImages.read_only() && !OfficialCommand::DockerImagePrune.read_only());
+        assert!(!OfficialCommand::NpmCacheClean.read_only());
+    }
 
     #[test]
     fn arguments_en_tableau() {

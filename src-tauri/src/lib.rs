@@ -9,6 +9,7 @@ mod analysis;
 mod cleanup;
 #[cfg(test)]
 mod e2e;
+mod dev;
 mod error;
 mod games;
 mod journal;
@@ -79,6 +80,8 @@ pub fn run() {
             games::game_open,
             games::games_running,
             games::games_shaders,
+            dev::dev_overview,
+            dev::docker_images,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {

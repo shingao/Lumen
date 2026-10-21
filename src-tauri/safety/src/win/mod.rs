@@ -24,6 +24,12 @@ pub fn read_restore_points(drive: crate::commands::Drive, out: crate::commands::
     crate::exec::Effects::run_elevated(&WinEffects::new(), &command, cancel)
 }
 
+/// Commande de lecture seule de la liste fermée, non élevée (images Docker sans étiquette) ;
+/// `None` pour toute autre commande.
+pub fn run_read_only(command: &crate::commands::OfficialCommand, cancel: &std::sync::atomic::AtomicBool) -> Option<crate::exec::CommandRun> {
+    (command.read_only() && !command.needs_elevation()).then(|| crate::exec::Effects::run_command(&WinEffects::new(), command, cancel))
+}
+
 /// Ouvre « Protection du système » de Windows (aucun argument).
 pub fn open_system_protection() -> Result<(), String> {
     let layout = system_layout().map_err(|e| e.to_string())?;

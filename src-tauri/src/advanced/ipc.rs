@@ -193,6 +193,10 @@ pub enum AdvancedRequest {
     /// Caches de shaders (onglet Jeux) : refusé au moment de l'action si un jeu ou un launcher
     /// tourne.
     Shaders,
+    /// Artefacts de projets cochés dans l'onglet Dev (nœuds couverts par les règles d'artefacts).
+    Artifacts { ids: Vec<i64> },
+    /// `docker image prune` (images sans étiquette listées), si Docker tourne.
+    DockerPrune,
     System {
         actions: Vec<SystemAction>,
         #[serde(rename = "restorePoint")]
@@ -665,6 +669,16 @@ pub fn advanced_plan(
         let volume_key = crate::timeline::volume_key(&entry.volume);
         return cleanup::prepare(&clean, &sel, mode, "Caches de shaders".into(), ("shaders", volume_key), &|p| applied.display(p));
     }
+    if let AdvancedRequest::Artifacts { ids } = &request {
+        let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
+        let sel = crate::dev::select_artifacts(applied, &entry.scan, ids)?;
+        let volume_key = crate::timeline::volume_key(&entry.volume);
+        return cleanup::prepare(&clean, &sel, mode, "Artefacts de projets".into(), ("artifacts", volume_key), &|p| applied.display(p));
+    }
+    if let AdvancedRequest::DockerPrune = request {
+        let sel = crate::dev::select_docker()?;
+        return cleanup::prepare(&clean, &sel, mode, "Images Docker sans étiquette".into(), ("docker", None), &|p| p.to_owned());
+    }
     let display = display_of(&entry);
     let inner = state.lock()?;
     let for_scan = |slot: &Option<(u32, HashSet<NodeId>)>| slot.as_ref().filter(|(id, _)| *id == scan_id).map(|(_, s)| s.clone()).unwrap_or_default();
@@ -681,7 +695,9 @@ pub fn advanced_plan(
             let found = inner.duplicates.as_ref().filter(|(id, _)| *id == scan_id).map(|(_, f)| f.clone()).ok_or(LumenError::UnknownNode)?;
             (select_duplicates(&entry.scan, &found, ids)?, "Doublons", "duplicates")
         }
-        AdvancedRequest::System { .. } | AdvancedRequest::Shaders => return Err(LumenError::Plan("requête inattendue".into())),
+        AdvancedRequest::System { .. } | AdvancedRequest::Shaders | AdvancedRequest::Artifacts { .. } | AdvancedRequest::DockerPrune => {
+            return Err(LumenError::Plan("requête inattendue".into()))
+        }
     };
     drop(inner);
     if sel.targets.is_empty() {
