@@ -122,10 +122,13 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     return n.children.reduce((sum, c) => sum + sizeOf(tree, c), 0);
   }
 
-  function toNode(tree: VolumeTree, id: NodeId, depth: number): TreeNode {
+  /** Même règle que le backend : enfants et petits-enfants toujours, puis jusqu'à 4 niveaux sous
+   * les dossiers d'au moins 1 % de la vue. */
+  function toNode(tree: VolumeTree, id: NodeId, level: number, minExpand: number): TreeNode {
     const n = tree.nodes.get(id);
     const t = n?.tile ?? null;
-    const children = depth > 0 ? (n?.children ?? []).map((c) => toNode(tree, c, depth - 1)) : [];
+    const expand = level < 2 || (level < 4 && sizeOf(tree, id) >= minExpand);
+    const children = expand ? (n?.children ?? []).map((c) => toNode(tree, c, level + 1, minExpand)) : [];
     if (!t) {
       const name = tree.prefix[tree.prefix.length - 1] ?? "";
       return {
@@ -349,8 +352,18 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     tree(scanId, node) {
       const tree = treeOf(scanVolume(scanId));
       const id = node !== null && tree.nodes.has(node) ? node : tree.rootId;
-      const slice: TreeSlice = { root: toNode(tree, id, 2), breadcrumb: breadcrumb(tree, id) };
+      const slice: TreeSlice = { root: toNode(tree, id, 0, sizeOf(tree, id) / 100), breadcrumb: breadcrumb(tree, id) };
       return resolved(slice);
+    },
+
+    findNode(scanId, path) {
+      const tree = treeOf(scanVolume(scanId));
+      const want = path.replace(/\\$/, "").toLowerCase();
+      if (tree.base.replace(/\\$/, "").toLowerCase() === want) return resolved(tree.rootId);
+      for (const [id, n] of tree.nodes) {
+        if (n.tile && (tree.base + l(n.tile.path)).toLowerCase() === want) return resolved(id);
+      }
+      return resolved(null);
     },
 
     recommendations(scanId) {

@@ -44,7 +44,35 @@
   background: var(--bg-app);
 }
 
+.history {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  margin: -3px 0 -3px -4px;
+}
+
+.historyButton {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-seg-btn);
+  background: transparent;
+  color: var(--text-2);
+}
+
+.historyButton:disabled {
+  color: var(--text-faint);
+}
+
+.historyButton:hover:not(:disabled) {
+  background: var(--bg-sunken);
+  color: var(--text-1);
+}
+
 .crumbs {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 6px;

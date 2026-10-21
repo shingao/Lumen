@@ -479,4 +479,9 @@ export const en: Record<MessageKey, string> = {
   "journal.withoutRestorePoint": "Run without a restore point, after explicit confirmation.",
   "journal.log": "DISM log: {path}",
   "journal.logMissing": "File not found (moved or deleted).",
+  "explorer.back": "Back",
+  "explorer.back.to": "Back: {name}",
+  "explorer.forward": "Forward",
+  "explorer.forward.to": "Forward: {name}",
+  "explorer.expand": "Expand: {name}",
 };

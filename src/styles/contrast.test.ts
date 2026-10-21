@@ -30,8 +30,13 @@ describe.each(Object.entries(themes))("contraste AA, thème %s", (_name, tokens)
   };
   const container = color("--bg-container");
   const solid = (name: string) => over(color(name), container);
-  // Sous-tuile : voile posé sur la couleur de la tuile.
+  // Sous-tuile : voile posé sur la couleur de la tuile ; un voile de plus par niveau (3 et 4).
   const veiled = (name: string) => over(color("--tile-veil"), solid(name));
+  const deeper = (name: string, levels: number) => {
+    let bg = solid(name);
+    for (let i = 0; i < levels; i++) bg = over(color("--tile-veil"), bg);
+    return bg;
+  };
 
   const check = (fgName: string, bg: Rgba, where: string) => {
     const ratio = contrastRatio(color(fgName), bg);
@@ -43,6 +48,8 @@ describe.each(Object.entries(themes))("contraste AA, thème %s", (_name, tokens)
       for (const fg of ["--text-1", "--text-2", "--text-3", "--text-4", "--delta-safe", "--delta-review"]) {
         check(fg, solid(bg), bg);
         check(fg, veiled(bg), `${bg} + voile`);
+        check(fg, deeper(bg, 2), `${bg} + 2 voiles (niveau 3)`);
+        check(fg, deeper(bg, 3), `${bg} + 3 voiles (niveau 4)`);
       }
     }
   });

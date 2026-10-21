@@ -480,6 +480,11 @@ export const fr = {
   "journal.withoutRestorePoint": "Lancé sans point de restauration, après confirmation explicite.",
   "journal.log": "Journal de DISM : {path}",
   "journal.logMissing": "Fichier introuvable (déplacé ou supprimé).",
+  "explorer.back": "Précédent",
+  "explorer.back.to": "Précédent : {name}",
+  "explorer.forward": "Suivant",
+  "explorer.forward.to": "Suivant : {name}",
+  "explorer.expand": "Étendre : {name}",
 } as const;
 
 export type MessageKey = keyof typeof fr;

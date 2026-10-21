@@ -139,3 +139,28 @@ export function TrendIcon() {
     </Svg>
   );
 }
+
+export function ArrowLeftIcon() {
+  return (
+    <Svg size={13} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 8H3.5M7.5 3.5 3 8l4.5 4.5" />
+    </Svg>
+  );
+}
+
+export function ArrowRightIcon() {
+  return (
+    <Svg size={13} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 8h9.5M8.5 3.5 13 8l-4.5 4.5" />
+    </Svg>
+  );
+}
+
+/** « Étendre » : flèches en diagonale (zoom sur une tuile). */
+export function ExpandIcon() {
+  return (
+    <Svg size={11} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" />
+    </Svg>
+  );
+}

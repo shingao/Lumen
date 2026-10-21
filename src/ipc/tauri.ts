@@ -239,6 +239,7 @@ export function createTauriBackend(): Backend {
       return result;
     },
 
+    findNode: (scanId, path) => invoke<number | null>("scan_find", { scanId, path }),
     async kpis(target, summary) {
       const list = volumes.length > 0 ? volumes : await loadVolumes();
       const letter = target.kind === "volume" ? target.letter : (summary?.volume ?? "C:");

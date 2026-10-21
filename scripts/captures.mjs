@@ -138,5 +138,26 @@ await shot("22-doublons-anglais", {
     await p.getByText(/duplicate groups/).waitFor({ timeout: 10000 });
   },
 });
+// Retours de test de la PR #4 : pleine largeur, « Étendre », profondeur adaptative, historique.
+for (const [w, h] of [[1280, 800], [1920, 1080], [2560, 1440]]) {
+  await shot(`24-pleine-largeur-${w}`, { width: w, height: h, act: (p) => p.waitForSelector("[data-level='3']") });
+}
+const hoverTile = async (p, name) => {
+  const tile = p.locator("[data-node]", { has: p.locator(`:scope > div > span:text-is("${name}")`) }).first();
+  const box = await tile.boundingBox();
+  if (box) await p.mouse.move(box.x + box.width * 0.6, box.y + 12);
+  return tile;
+};
+await shot("25-etendre-survol", { width: 1920, height: 1080, act: (p) => hoverTile(p, "Captures") });
+await shot("26-historique-apres-etendre", {
+  width: 1920,
+  height: 1080,
+  act: async (p) => {
+    const tile = await hoverTile(p, "Captures");
+    await tile.locator(":scope > [data-expand]").click();
+    await p.getByRole("button", { name: "Précédent : Arthur" }).waitFor();
+    await p.getByRole("button", { name: "Précédent : Arthur" }).hover();
+  },
+});
 await browser.close();
 console.log(`captures dans ${out}`);

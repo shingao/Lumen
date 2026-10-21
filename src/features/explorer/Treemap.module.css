@@ -59,18 +59,25 @@
   outline-offset: -2px;
 }
 
-.head {
+/* En-tête sur une seule ligne (nom tronqué, gain à droite) : hauteur prévisible, la taille en bas
+   de tuile n'est jamais rognée. */
+.head,
+.childHead {
   display: flex;
-  flex-wrap: wrap;
+  flex: none;
   justify-content: space-between;
   align-items: baseline;
-  gap: 1px 8px;
+  gap: 8px;
   min-width: 0;
 }
 
+.childHead {
+  gap: 6px;
+}
+
 .name {
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -84,6 +91,8 @@
 }
 
 .delta {
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-10-5);
   font-weight: var(--fw-medium);
@@ -101,6 +110,7 @@
 }
 
 .foot {
+  flex: none;
   margin-top: auto;
   font-family: var(--font-mono);
   font-size: var(--fs-11);
@@ -120,10 +130,8 @@
 .child {
   position: absolute;
   display: flex;
-  flex-wrap: wrap;
-  place-content: flex-start space-between;
-  align-items: baseline;
-  gap: 1px 6px;
+  flex-direction: column;
+  gap: 4px;
   padding: 5px 7px;
   border-radius: var(--r-tile-child);
   overflow: hidden;
@@ -133,13 +141,39 @@
     box-shadow var(--dur-fast) var(--ease);
 }
 
+/* Niveaux 3 et 4 (profondeur adaptative) : un voile de plus par niveau, pour voir leurs bords. */
+.child[data-level="3"] {
+  background:
+    linear-gradient(var(--tile-veil), var(--tile-veil)),
+    linear-gradient(var(--tile-veil), var(--tile-veil)),
+    var(--tile-bg);
+}
+
+.child[data-level="4"] {
+  background:
+    linear-gradient(var(--tile-veil), var(--tile-veil)),
+    linear-gradient(var(--tile-veil), var(--tile-veil)),
+    linear-gradient(var(--tile-veil), var(--tile-veil)),
+    var(--tile-bg);
+}
+
+.child[data-level][data-hatch] {
+  background: var(--hatch), var(--tile-bg);
+}
+
 .child[data-tiny] {
   border-radius: var(--r-tile-tiny);
 }
 
+/* Sous-tuile qui montre ses propres enfants (profondeur adaptative) : le voile s'ajoute à
+   chaque niveau. */
+.child[data-group] {
+  padding: 5px 6px 6px;
+}
+
 .childName {
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -149,6 +183,7 @@
 }
 
 .childSize {
+  flex: none;
   font-family: var(--font-mono);
   font-size: var(--fs-10-5);
   color: var(--text-4);
@@ -165,6 +200,38 @@
 .tile[data-deep] .delta,
 .child[data-deep] .delta {
   color: var(--text-1);
+}
+
+/* « Étendre » : au survol d'une tuile qui a des enfants, en haut à droite. */
+.expand {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  right: 4px;
+  display: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-ghost);
+  background: var(--bg-container);
+  color: var(--text-2);
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: zoom-in;
+}
+
+.expand:hover {
+  color: var(--text-1);
+}
+
+/* Seulement sur la tuile survolée la plus profonde, dont l'en-tête lui laisse la place. */
+.tile[data-hover] > .expand,
+.child[data-hover] > .expand {
+  display: grid;
+}
+
+.tile[data-hover] > .head,
+.child[data-hover] > .childHead {
+  padding-right: 20px;
 }
 
 .empty {

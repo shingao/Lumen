@@ -42,6 +42,7 @@ pub fn run() {
             scanning::scan_cancel,
             scanning::scan_summary,
             scanning::scan_tree,
+            scanning::scan_find,
             scanning::recommendations,
             scanning::recommendation_detail,
             scanning::rule_kpis,

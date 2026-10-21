@@ -106,7 +106,8 @@ Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `co
 - **Le scan ne modifie jamais la date de dernier accès** (base des fichiers dormants) : fichiers ouverts en `FILE_READ_ATTRIBUTES` seulement, dossiers listés avec la date gelée (`SetFileTime` à `0xFFFFFFFF`), racines résolues sans lister les parents. Test `scan_sans_toucher_au_dernier_acces`.
 - MFT de forme non gérée (`ScanError::MftUnsupported`) : bascule automatique sur le parcours, signalée dans l'interface.
 - Parcours et MFT doivent donner les mêmes totaux : même classement (`scan/src/classify.rs`), test Windows `mft_identique_au_parcours`.
-- Le front ne reçoit que des tranches agrégées (`Scan::slice`) ; jamais d'UAC au démarrage ; MFT seulement si déjà élevé ou après « Scan rapide (admin) ».
+- Le front ne reçoit que des tranches agrégées (`Scan::slice_adaptive` : enfants et petits-enfants, puis jusqu'à 4 niveaux sous les dossiers d'au moins 1 % de la vue ; un regroupement « autres » garde ses membres pour son statut) ; jamais d'UAC au démarrage ; MFT seulement si déjà élevé ou après « Scan rapide (admin) ».
+- Navigation de l'Explorer : `src/app/navigation.ts` (historique précédent / suivant par chemin, `scan_find`) ; tout zoom passe par `goTo`, tout changement de disque par `goToTarget`.
 
 ## Règles (`src-tauri/rules/`)
 
@@ -114,6 +115,7 @@ Dépendances : `core/` ne dépend de rien ; `features/` → `core/`, `ipc/`, `co
 - « Sans risque » = uniquement des données **régénérables** (`regenerated-by` obligatoire). `rules/sans-risque.txt` est généré par un test et relu à chaque changement (`LUMEN_UPDATE_RULE_LISTS=1 cargo test -p rules`). Un « À vérifier » n'est jamais coché par défaut.
 - Le moteur ne couvre jamais un élément de la denylist (vérifié pour chaque élément et son contenu), donc jamais un secret ; une règle vise un sous-dossier de cache explicite, jamais la racine d'un dossier d'outil (test) ; rien dans Téléchargements ; règles « commande » = mesure seulement ; un élément = une seule règle (la première du fichier).
 - Plus aucune catégorie devinée par nom côté front : catégories, statuts et gains viennent du moteur.
+- `screen = "games"` : règle proposée seulement dans l'onglet Jeux (jalon 8) ; sur l'écran Analyse, statut et couleur dans la treemap, sans gain, ni recommandation, ni KPI (shaders de jeux).
 - `.git` lu sans lancer git (`git.rs`), fichiers lus à date de dernier accès gelée (`fsread.rs`).
 
 ## Commandes

@@ -34,7 +34,7 @@ describe("Nettoyage", () => {
 
   it("la confirmation montre total, nombre, méthode, disque et le bouton porte le total", async () => {
     render(<CleanDialog />);
-    act(() => openCleanup(["d3d", "gradle"]));
+    act(() => openCleanup(["temp", "gradle"]));
     const go = await screen.findByRole("button", { name: /à la Corbeille/ });
     expect(text(go)).toMatch(/^Mettre \d+,\d Go à la Corbeille$/);
     const dialog = screen.getByRole("dialog");
@@ -47,7 +47,7 @@ describe("Nettoyage", () => {
 
   it("exécution : avancement puis bilan, entrée au journal, restauration", async () => {
     render(<CleanDialog />);
-    act(() => openCleanup(["d3d"]));
+    act(() => openCleanup(["temp"]));
     fireEvent.click(await screen.findByRole("button", { name: /à la Corbeille/ }));
     expect(await screen.findByText("Nettoyage en cours")).toBeTruthy();
     expect(await screen.findByText("Nettoyage terminé", undefined, { timeout: 3000 })).toBeTruthy();
@@ -56,7 +56,7 @@ describe("Nettoyage", () => {
     expect(useStore.getState().screen).toBe("journal");
 
     render(<JournalScreen />);
-    fireEvent.click(await screen.findByRole("button", { expanded: false, name: /Cache de shaders DirectX/ }));
+    fireEvent.click(await screen.findByRole("button", { expanded: false, name: /Fichiers temporaires/ }));
     const restore = await screen.findAllByRole("button", { name: "Restaurer depuis la Corbeille" });
     fireEvent.click(restore[0] as HTMLElement);
     await waitFor(() => expect(screen.getAllByText("restauré").length).toBe(1));

@@ -223,7 +223,8 @@ impl Applied {
             _ => "keep",
         };
         let category = a.category.get(i).and_then(|&c| rules::Category::ALL.get(c as usize)).map_or("tools", |c| c.as_str());
-        let reco = a.reco_of.get(i).copied().filter(|&r| r != u16::MAX).map(usize::from);
+        // Règle d'un autre onglet (Jeux, jalon 8) : couleur et statut seulement, pas de lien.
+        let reco = a.reco_of.get(i).copied().filter(|&r| r != u16::MAX).map(usize::from).filter(|&r| self.on_analyse(r));
         let (safe, review) = (a.gain_safe.get(i).copied().unwrap_or(0), a.gain_review.get(i).copied().unwrap_or(0));
         let gain_status = if safe > 0 {
             Some("safe")
@@ -233,6 +234,47 @@ impl Applied {
             None
         };
         NodeView { status, category, reco, gain: safe + review, gain_status }
+    }
+
+    /// Vue d'un regroupement « autres » : statut et catégorie majoritaires (en octets) de ce qu'il
+    /// regroupe, gains additionnés, recommandation commune s'il n'y en a qu'une.
+    pub fn aggregate(&self, scan: &Scan, members: &[NodeId]) -> NodeView {
+        let a = &self.analysis;
+        let mut status: Vec<(&'static str, u64)> = Vec::new();
+        let mut category: Vec<(&'static str, u64)> = Vec::new();
+        let (mut safe, mut review) = (0u64, 0u64);
+        let mut reco: Option<Option<usize>> = None;
+        let add = |list: &mut Vec<(&'static str, u64)>, key: &'static str, size: u64| match list.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, n)) => *n += size,
+            None => list.push((key, size)),
+        };
+        for &m in members {
+            let v = self.node(m);
+            let size = scan.node(m).map_or(0, |n| if n.flags & scan::model::F_HARDLINK_DUP != 0 { 0 } else { n.allocated });
+            add(&mut status, v.status, size);
+            add(&mut category, v.category, size);
+            safe += a.gain_safe.get(m as usize).copied().unwrap_or(0);
+            review += a.gain_review.get(m as usize).copied().unwrap_or(0);
+            reco = match reco {
+                None => Some(v.reco),
+                Some(r) if r == v.reco => Some(r),
+                Some(_) => Some(None),
+            };
+        }
+        let top = |list: &[(&'static str, u64)], default: &'static str| list.iter().max_by_key(|(_, n)| *n).map_or(default, |(k, _)| *k);
+        let gain_status = if safe > 0 {
+            Some("safe")
+        } else if review > 0 {
+            Some("review")
+        } else {
+            None
+        };
+        NodeView { status: top(&status, "keep"), category: top(&category, "tools"), reco: reco.flatten(), gain: safe + review, gain_status }
+    }
+
+    /// La recommandation `idx` est-elle proposée sur l'écran Analyse ? (sinon : onglet Jeux.)
+    pub(crate) fn on_analyse(&self, idx: usize) -> bool {
+        self.set().zip(self.analysis.recos.get(idx)).is_some_and(|(s, r)| s.rules[r.rule].screen == rules::schema::Screen::Analyse)
     }
 
     /// Identifiant (règle) de la recommandation `idx`.
@@ -287,7 +329,7 @@ impl Applied {
 
     /// Recommandations : sans risque d'abord, puis à vérifier, chacune de la plus grosse à la plus petite.
     pub fn recommendations(&self, scan: &Scan) -> Vec<RecoDto> {
-        let mut out: Vec<RecoDto> = (0..self.analysis.recos.len()).filter_map(|i| self.reco_dto(scan, i)).collect();
+        let mut out: Vec<RecoDto> = (0..self.analysis.recos.len()).filter(|&i| self.on_analyse(i)).filter_map(|i| self.reco_dto(scan, i)).collect();
         out.sort_by(|a, b| (a.status != "safe").cmp(&(b.status != "safe")).then(b.size.cmp(&a.size)));
         out
     }
@@ -341,7 +383,7 @@ impl Applied {
     pub fn kpis(&self) -> RuleKpisDto {
         let mut k = RuleKpisDto { safe_bytes: 0, safe_count: 0, review_bytes: 0, review_count: 0 };
         let Some(set) = self.set() else { return k };
-        for r in &self.analysis.recos {
+        for r in self.analysis.recos.iter().filter(|r| set.rules[r.rule].screen == rules::schema::Screen::Analyse) {
             if set.rules[r.rule].status == Status::Safe {
                 k.safe_bytes += r.allocated;
                 k.safe_count += 1;
@@ -371,7 +413,7 @@ pub(crate) mod tests {
         RawEntry { name: name.into(), kind, attributes: 0, file_id: 0, logical: size, allocated: size, modified: 1, accessed: 1 }
     }
 
-    /// Profil analysé : un cache npm (commande officielle) et un cache de shaders (suppression).
+    /// Profil analysé : un cache npm (commande officielle) et un cache de shaders (onglet Jeux).
     pub(crate) fn applied() -> (Applied, Scan) {
         let mut b = Builder::new(&e("Arthur", Kind::Dir, 0));
         let appdata = b.add_children(0, &[e("AppData", Kind::Dir, 0)]).start;
@@ -403,25 +445,26 @@ pub(crate) mod tests {
         let (a, scan) = applied();
         let recos = a.recommendations(&scan);
         let ids: Vec<&str> = recos.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, ["cache-npm", "caches-shaders"], "sans risque, du plus gros au plus petit");
+        // Caches de shaders : onglet Jeux seulement (jalon 8), jamais sur l'écran Analyse.
+        assert_eq!(ids, ["cache-npm"]);
         assert_eq!(recos[0].path, "~\\AppData\\Local\\npm-cache");
         assert_eq!(recos[0].action, "command");
-        assert_eq!(recos[1].path, "~\\AppData\\Local\\D3DSCache\\…", "contenu : dossier commun");
-        assert_eq!(recos[1].size, 500);
         // Survol : éléments couverts et tous leurs parents (racine comprise).
-        assert!(recos[1].highlight.contains(&0) && recos[1].highlight.len() == 6, "{:?}", recos[1].highlight);
+        assert!(recos[0].highlight.contains(&0), "{:?}", recos[0].highlight);
         let k = a.kpis();
-        assert_eq!((k.safe_bytes, k.safe_count, k.review_count), (1500, 2, 0));
+        assert_eq!((k.safe_bytes, k.safe_count, k.review_count), (1000, 1, 0));
         let d = a.detail(&scan, "cache-npm").unwrap();
         assert_eq!(d.commands.iter().map(|c| c.line.as_str()).collect::<Vec<_>>(), ["npm cache clean --force", "npm cache verify"]);
         assert_eq!(d.file_list[0].path, "~\\AppData\\Local\\npm-cache\\");
         assert!(a.detail(&scan, "inconnue").is_none());
-        // Nœuds de la treemap : statut, catégorie, gain.
+        // Nœuds de la treemap : statut, catégorie, gain. Shaders : « À vérifier », Jeux, sans gain ni lien.
         let shaders = scan.find("AppData\\Local\\D3DSCache").unwrap();
         let v = a.node(shaders);
-        assert_eq!((v.status, v.gain, v.gain_status), ("keep", 500, Some("safe")), "le dossier reste, son contenu part");
+        assert_eq!((v.status, v.gain, v.gain_status), ("keep", 0, None), "le dossier reste ; aucun gain sur l'écran Analyse");
+        let bin = a.node(scan.find("AppData\\Local\\D3DSCache\\a.bin").unwrap());
+        assert_eq!((bin.status, bin.category, bin.reco, bin.gain), ("review", "games", None, 0));
         let npm = a.node(scan.find("AppData\\Local\\npm-cache").unwrap());
         assert_eq!((npm.status, npm.category), ("safe", "packages"));
-        assert_eq!(a.node(0).gain, 1500);
+        assert_eq!(a.node(0).gain, 1000);
     }
 }

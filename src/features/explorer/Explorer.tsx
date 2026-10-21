@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { copyText } from "../../app/clipboard";
 import { useRecommendations, useTree, useVolumes } from "../../app/data";
+import { goBack, goForward, goTo, goToTarget, setHere, useNav } from "../../app/navigation";
 import { startScan } from "../../app/scanning";
 import { type ColorMode, useStore } from "../../app/store";
 import { Button } from "../../components/Button";
-import { ChevronDownIcon } from "../../components/icons";
+import { ArrowLeftIcon, ArrowRightIcon, ChevronDownIcon } from "../../components/icons";
 import { Menu, type MenuItem } from "../../components/Menu";
 import { Segmented } from "../../components/Segmented";
 import { formatBytes } from "../../core/format";
@@ -33,7 +34,9 @@ export function Explorer() {
   const elevated = useStore((s) => s.appInfo?.elevated ?? false);
   const fastScanAvailable = useStore((s) => s.appInfo?.fastScanAvailable ?? false);
   const node = useStore((s) => s.node);
-  const zoom = useStore((s) => s.zoom);
+  const scanId = useStore((s) => s.scan.summary?.scanId ?? null);
+  const back = useNav((s) => s.back.at(-1) ?? null);
+  const forward = useNav((s) => s.forward.at(-1) ?? null);
   const colorMode = useStore((s) => s.colorMode);
   const setColorMode = useStore((s) => s.setColorMode);
   const hoverReco = useStore((s) => s.hoverReco);
@@ -44,6 +47,13 @@ export function Explorer() {
   const volumes = useVolumes();
   const [driveMenu, setDriveMenu] = useState<{ x: number; y: number } | null>(null);
   const [fastAnchor, setFastAnchor] = useState<{ x: number; y: number } | null>(null);
+
+  // Emplacement affiché, pour l'historique (libellé et chemin du dossier, valables d'une analyse à l'autre).
+  useEffect(() => {
+    if (!tree) return;
+    const label = tree.breadcrumb.at(-1)?.label ?? tree.root.name;
+    setHere({ target, scanId, node, path: node === null ? null : tree.root.path, label });
+  }, [tree, target, scanId, node]);
 
   const focus = hoverReco ?? openReco;
   const highlight = useMemo(() => recos?.find((r) => r.id === focus)?.highlight ?? null, [recos, focus]);
@@ -67,12 +77,12 @@ export function Explorer() {
   const canFastScan = !elevated && fastScanAvailable && (targetVolume?.mftCapable ?? false);
 
   const targetItems: MenuItem[] = [
-    { label: t("explorer.target.user"), onSelect: () => void startScan({ kind: "userProfile" }) },
+    { label: t("explorer.target.user"), onSelect: () => goToTarget({ kind: "userProfile" }) },
     ...(volumes ?? []).map((v, i) => ({
       label: t("explorer.target.volume", { letter: v.letter, label: v.label || t(`explorer.volumeKind.${v.kind}`) }),
       hint: t("explorer.driveFree", { free: formatBytes(v.free, t.locale), total: formatBytes(v.total, t.locale) }),
       separatorBefore: i === 0,
-      onSelect: () => void startScan({ kind: "volume", letter: v.letter }),
+      onSelect: () => goToTarget({ kind: "volume", letter: v.letter }),
     })),
   ];
 
@@ -87,6 +97,28 @@ export function Explorer() {
       </div>
 
       <div className={styles.crumbBar}>
+        <div className={styles.history}>
+          <button
+            type="button"
+            className={styles.historyButton}
+            disabled={!back}
+            aria-label={back ? t("explorer.back.to", { name: back.label }) : t("explorer.back")}
+            title={back ? t("explorer.back.to", { name: back.label }) : t("explorer.back")}
+            onClick={goBack}
+          >
+            <ArrowLeftIcon />
+          </button>
+          <button
+            type="button"
+            className={styles.historyButton}
+            disabled={!forward}
+            aria-label={forward ? t("explorer.forward.to", { name: forward.label }) : t("explorer.forward")}
+            title={forward ? t("explorer.forward.to", { name: forward.label }) : t("explorer.forward")}
+            onClick={goForward}
+          >
+            <ArrowRightIcon />
+          </button>
+        </div>
         <nav aria-label={t("explorer.breadcrumb")} className={styles.crumbs}>
           <button
             type="button"
@@ -110,7 +142,7 @@ export function Explorer() {
                   \
                 </span>
                 {c.id !== null && !last ? (
-                  <button type="button" className={styles.crumbLink} onClick={() => zoom(c.id === rootCrumb ? null : c.id)}>
+                  <button type="button" className={styles.crumbLink} onClick={() => goTo(c.id === rootCrumb ? null : c.id)}>
                     {c.label}
                   </button>
                 ) : (

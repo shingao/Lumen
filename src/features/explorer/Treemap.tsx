@@ -1,9 +1,12 @@
 import { type CSSProperties, useCallback, useMemo, useState } from "react";
+import { goTo } from "../../app/navigation";
 import { useStore } from "../../app/store";
 import { useSize } from "../../app/useSize";
 import { Menu, type MenuItem } from "../../components/Menu";
 import { StatusDot } from "../../components/StatusDot";
+import { ExpandIcon } from "../../components/icons";
 import { formatBytes, formatCount, formatDelta, formatRelative } from "../../core/format";
+import { nests, SIZE_MIN_W } from "../../core/treemap/depth";
 import { squarify } from "../../core/treemap/squarify";
 import { type Translator, useT } from "../../i18n";
 import type { NodeId, TreeNode } from "../../ipc/types";
@@ -54,10 +57,20 @@ function isDimmed(id: NodeId, parent: NodeId | null, keep: readonly NodeId[] | n
   return true;
 }
 
+/** Toutes les tuiles de la tranche, à tous les niveaux, avec leur parent. */
+function indexOf(root: TreeNode): Map<NodeId, { node: TreeNode; parent: NodeId | null }> {
+  const map = new Map<NodeId, { node: TreeNode; parent: NodeId | null }>();
+  const walk = (n: TreeNode, parent: NodeId | null) => {
+    map.set(n.id, { node: n, parent });
+    for (const c of n.children) walk(c, n.id);
+  };
+  for (const c of root.children) walk(c, null);
+  return map;
+}
+
 export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
   const t = useT();
   const mode = useStore((s) => s.colorMode);
-  const zoom = useStore((s) => s.zoom);
   const setOpenReco = useStore((s) => s.setOpenReco);
   const checked = useStore((s) => s.checked);
   const toggleChecked = useStore((s) => s.toggleChecked);
@@ -66,14 +79,7 @@ export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
   const [menu, setMenu] = useState<{ node: TreeNode; x: number; y: number } | null>(null);
   const [now] = useState(() => Date.now());
 
-  const index = useMemo(() => {
-    const map = new Map<NodeId, { node: TreeNode; parent: NodeId | null }>();
-    for (const c of root.children) {
-      map.set(c.id, { node: c, parent: null });
-      for (const g of c.children) map.set(g.id, { node: g, parent: c.id });
-    }
-    return map;
-  }, [root]);
+  const index = useMemo(() => indexOf(root), [root]);
 
   const tiles = useMemo(
     () => squarify(root.children, area, { x: 0, y: 0, w: size.width, h: size.height }, GAP),
@@ -82,10 +88,10 @@ export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
 
   const activate = useCallback(
     (node: TreeNode) => {
-      if (node.hasChildren) zoom(node.id);
+      if (node.hasChildren) goTo(node.id);
       else if (node.reco) setOpenReco(node.reco);
     },
-    [zoom, setOpenReco],
+    [setOpenReco],
   );
 
   const openMenu = (node: TreeNode, x: number, y: number) => {
@@ -176,11 +182,34 @@ interface TileProps {
   onMenu(node: TreeNode, x: number, y: number): void;
 }
 
+/** « Étendre » : zoom direct sur ce dossier (au survol ; au clavier, Entrée sur la tuile). */
+function Expand({ node, t }: { node: TreeNode; t: Translator }) {
+  if (!node.hasChildren || node.othersCount !== null) return null;
+  const name = t("explorer.expand", { name: label(node, t) });
+  return (
+    <span
+      aria-hidden="true"
+      className={styles.expand}
+      title={name}
+      data-expand={node.id}
+      onClick={(e) => {
+        e.stopPropagation();
+        goTo(node.id);
+      }}
+    >
+      <ExpandIcon />
+    </span>
+  );
+}
+
 function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, onActivate, onMenu }: TileProps) {
   const fill = tileFill(node, mode, now);
   const delta = deltaText(node, t);
   const small = width < 96 || height < 64;
   const size = formatBytes(node.size, t.locale);
+  // Hauteurs sur une ligne (en-tête, taille) : la taille en bas n'est jamais rognée.
+  const showHead = width >= 36 && height >= 22;
+  const showFoot = width >= 36 && height >= (small ? 44 : 52);
   return (
     <div
       data-node={node.id}
@@ -212,7 +241,8 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
         onMenu(node, e.clientX, e.clientY);
       }}
     >
-      {width >= 36 && height >= 22 && (
+      {width >= 40 && height >= 30 && <Expand node={node} t={t} />}
+      {showHead && (
         <div className={styles.head}>
           <span className={styles.name}>{label(node, t)}</span>
           {delta && (
@@ -223,16 +253,19 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
         </div>
       )}
       {node.children.length > 0 && height >= 72 && width >= 48 && (
-        <Children node={node} hoverId={hoverId} highlight={highlight} now={now} mode={mode} t={t} onActivate={onActivate} onMenu={onMenu} />
+        <Children node={node} level={1} hoverId={hoverId} highlight={highlight} now={now} mode={mode} t={t} onActivate={onActivate} onMenu={onMenu} />
       )}
-      {height >= 48 && width >= 36 && <span className={styles.foot}>{size}</span>}
+      {showFoot && <span className={styles.foot}>{size}</span>}
     </div>
   );
 }
 
-type ChildrenProps = Omit<TileProps, "style" | "width" | "height">;
+type ChildrenProps = Omit<TileProps, "style" | "width" | "height"> & {
+  /** Niveau de `node` (1 : tuile du premier niveau). */
+  level: number;
+};
 
-function Children({ node, hoverId, highlight, now, mode, t, onActivate, onMenu }: ChildrenProps) {
+function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, onMenu }: ChildrenProps) {
   const [ref, size] = useSize<HTMLDivElement>();
   const placed = useMemo(
     () => squarify(childItems(node), area, { x: 0, y: 0, w: size.width, h: size.height }, GAP),
@@ -245,11 +278,15 @@ function Children({ node, hoverId, highlight, now, mode, t, onActivate, onMenu }
         const fill = tileFill(item, mode, now);
         const delta = deltaText(item, t);
         const showLabel = rect.w >= 34 && rect.h >= 18;
+        // Profondeur adaptative : une sous-tuile assez grande montre ses propres enfants.
+        const group = nests(item.children.length, level + 1, rect.w, rect.h);
         return (
           <div
             key={item.id}
             data-node={item.id}
             className={styles.child}
+            data-group={group || undefined}
+            data-level={level + 1}
             data-tiny={rect.w < 24 || rect.h < 24 || undefined}
             data-hatch={fill.hatch || undefined}
             data-deep={fill.deep || undefined}
@@ -267,17 +304,31 @@ function Children({ node, hoverId, highlight, now, mode, t, onActivate, onMenu }
               onMenu(item, e.clientX, e.clientY);
             }}
           >
+            {rect.w >= 40 && rect.h >= 24 && <Expand node={item} t={t} />}
             {showLabel && (
-              <>
+              <div className={styles.childHead}>
                 <span className={styles.childName}>{label(item, t)}</span>
                 {delta ? (
                   <span className={styles.delta} data-status={item.gainStatus}>
                     {delta}
                   </span>
                 ) : (
-                  <span className={styles.childSize}>{formatBytes(item.size, t.locale)}</span>
+                  rect.w >= SIZE_MIN_W && <span className={styles.childSize}>{formatBytes(item.size, t.locale)}</span>
                 )}
-              </>
+              </div>
+            )}
+            {group && (
+              <Children
+                node={item}
+                level={level + 1}
+                hoverId={hoverId}
+                highlight={highlight}
+                now={now}
+                mode={mode}
+                t={t}
+                onActivate={onActivate}
+                onMenu={onMenu}
+              />
             )}
           </div>
         );

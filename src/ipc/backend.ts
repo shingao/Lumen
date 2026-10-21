@@ -40,6 +40,8 @@ export interface Backend {
   onScanEvent(listener: (event: ScanEvent) => void): () => void;
   /** Deux niveaux agrégés sous `node` (racine analysée si null). */
   tree(scanId: number, node: NodeId | null): Promise<TreeSlice>;
+  /** Nœud d'un chemin complet dans l'analyse (historique : les identifiants changent d'une analyse à l'autre). */
+  findNode(scanId: number, path: string): Promise<NodeId | null>;
   kpis(target: ScanTarget, summary: ScanSummary | null): Promise<Kpis>;
   recommendations(scanId: number): Promise<Recommendation[]>;
   recommendation(id: string): Promise<RecommendationDetail>;
