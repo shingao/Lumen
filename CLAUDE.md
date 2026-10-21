@@ -135,6 +135,7 @@ npm run icon             # icônes depuis design/app-icon.svg
 node scripts/check-safety-tests.mjs   # tests de safety/ : présents, exécutés, aucun ignoré (tous sous Windows)
 cd src-tauri && LUMEN_UPDATE_RULE_LISTS=1 cargo test -p rules   # régénère rules/sans-risque.txt après un changement de règle « Sans risque »
 cd src-tauri && cargo run --release -p scan --example bench -- generate <dossier> 200000   # puis walk <dossier>, mft <dossier>
+# Banc d'essai en CI : job `bench`, seulement sur main après merge ou par Actions › Windows › Run workflow (résultats dans le résumé du run)
 cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo audit
 cd src-tauri && cargo clippy -p safety --target x86_64-pc-windows-msvc --all-targets   # depuis Linux : vérifie safety::win (blake3 en feature « pure » le temps de la commande)
 ```

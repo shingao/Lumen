@@ -10,7 +10,7 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 4 | Moteur de règles, recommandations et KPI calculés | **fait — validé** (PR #2 mergée) |
 | 5 | Scripts, copie, exécution (simulation, confirmation, journal) | **fait — validé** (PR #3 mergée, testé en Sandbox) |
 | 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | **fait — validé en lecture seule** (PR #4 mergée) ; nettoyage réel **non vérifié en réel** (Sandbox), gouffres système **non vérifiés en réel** (VM) et désactivés par défaut |
-| 7 | Snapshots et Timeline | **fait — à tester** (PR #5) |
+| 7 | Snapshots et Timeline | **fait — validé** (testé sur PC ; PR #5) |
 | 8 | Dev et Jeux | à faire |
 | 9 | Déplacement intelligent, recherche instantanée, export de rapport | à faire |
 | 10 | Onboarding et astuces contextuelles | à faire |
@@ -41,6 +41,7 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 - **Seuil des snapshots à 1 Mio** (et non 50 Mo comme dans le plan) avec un plafond de 5 000 dossiers : la comparaison voit les dossiers moyens ; « nouveau » peut aussi vouloir dire « passé au-dessus du seuil », ce que l'écran dit sous la comparaison. Taille typique : 50 à 150 Ko par snapshot.
 - **Variation sur 7 jours** = dernier snapshot moins le dernier pris il y a au moins 7 jours (pas de valeur tant que l'historique est plus court).
 - **Snapshot quotidien = une analyse complète en arrière-plan** (parcours, ou MFT seulement si l'appli est déjà élevée) : c'est le seul moyen d'avoir des tailles par dossier exactes ; elle cède la place à toute analyse de l'utilisateur.
+- **CI : banc d'essai du scanner hors du chemin bloquant** (demande à la validation) : il prenait de 10 à 40 min selon le runner. Job `bench` à part, lancé seulement sur `main` après merge et à la main (`workflow_dispatch`), résultats dans le résumé du run ; les tests fonctionnels du scanner (job `scan`) restent bloquants sur chaque PR.
 - Comparer avec une autre série reste possible dans la liste (« Autres séries (non comparables) ») pour que le refus soit visible et expliqué plutôt que caché.
 
 ### Écarts avec la maquette
