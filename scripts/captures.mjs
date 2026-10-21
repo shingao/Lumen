@@ -177,5 +177,51 @@ await shot("26-historique-apres-etendre", {
     await p.getByRole("button", { name: "Précédent : Arthur" }).hover();
   },
 });
+// Jalon 7 : Timeline (courbe, repères des nettoyages, projection, comparaison), base dans les Paramètres.
+const timeline = async (p, range = "3 mois") => {
+  await p.getByRole("button", { name: "Timeline", exact: true }).click();
+  await p.getByRole("combobox", { name: "Série" }).waitFor();
+  await p.getByRole("button", { name: range }).click();
+};
+const compare = async (p) => {
+  await p.getByRole("button", { name: "Comparer", exact: true }).click();
+  await p.getByRole("region", { name: "Ont grossi" }).waitFor();
+};
+await shot("27-timeline-clair", { height: 1300, act: async (p) => {
+  await timeline(p);
+  await compare(p);
+} });
+await shot("28-timeline-sombre-1920", { theme: "dark", width: 1920, height: 1300, act: async (p) => {
+  await timeline(p, "Tout");
+  await compare(p);
+  const box = await p.locator("svg[role=img]").boundingBox();
+  if (box) await p.mouse.move(box.x + box.width * 0.62, box.y + box.height / 2);
+} });
+await shot("29-timeline-non-comparable", { act: async (p) => {
+  await timeline(p);
+  const to = p.getByRole("combobox", { name: "Au" });
+  const value = await to.locator("option", { hasText: "MFT" }).first().getAttribute("value");
+  if (value) await to.selectOption(value);
+  await p.getByRole("button", { name: "Comparer", exact: true }).click();
+  await p.getByText(/Lumen n'affiche pas de faux delta/).waitFor();
+} });
+await shot("30-timeline-cle-usb", { act: async (p) => {
+  await timeline(p, "Tout");
+  const select = p.getByRole("combobox", { name: "Série" });
+  const value = await select.locator("option", { hasText: "Photos" }).first().getAttribute("value");
+  if (value) await select.selectOption(value);
+  await p.getByText(/Lumen le suit par son identifiant/).waitFor();
+} });
+await shot("31-parametres-base", { act: async (p) => {
+  await p.getByRole("button", { name: "Paramètres" }).click();
+  await p.getByRole("button", { name: "Purger…" }).click();
+} });
+await shot("32-timeline-anglais", { locale: "en-US", height: 1300, act: async (p) => {
+  await p.getByRole("button", { name: "Timeline", exact: true }).click();
+  await p.getByRole("combobox", { name: "Series" }).waitFor();
+  await p.getByRole("button", { name: "3 months" }).click();
+  await p.getByRole("button", { name: "Compare", exact: true }).click();
+  await p.getByRole("region", { name: "Grew" }).waitFor();
+} });
 await browser.close();
 console.log(`captures dans ${out}`);

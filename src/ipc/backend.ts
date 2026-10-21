@@ -25,7 +25,13 @@ import type {
   ScanTarget,
   SearchHit,
   Settings,
+  SeriesKey,
   SystemSinks,
+  DailyStatus,
+  DatabaseInfo,
+  TimelineCompare,
+  TimelineData,
+  TimelineSeries,
   TreeSlice,
   Volume,
 } from "./types";
@@ -73,6 +79,19 @@ export interface Backend {
   /** « Restaurer depuis la Corbeille » d'un élément du journal. */
   restore(itemId: number): Promise<void>;
   search(query: string, limit: number): Promise<SearchHit[]>;
+  /** Séries de snapshots (une par volume, racine et méthode), la plus récente d'abord. */
+  timelineSeries(): Promise<TimelineSeries[]>;
+  timeline(series: SeriesKey): Promise<TimelineData>;
+  /** Variation de l'espace utilisé sur 7 jours pour une cible (null : pas assez d'historique). */
+  timelineTrend(target: ScanTarget): Promise<number | null>;
+  /** Différence entre deux snapshots ; jamais de faux delta entre deux séries différentes. */
+  timelineCompare(from: number, to: number): Promise<TimelineCompare>;
+  /** Snapshot quotidien : appelé à intervalles réguliers tant que l'appli tourne. */
+  timelineDaily(enabled: boolean): Promise<DailyStatus>;
+  onTimelineChanged(listener: () => void): () => void;
+  database(): Promise<DatabaseInfo>;
+  /** Supprime tous les snapshots (le journal des nettoyages est gardé). */
+  purgeSnapshots(): Promise<DatabaseInfo>;
   settings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
 }

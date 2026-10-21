@@ -118,6 +118,7 @@ fn snapshot_quotidien_du_bon_dossier() {
         first: last,
         last,
         last_scan,
+        last_id: 0,
     };
     let all = [
         // Snapshot de moins de 20 h : pas encore dû.

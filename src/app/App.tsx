@@ -7,15 +7,22 @@ import { AnalyseScreen } from "../features/screens/AnalyseScreen";
 import { CleanDialog } from "../features/cleanup/CleanDialog";
 import { JournalScreen } from "../features/journal/JournalScreen";
 import { CleanupScreen } from "../features/advanced/CleanupScreen";
-import { DevScreen, GamesScreen, TimelineScreen } from "../features/screens/OtherScreens";
+import { DevScreen, GamesScreen } from "../features/screens/OtherScreens";
+import { TimelineScreen } from "../features/timeline/TimelineScreen";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { TitleBar } from "../features/titlebar/TitleBar";
 import { screenLabel } from "./commands";
+import { backend } from "../ipc/client";
 import { goBack, goForward } from "./navigation";
+import { dailyTick, loadTimeline, useTimeline } from "./timeline";
 import { matchShortcut, navigationButton, navigationKey } from "./shortcuts";
 import { SCREENS, type Screen, useStore } from "./store";
 import { toggleTheme } from "./theme";
 import styles from "./App.module.css";
+
+/** Premier snapshot quotidien demandé une minute après le démarrage, puis toutes les 30 min. */
+const DAILY_FIRST_MS = 60_000;
+const DAILY_EVERY_MS = 30 * 60_000;
 
 const VIEWS: Record<Screen, () => JSX.Element> = {
   analyse: AnalyseScreen,
@@ -67,6 +74,20 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("mouseup", onMouse);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Snapshot quotidien seulement tant que l'appli tourne : ni service, ni tâche planifiée.
+    const first = window.setTimeout(() => void dailyTick(), DAILY_FIRST_MS);
+    const every = window.setInterval(() => void dailyTick(), DAILY_EVERY_MS);
+    const off = backend.onTimelineChanged(() => {
+      if (useTimeline.getState().series.status !== "idle") void loadTimeline();
+    });
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(every);
+      off();
     };
   }, []);
 

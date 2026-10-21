@@ -146,6 +146,7 @@ pub struct SeriesDto {
     pub count: u64,
     pub first: i64,
     pub last: i64,
+    pub last_id: i64,
 }
 
 fn profile_root() -> Option<(String, String)> {
@@ -168,6 +169,7 @@ fn series_dto(s: &Series, present: &[Present], profile: Option<&(String, String)
         count: s.count,
         first: s.first,
         last: s.last,
+        last_id: s.last_id,
     }
 }
 

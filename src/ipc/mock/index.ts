@@ -27,6 +27,7 @@ import type {
 } from "../types";
 import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
+import { createMockTimeline } from "./timeline";
 import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockNoProtection, mockProgram, mockRestorePoints, mockSinks } from "./advanced";
 
 const SETTINGS_KEY = "lumen-dev-settings";
@@ -112,6 +113,7 @@ function writeSettings(s: Settings): void {
 export function createMockBackend(now: () => number = Date.now): Backend {
   let locale: Locale = "fr";
   let settings = readSettings();
+  const timeline = createMockTimeline(now);
   const l = (v: L10n | string) => (typeof v === "string" ? v : v[locale]);
 
   const treeOf = (volume: string): VolumeTree => TREES[volume] ?? (TREES["C:"] as VolumeTree);
@@ -345,7 +347,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         reviewBytes: gb(sum("review")),
         reviewCount: count("review"),
         unanalyzed: gb(volume === "C:" ? KPI.unanalyzed : 0),
-        trend7d: gb(volume === "C:" ? KPI.trend7d : 2.4),
+        trend7d: timeline.trend(target) ?? 0,
       };
       return resolved(k);
     },
@@ -615,6 +617,20 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       return () => dupListeners.delete(listener);
     },
 
+    timelineSeries: () => resolved(timeline.series()),
+    timeline: (series) => resolved(timeline.data(series)),
+    timelineTrend: (target) => resolved(timeline.trend(target)),
+    timelineCompare(from, to) {
+      try {
+        return resolved(timeline.compare(from, to));
+      } catch (e) {
+        return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    },
+    timelineDaily: (enabled) => resolved(timeline.daily(enabled)),
+    onTimelineChanged: (listener) => timeline.onChanged(listener),
+    database: () => resolved(timeline.database()),
+    purgeSnapshots: () => resolved(timeline.purge()),
     systemSinks: () => resolved(mockSinks()),
     readRestorePoints: () => resolved(mockRestorePoints(now())),
     openSystemProtection: () => resolved(undefined),

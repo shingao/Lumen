@@ -1,13 +1,15 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useStore } from "../../app/store";
 import { updateSettings } from "../../app/theme";
+import { dailyTick } from "../../app/timeline";
+import { backend } from "../../ipc/client";
 import { Button } from "../../components/Button";
 import { ChevronLeftIcon } from "../../components/icons";
 import { Segmented } from "../../components/Segmented";
 import { Toggle } from "../../components/Toggle";
-import { formatPercent } from "../../core/format";
+import { formatBytes, formatCount, formatPercent } from "../../core/format";
 import { currentT, useT } from "../../i18n";
-import type { LanguagePref, Settings, ThemePref } from "../../ipc/types";
+import type { DatabaseInfo, LanguagePref, Settings, ThemePref } from "../../ipc/types";
 import pkg from "../../../package.json";
 import styles from "./SettingsScreen.module.css";
 
@@ -29,6 +31,55 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
       <h3 className={styles.groupTitle}>{title}</h3>
       <div className={styles.rows}>{children}</div>
     </section>
+  );
+}
+
+/** Historique de la Timeline : taille de la base, purge après confirmation. */
+function DatabaseRow() {
+  const t = useT();
+  const showToast = useStore((s) => s.showToast);
+  const [info, setInfo] = useState<DatabaseInfo | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    void backend.database().then(setInfo, () => setInfo(null));
+  }, []);
+  const purge = () =>
+    void backend.purgeSnapshots().then((i) => {
+      setInfo(i);
+      setConfirming(false);
+      showToast(currentT()("settings.databasePurged"));
+    });
+  const size = info
+    ? t("settings.databaseSize", {
+        size: formatBytes(info.bytes, t.locale),
+        snapshots: t.plural("timeline.snapshots", info.snapshots, { n: formatCount(info.snapshots, t.locale) }),
+        series: t.plural("settings.database.series", info.series, { n: info.series }),
+      })
+    : "";
+  return (
+    <div className={styles.row}>
+      <div className={styles.rowText}>
+        <span className={styles.rowLabel}>{t("settings.database")}</span>
+        {info && <span className={`${styles.rowHint} ${styles.mono}`}>{size}</span>}
+        <span className={styles.rowHint}>{t(confirming ? "settings.databasePurgeNote" : "settings.databaseHint")}</span>
+      </div>
+      <div className={styles.rowControl}>
+        {confirming ? (
+          <span className={styles.actions}>
+            <Button variant="link" onClick={() => setConfirming(false)}>
+              {t("settings.databasePurgeCancel")}
+            </Button>
+            <Button variant="primary" onClick={purge}>
+              {t("settings.databasePurgeConfirm")}
+            </Button>
+          </span>
+        ) : (
+          <Button variant="link" disabled={!info || info.snapshots === 0} onClick={() => setConfirming(true)}>
+            {t("settings.databasePurge")}
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -123,8 +174,9 @@ export function SettingsScreen() {
         <div className={styles.column}>
           <Group title={t("settings.background")}>
             <Row label={t("settings.snapshot")} hint={t("settings.snapshotHint")}>
-              <Toggle label={t("settings.snapshot")} checked={settings.dailySnapshot} onChange={(dailySnapshot) => set({ dailySnapshot })} />
+              <Toggle label={t("settings.snapshot")} checked={settings.dailySnapshot} onChange={(dailySnapshot) => void updateSettings({ dailySnapshot }).then(dailyTick)} />
             </Row>
+            <DatabaseRow />
             <Row label={t("settings.tray")} hint={t("settings.trayHint")}>
               <Toggle label={t("settings.tray")} checked={settings.trayIcon} onChange={(trayIcon) => set({ trayIcon })} />
             </Row>

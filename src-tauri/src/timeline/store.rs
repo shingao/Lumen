@@ -143,12 +143,15 @@ pub struct Series {
     pub last: i64,
     /// Dernier snapshot pris par une analyse de l'utilisateur.
     pub last_scan: Option<i64>,
+    /// Identifiant du snapshot le plus récent.
+    pub last_id: i64,
 }
 
 pub fn series(conn: &Connection) -> rusqlite::Result<Vec<Series>> {
     conn.prepare(
         "SELECT v.id, v.key, v.label, v.fs, v.letter, s.root, s.method, COUNT(*), MIN(s.taken_at), MAX(s.taken_at),
-                MAX(CASE WHEN s.source = 'scan' THEN s.taken_at END)
+                MAX(CASE WHEN s.source = 'scan' THEN s.taken_at END),
+                (SELECT l.id FROM snapshots l WHERE l.volume_id = s.volume_id AND l.root = s.root AND l.method = s.method ORDER BY l.taken_at DESC, l.id DESC LIMIT 1)
          FROM snapshots s JOIN volumes v ON v.id = s.volume_id
          GROUP BY s.volume_id, s.root, s.method ORDER BY MAX(s.taken_at) DESC",
     )?
@@ -165,6 +168,7 @@ pub fn series(conn: &Connection) -> rusqlite::Result<Vec<Series>> {
             first: r.get(8)?,
             last: r.get(9)?,
             last_scan: r.get(10)?,
+            last_id: r.get(11)?,
         })
     })?
     .collect()
