@@ -33,6 +33,25 @@ jobs:
           fsutil 8dot3name set C: 0
           fsutil 8dot3name query C:
           echo "TEMP=$env:TEMP"
+      # Volume NTFS neuf où Windows tient à jour le dernier accès : la lecture du contenu
+      # (doublons) doit le laisser intact.
+      - name: Volume de test (dernier accès tenu à jour)
+        shell: pwsh
+        run: |
+          fsutil behavior set disablelastaccess 0
+          $vhd = Join-Path $env:RUNNER_TEMP "lumen-safety.vhdx"
+          $script = Join-Path $env:RUNNER_TEMP "vhd-safety.txt"
+          @(
+            "create vdisk file=`"$vhd`" maximum=256 type=expandable",
+            "select vdisk file=`"$vhd`"",
+            "attach vdisk",
+            "create partition primary",
+            "format fs=ntfs quick label=LumenSafety",
+            "assign letter=L"
+          ) | Set-Content -Encoding ascii $script
+          diskpart /s $script
+          if (-not (Test-Path "L:\")) { throw "volume de test non monté" }
+          "LUMEN_TEST_NTFS=L:\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: Tests de safety/ (jonctions, symlinks, 8.3, verrous, SYSTEM, Corbeille…)
         run: node scripts/check-safety-tests.mjs
       # Le script copié s'exécute hors de safety/ : ses propres garde-fous sont testés sur de

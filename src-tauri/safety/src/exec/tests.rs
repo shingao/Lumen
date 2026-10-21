@@ -60,11 +60,13 @@ struct Fake<'a> {
     free: Cell<u64>,
     fail: Option<&'static str>,
     commands: RefCell<Vec<OfficialCommand>>,
+    /// Code de sortie simulé du point de restauration.
+    restore_point: i32,
 }
 
 impl<'a> Fake<'a> {
     fn new(probe: &'a MemoryProbe) -> Fake<'a> {
-        Fake { probe, recycled: RefCell::default(), deleted: RefCell::default(), free: Cell::new(1_000_000), fail: None, commands: RefCell::default() }
+        Fake { probe, recycled: RefCell::default(), deleted: RefCell::default(), free: Cell::new(1_000_000), fail: None, commands: RefCell::default(), restore_point: 0 }
     }
 
     fn take(&self, unit: &Unit) -> Result<(), RemoveError> {
@@ -97,6 +99,18 @@ impl Effects for Fake<'_> {
 
     fn free_bytes(&self, _: &WinPath) -> Option<u64> {
         Some(self.free.get())
+    }
+
+    fn run_elevated(&self, command: &OfficialCommand, _: &AtomicBool) -> CommandRun {
+        self.commands.borrow_mut().push(command.clone());
+        let status = match command {
+            OfficialCommand::RestorePointCreate => match self.restore_point {
+                0 => CommandStatus::Succeeded,
+                code => CommandStatus::Failed(code),
+            },
+            _ => CommandStatus::Succeeded,
+        };
+        CommandRun { program: Some("C:\\Windows\\System32\\x.exe".into()), ..CommandRun::new(command, status) }
     }
 
     fn run_command(&self, command: &OfficialCommand, _: &AtomicBool) -> CommandRun {
@@ -291,9 +305,9 @@ fn commandes_d_abord_jamais_elevees() {
     let w = World::new();
     cache(&w);
     let plan = w.plan(&["C:\\Users\\Arthur\\cache\\sous"], "cache", DeleteMode::Trash).with_commands(vec![
-        PlannedCommand { command: OfficialCommand::NpmCacheClean, role: CommandRole::Action, measured: Some(p(CACHE)), bytes: 500 },
-        PlannedCommand { command: OfficialCommand::GradleStop, role: CommandRole::Prerequisite, measured: None, bytes: 0 },
-        PlannedCommand { command: OfficialCommand::DismComponentCleanup, role: CommandRole::Action, measured: None, bytes: 0 },
+        PlannedCommand::action(OfficialCommand::NpmCacheClean, Some(p(CACHE)), 500),
+        PlannedCommand::prerequisite(OfficialCommand::GradleStop, false),
+        PlannedCommand::action(OfficialCommand::DismComponentCleanup, None, 0),
     ]);
     let fx = Fake::new(&w.probe);
     let mut order = Vec::new();
@@ -332,4 +346,174 @@ fn element_disparu_ou_remplace() {
     assert!(matches!(r.items[0].outcome, ItemOutcome::Skipped(_)));
     assert!(matches!(r.items[1].outcome, ItemOutcome::Skipped(_)), "{:?}", r.items[1]);
     assert!(fx.recycled.borrow().is_empty());
+}
+
+#[test]
+fn commandes_systeme_elevees_seulement_si_le_plan_l_autorise() {
+    let w = World::new();
+    let base = w.plan(&[], "cache", DeleteMode::Trash).with_commands(vec![PlannedCommand::action(OfficialCommand::DismComponentCleanup, None, 0)]);
+    let fx = Fake::new(&w.probe);
+    let r = w.run(&base, &fx);
+    assert_eq!(r.commands[0].status, CommandStatus::NeedsElevation);
+    assert!(fx.commands.borrow().is_empty(), "jamais lancée sans autorisation du plan");
+
+    let elevated = base.clone().with_elevation();
+    assert_ne!(elevated.fingerprint(), base.fingerprint(), "l'empreinte couvre l'élévation");
+    let fx = Fake::new(&w.probe);
+    let r = w.run(&elevated, &fx);
+    assert_eq!(r.commands[0].status, CommandStatus::Succeeded);
+    assert_eq!(*fx.commands.borrow(), [OfficialCommand::DismComponentCleanup]);
+}
+
+#[test]
+fn point_de_restauration_obligatoire_avant_les_actions_systeme() {
+    let w = World::new();
+    let plan = w
+        .plan(&[], "cache", DeleteMode::Trash)
+        .with_commands(vec![
+            PlannedCommand::action(OfficialCommand::DismComponentCleanup, None, 0),
+            PlannedCommand::prerequisite(OfficialCommand::RestorePointCreate, true),
+        ])
+        .with_elevation();
+    // Point déjà créé il y a moins de 24 h (code 3) : prérequis rempli, on continue, et on le dit.
+    let mut fx = Fake::new(&w.probe);
+    fx.restore_point = 3;
+    let r = w.run(&plan, &fx);
+    assert_eq!(*fx.commands.borrow(), [OfficialCommand::RestorePointCreate, OfficialCommand::DismComponentCleanup]);
+    assert_eq!(r.commands[0].status, CommandStatus::Failed(3));
+    assert!(r.commands[0].satisfied() && r.aborted.is_none());
+    assert!(OfficialCommand::RestorePointCreate.exit_meaning(3).unwrap().contains("moins de 24 h"));
+    // Échec (protection désactivée…) : rien d'autre n'est fait, et le bilan dit pourquoi.
+    let mut fx = Fake::new(&w.probe);
+    fx.restore_point = 5;
+    let r = w.run(&plan, &fx);
+    assert_eq!(*fx.commands.borrow(), [OfficialCommand::RestorePointCreate]);
+    assert_eq!(r.commands[1].status, CommandStatus::Cancelled);
+    assert!(r.aborted.as_deref().unwrap().contains("point de restauration"));
+    assert!(!r.cancelled);
+}
+
+// --- Doublons --------------------------------------------------------------------------------
+
+const DOCS: &str = "C:\\Users\\Arthur\\Documents";
+
+/// Groupe de doublons en mémoire : chaque chemin reçoit le même contenu.
+fn dup_world(paths: &[&str]) -> (World, crate::allow::DupGroup) {
+    let mut w = World::new();
+    w.probe.dir(DOCS);
+    let mut members = Vec::new();
+    for raw in paths {
+        for parent in WinPath::parse(raw).unwrap().chain().iter().rev().skip(1).rev() {
+            if !w.probe.exists(&parent.display_string()) {
+                w.probe.dir(&parent.display_string());
+            }
+        }
+        let p = if w.probe.exists(raw) { WinPath::parse(raw).unwrap() } else { w.probe.file_with(raw, b"meme contenu") };
+        let facts = w.probe.facts(&p).unwrap();
+        members.push(crate::allow::DupMember { path: p.clone(), expected: Expected::from_facts(&facts), hash: w.probe.content_hash(&p).unwrap() });
+    }
+    let group = crate::allow::DupGroup { members };
+    w.allow.add_duplicates(crate::allow::DuplicateSelection { id: 1, groups: vec![group.clone()] });
+    (w, group)
+}
+
+fn dup_targets(group: &crate::allow::DupGroup, chosen: &[usize]) -> Vec<Target> {
+    chosen
+        .iter()
+        .map(|&i| {
+            let m = &group.members[i];
+            Target {
+                path: m.path.display_string(),
+                authority: Authority::Duplicates(1),
+                expected: m.expected,
+                bytes: m.expected.size,
+                contents: None,
+                hash: Some(m.hash),
+            }
+        })
+        .collect()
+}
+
+fn dup_plan(w: &World, targets: &[Target]) -> Plan {
+    Plan::build(&w.checker(), targets, DeleteMode::Trash)
+}
+
+#[test]
+fn doublons_jamais_tous_les_exemplaires() {
+    let (w, g) = dup_world(&["C:\\Users\\Arthur\\Documents\\a.pdf", "C:\\Users\\Arthur\\Documents\\copie\\a.pdf", "C:\\Users\\Arthur\\Desktop\\a.pdf"]);
+    // Tous cochés : refusés, rien n'entre dans le plan.
+    let all = dup_plan(&w, &dup_targets(&g, &[0, 1, 2]));
+    assert!(all.items().is_empty());
+    assert!(all.refused().iter().all(|(_, r)| *r == Refusal::LastCopy) && all.refused().len() == 3);
+    // Deux sur trois : accepté, le troisième reste.
+    let two = dup_plan(&w, &dup_targets(&g, &[1, 2]));
+    assert_eq!(two.items().len(), 2);
+    let fx = Fake::new(&w.probe);
+    let r = w.run(&two, &fx);
+    assert!(r.items.iter().all(|i| i.outcome == ItemOutcome::Done), "{r:#?}");
+    assert!(w.probe.exists("C:\\Users\\Arthur\\Documents\\a.pdf"));
+}
+
+#[test]
+fn liens_physiques_jamais_des_doublons() {
+    let w = World::new();
+    w.probe.dir(DOCS);
+    let a = w.probe.file_with("C:\\Users\\Arthur\\Documents\\a.iso", b"image");
+    w.probe.hard_link("C:\\Users\\Arthur\\Documents\\lien.iso", &a);
+    let (w, g) = {
+        let paths = ["C:\\Users\\Arthur\\Documents\\a.iso", "C:\\Users\\Arthur\\Documents\\lien.iso"];
+        let mut members = Vec::new();
+        for raw in paths {
+            let p = WinPath::parse(raw).unwrap();
+            let facts = w.probe.facts(&p).unwrap();
+            members.push(crate::allow::DupMember { path: p.clone(), expected: Expected::from_facts(&facts), hash: w.probe.content_hash(&p).unwrap() });
+        }
+        assert_eq!(members[0].expected.file_id, members[1].expected.file_id, "un lien physique : même file ID");
+        let group = crate::allow::DupGroup { members };
+        let mut w = w;
+        w.allow.add_duplicates(crate::allow::DuplicateSelection { id: 1, groups: vec![group.clone()] });
+        (w, group)
+    };
+    let plan = dup_plan(&w, &dup_targets(&g, &[1]));
+    assert!(plan.items().is_empty());
+    assert_eq!(plan.refused()[0].1, Refusal::HardLink);
+}
+
+#[test]
+fn doublon_modifie_avant_suppression_saute() {
+    let (w, g) = dup_world(&["C:\\Users\\Arthur\\Documents\\a.mov", "C:\\Users\\Arthur\\Documents\\b.mov"]);
+    let plan = dup_plan(&w, &dup_targets(&g, &[1]));
+    // Même identité, même taille, même date… mais le contenu a changé.
+    w.probe.update(&g.members[1].path, |e| e.content = Some(b"autre contenu".to_vec()));
+    let fx = Fake::new(&w.probe);
+    let r = w.run(&plan, &fx);
+    assert!(matches!(&r.items[0].outcome, ItemOutcome::Skipped(m) if m.contains("contenu modifié")), "{r:#?}");
+    assert!(fx.recycled.borrow().is_empty());
+}
+
+#[test]
+fn exemplaire_garde_disparu_rien_supprime() {
+    let (w, g) = dup_world(&["C:\\Users\\Arthur\\Documents\\a.mov", "C:\\Users\\Arthur\\Documents\\b.mov"]);
+    let plan = dup_plan(&w, &dup_targets(&g, &[1]));
+    // L'exemplaire gardé a disparu (ou changé) entre la confirmation et l'action.
+    w.probe.update(&g.members[0].path, |e| e.content = Some(b"modifie".to_vec()));
+    let fx = Fake::new(&w.probe);
+    let r = w.run(&plan, &fx);
+    assert!(matches!(&r.items[0].outcome, ItemOutcome::Skipped(m) if m.contains("aucun autre exemplaire")), "{r:#?}");
+    assert!(w.probe.exists("C:\\Users\\Arthur\\Documents\\b.mov"));
+}
+
+#[test]
+fn doublon_hors_groupe_ou_empreinte_differente_refuse() {
+    let (w, g) = dup_world(&["C:\\Users\\Arthur\\Documents\\a.mov", "C:\\Users\\Arthur\\Documents\\b.mov"]);
+    let mut t = dup_targets(&g, &[1]);
+    t[0].hash = Some([9; 32]);
+    assert_eq!(dup_plan(&w, &t).refused()[0].1, Refusal::NotAllowed);
+    let mut t = dup_targets(&g, &[1]);
+    t[0].hash = None;
+    assert_eq!(dup_plan(&w, &t).refused()[0].1, Refusal::NotAllowed);
+    w.probe.file_with("C:\\Users\\Arthur\\Documents\\c.mov", b"meme contenu");
+    let mut t = dup_targets(&g, &[1]);
+    t[0].path = "C:\\Users\\Arthur\\Documents\\c.mov".into();
+    assert_eq!(dup_plan(&w, &t).refused()[0].1, Refusal::NotAllowed);
 }

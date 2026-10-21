@@ -68,7 +68,7 @@ impl Fixture {
         let facts = WinProbe.facts(&real).unwrap();
         let contents = (facts.attributes.directory && !facts.attributes.reparse_point).then(|| tree(&real));
         let bytes = contents.as_ref().map_or(facts.size, |c| c.iter().map(|n| n.bytes).sum());
-        Target { path: raw.into(), authority: Authority::Rule(RULE.into()), expected: Expected::from_facts(&facts), bytes, contents }
+        Target { path: raw.into(), authority: Authority::Rule(RULE.into()), expected: Expected::from_facts(&facts), bytes, contents, hash: None }
     }
 
     fn check(&self, t: &Target) -> Verdict {
@@ -220,7 +220,7 @@ fn fixture_progra_1_vers_program_files_refuse() {
     let checker = Checker { probe: &WinProbe, deny: &deny, allow: &allow, now: i64::MAX };
     let facts = WinProbe.facts(&pf).unwrap();
     let short = short_path(&pf).unwrap();
-    let t = Target { path: short.clone(), authority: Authority::Rule("volume".into()), expected: Expected::from_facts(&facts), bytes: 0, contents: None };
+    let t = Target { path: short.clone(), authority: Authority::Rule("volume".into()), expected: Expected::from_facts(&facts), bytes: 0, contents: None, hash: None };
     let v = checker.check(&t);
     if short.contains('~') {
         assert_eq!(v.refusal(), Some(&Refusal::Denied(DenyReason::ProgramFiles)), "{short} : {v:?}");
@@ -247,7 +247,7 @@ fn fixture_prefixe_verbatim_et_casse() {
     let hosts = win.join("System32\\drivers\\etc\\hosts").unwrap();
     let facts = WinProbe.facts(&hosts).unwrap();
     for raw in [hosts.verbatim(), hosts.display_string().to_lowercase(), format!("{}\\..\\{}", win.display_string(), "Windows\\System32\\drivers\\etc\\hosts")] {
-        let t = Target { path: raw.clone(), authority: Authority::Rule("volume".into()), expected: Expected::from_facts(&facts), bytes: 0, contents: None };
+        let t = Target { path: raw.clone(), authority: Authority::Rule("volume".into()), expected: Expected::from_facts(&facts), bytes: 0, contents: None, hash: None };
         assert!(matches!(checker.check(&t).refusal(), Some(Refusal::Denied(_))), "{raw}");
     }
 }
@@ -732,4 +732,118 @@ fn fixture_commande_delai_depasse_arbre_arrete() {
 fn fixture_espace_libre_du_volume() {
     let f = Fixture::new("espace");
     assert!(WinEffects::new().free_bytes(&canonical(&f.cache)).unwrap() > 0);
+}
+
+#[test]
+fn fixture_commande_elevee_code_de_sortie() {
+    let cmd = system_layout().unwrap().windows.join("System32").unwrap().join("cmd.exe").unwrap();
+    let args: Vec<String> = ["/c", "exit", "7"].iter().map(|a| (*a).to_owned()).collect();
+    let (status, _) = super::elevated::launch(&cmd, &args, false, Duration::from_secs(60), &AtomicBool::new(false));
+    assert_eq!(status, CommandStatus::Failed(7));
+    // Arguments avec espace, guillemet ou caractère de shell : refusés avant tout lancement.
+    for bad in ["a b", "\"x\"", "x&y", "x|y", "%PATH%", ""] {
+        assert!(super::elevated::plain_args(&[bad.to_owned()]).is_none(), "{bad}");
+    }
+    assert_eq!(super::elevated::plain_args(&["/for=C:".into(), "/oldest".into()]).as_deref(), Some("/for=C: /oldest"));
+}
+
+#[test]
+fn fixture_point_de_restauration_script_execute() {
+    // Sur la machine de CI (Windows Server), la protection du système est absente : le script doit
+    // s'exécuter jusqu'au bout et rendre un code connu, jamais une erreur de syntaxe (code 1).
+    let fx = WinEffects::new();
+    let run = fx.run_elevated(&OfficialCommand::RestorePointCreate, &AtomicBool::new(false));
+    assert!(run.program.as_deref().unwrap().to_lowercase().ends_with("\\system32\\windowspowershell\\v1.0\\powershell.exe"));
+    match run.status {
+        CommandStatus::Succeeded => {}
+        CommandStatus::Failed(code) => assert!(OfficialCommand::RestorePointCreate.exit_meaning(code).is_some(), "code {code} : {run:#?}"),
+        other => panic!("{other:?}"),
+    }
+    // Une commande qui ne demande pas l'administrateur n'est jamais lancée élevée.
+    let refused = fx.run_elevated(&OfficialCommand::NpmCacheVerify, &AtomicBool::new(false));
+    assert!(matches!(refused.status, CommandStatus::Error(_)));
+}
+
+/// Dossier de test sur le volume où Windows tient à jour la date de dernier accès (CI : VHD
+/// monté avec `disablelastaccess 0`), sinon le dossier temporaire.
+fn last_access_root() -> PathBuf {
+    let root = std::env::var("LUMEN_TEST_NTFS").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+    let n = NEXT.fetch_add(1, Ordering::SeqCst);
+    let dir = root.join(format!("lumen-hash-{}-{n}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn fixture_hash_sans_toucher_au_dernier_acces() {
+    use std::fs::FileTimes;
+    use std::time::{Duration, SystemTime};
+    let dir = last_access_root();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_577_836_800); // 2020-01-01
+    let make = |name: &str| {
+        let p = dir.join(name);
+        let mut f = File::create(&p).unwrap();
+        f.write_all(&vec![42u8; 300_000]).unwrap();
+        f.set_times(FileTimes::new().set_accessed(old)).unwrap();
+        f.sync_all().unwrap();
+        p
+    };
+    let witness = make("temoin.bin");
+    let hashed = make("hache.bin");
+    // Témoin : une lecture ordinaire met la date à jour (sinon le test ne prouverait rien).
+    let _ = fs::read(&witness).unwrap();
+    let witness_moved = fs::metadata(&witness).unwrap().accessed().unwrap() != old;
+    if std::env::var_os("LUMEN_TEST_NTFS").is_some() {
+        assert!(witness_moved, "le volume de test doit tenir à jour la date de dernier accès");
+    }
+    let full = super::content::hash_file(&canonical(&hashed), super::content::Digest::Full, None).unwrap();
+    let edges = super::content::hash_file(&canonical(&hashed), super::content::Digest::Edges, None).unwrap();
+    assert_ne!(full, edges);
+    assert_eq!(fs::metadata(&hashed).unwrap().accessed().unwrap(), old, "la lecture du contenu ne touche pas au dernier accès");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fixture_hash_contenu_et_bords() {
+    let f = Fixture::new("hash");
+    let mut big = vec![7u8; 500_000];
+    let a = f.file("a.bin", &big);
+    let b = f.file("b.bin", &big);
+    big[250_000] = 8; // différence au milieu : mêmes bords, contenu différent
+    let c = f.file("c.bin", &big);
+    use super::content::{hash_file, Digest};
+    let h = |p: &Path, d| hash_file(&canonical(p), d, None).unwrap();
+    assert_eq!(h(&a, Digest::Full), h(&b, Digest::Full));
+    assert_eq!(h(&a, Digest::Edges), h(&c, Digest::Edges));
+    assert_ne!(h(&a, Digest::Full), h(&c, Digest::Full));
+    assert_eq!(WinProbe.content_hash(&canonical(&a)).unwrap(), h(&a, Digest::Full));
+    // Annulable.
+    assert_eq!(hash_file(&canonical(&a), Digest::Full, Some(&AtomicBool::new(true))), Err(crate::probe::ProbeError::Cancelled));
+}
+
+#[test]
+fn fixture_hash_fichier_cloud_jamais_lu() {
+    let f = Fixture::new("cloud");
+    let p = f.file("onedrive.docx", b"placeholder");
+    let name = HSTRING::from(s(&p));
+    // SAFETY : chaîne possédée ; attribut OFFLINE posé sur une fixture (fichier « dans le cloud »).
+    unsafe { SetFileAttributesW(&name, windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_OFFLINE) }.unwrap();
+    assert_eq!(WinProbe.content_hash(&canonical(&p)), Err(crate::probe::ProbeError::Cloud));
+    // SAFETY : idem, retour à la normale pour le nettoyage de la fixture.
+    unsafe { SetFileAttributesW(&name, FILE_ATTRIBUTE_NORMAL) }.unwrap();
+}
+
+#[test]
+fn fixture_gouffres_systeme_lus_sans_admin() {
+    let f = super::sinks::system_sinks();
+    assert!(f.system_drive.is_ascii_uppercase());
+    // Machine de CI : un fichier d'échange existe sur le lecteur système (ou sur un autre volume).
+    if let Some(p) = f.pagefile {
+        assert!(p > 0);
+    }
+    assert!(f.restore_point_frequency_min > 0);
+    // Le volume de test du job est réglé pour tenir à jour le dernier accès.
+    if std::env::var_os("LUMEN_TEST_NTFS").is_some() {
+        assert!(f.last_access_updated, "{:?}", f.last_access_raw);
+    }
 }

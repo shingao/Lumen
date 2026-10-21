@@ -24,6 +24,8 @@ pub enum Program {
     Powercfg,
     Vssadmin,
     Cleanmgr,
+    /// Windows PowerShell de `System32`, pour une seule commande figée : le point de restauration.
+    PowerShell,
 }
 
 impl Program {
@@ -44,11 +46,25 @@ impl Program {
             Program::Powercfg => "powercfg.exe",
             Program::Vssadmin => "vssadmin.exe",
             Program::Cleanmgr => "cleanmgr.exe",
+            Program::PowerShell => "powershell.exe",
         }
     }
 
     pub fn is_system_tool(self) -> bool {
-        matches!(self, Program::Wsl | Program::Dism | Program::Powercfg | Program::Vssadmin | Program::Cleanmgr)
+        self.system_path().is_some()
+    }
+
+    /// Outil système : chemin sous `%SystemRoot%`, le seul accepté (jamais le PATH).
+    pub fn system_path(self) -> Option<&'static [&'static str]> {
+        Some(match self {
+            Program::Wsl => &["System32", "wsl.exe"],
+            Program::Dism => &["System32", "Dism.exe"],
+            Program::Powercfg => &["System32", "powercfg.exe"],
+            Program::Vssadmin => &["System32", "vssadmin.exe"],
+            Program::Cleanmgr => &["System32", "cleanmgr.exe"],
+            Program::PowerShell => &["System32", "WindowsPowerShell", "v1.0", "powershell.exe"],
+            _ => return None,
+        })
     }
 
     /// Dossiers d'installation connus, avant le PATH.
@@ -76,18 +92,18 @@ impl Program {
             Program::Docker => out.extend(d.program_files.iter().map(|pf| join_all(pf, &["Docker", "Docker", "resources", "bin"]))),
             Program::Ollama => out.push(under(&d.local_app_data, &["Programs", "Ollama"])),
             Program::Pip | Program::Gradle => {}
-            Program::Wsl | Program::Dism | Program::Powercfg | Program::Vssadmin | Program::Cleanmgr => {}
+            Program::Wsl | Program::Dism | Program::Powercfg | Program::Vssadmin | Program::Cleanmgr | Program::PowerShell => {}
         }
         out.into_iter().flatten().collect()
     }
 
     /// Chemins complets possibles, dans l'ordre de préférence. Outils système : `System32` seul.
     pub fn candidates(self, d: &ToolDirs) -> Vec<Candidate> {
-        if self.is_system_tool() {
+        if let Some(rel) = self.system_path() {
             return d
                 .system_root
                 .as_ref()
-                .and_then(|r| join_all(r, &["System32", self.binary()]))
+                .and_then(|r| join_all(r, rel))
                 .map(|exe| Candidate { exe, script: None })
                 .into_iter()
                 .collect();
@@ -229,6 +245,48 @@ pub enum OfficialCommand {
     ShadowDeleteOldest(Drive),
     /// Nettoyage de disque de Windows (Windows.old, fichiers système).
     DiskCleanup(Drive),
+    /// Point de restauration du système avant les actions système (script PowerShell figé).
+    RestorePointCreate,
+}
+
+/// Script du point de restauration, figé dans le binaire et passé en `-EncodedCommand` :
+/// aucun texte variable. Codes de sortie : 0 créé, 3 un point existe déjà depuis moins que la
+/// fréquence autorisée par Windows (24 h par défaut), 4 Windows n'a pas créé de point,
+/// 5 protection du système indisponible.
+pub const RESTORE_POINT_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+try { $avant = @(Get-ComputerRestorePoint) } catch { exit 5 }
+$frequence = 1440
+try {
+  $v = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name SystemRestorePointCreationFrequency).SystemRestorePointCreationFrequency
+  if ($null -ne $v) { $frequence = [int]$v }
+} catch {}
+if ($avant.Count -gt 0) {
+  $dernier = $avant | Sort-Object SequenceNumber | Select-Object -Last 1
+  $date = [Management.ManagementDateTimeConverter]::ToDateTime($dernier.CreationTime)
+  if (((Get-Date) - $date).TotalMinutes -lt $frequence) { exit 3 }
+}
+try { Checkpoint-Computer -Description 'Lumen : avant nettoyage du système' -RestorePointType MODIFY_SETTINGS } catch { exit 4 }
+if (@(Get-ComputerRestorePoint).Count -le $avant.Count) { exit 4 }
+exit 0
+"#;
+
+/// Base64 standard (sans dépendance) du script en UTF-16LE, comme l'attend `-EncodedCommand`.
+fn encoded_command(script: &str) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(char::from(T[((n >> (18 - 6 * i)) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 impl OfficialCommand {
@@ -249,6 +307,7 @@ impl OfficialCommand {
             HibernateOff | HibernateReduced => Program::Powercfg,
             ShadowDeleteOldest(_) => Program::Vssadmin,
             DiskCleanup(_) => Program::Cleanmgr,
+            RestorePointCreate => Program::PowerShell,
         }
     }
 
@@ -273,7 +332,38 @@ impl OfficialCommand {
             HibernateReduced => v(&["/h", "/type", "reduced"]),
             ShadowDeleteOldest(Drive(d)) => vec!["delete".into(), "shadows".into(), format!("/for={d}:"), "/oldest".into(), "/quiet".into()],
             DiskCleanup(Drive(d)) => vec!["/d".into(), format!("{d}:")],
+            RestorePointCreate => {
+                let mut a = v(&["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand"]);
+                a.push(encoded_command(RESTORE_POINT_SCRIPT));
+                a
+            }
         }
+    }
+
+    /// Résultat lisible d'un code de sortie particulier (sinon le code brut est affiché).
+    pub fn exit_meaning(&self, code: i32) -> Option<&'static str> {
+        match (self, code) {
+            (OfficialCommand::RestorePointCreate, 0) => Some("point de restauration créé"),
+            (OfficialCommand::RestorePointCreate, 3) => Some(
+                "un point de restauration existe déjà depuis moins de 24 h : Windows n'en crée pas d'autre avant ce délai (réglage SystemRestorePointCreationFrequency)",
+            ),
+            (OfficialCommand::RestorePointCreate, 4) => Some("Windows n'a pas créé de point de restauration"),
+            (OfficialCommand::RestorePointCreate, 5) => Some("protection du système indisponible ou désactivée sur ce PC"),
+            _ => None,
+        }
+    }
+
+    /// Un prérequis est-il rempli avec ce code ? Point de restauration : créé, ou déjà récent.
+    pub fn satisfied_by(&self, code: i32) -> bool {
+        match self {
+            OfficialCommand::RestorePointCreate => code == 0 || code == 3,
+            _ => code == 0,
+        }
+    }
+
+    /// Fenêtre visible : seul le Nettoyage de disque est une appli interactive.
+    pub fn shows_window(&self) -> bool {
+        matches!(self, OfficialCommand::DiskCleanup(_))
     }
 
     /// Délai maximal : au-delà, la commande et ses processus enfants sont arrêtés.
@@ -285,12 +375,13 @@ impl OfficialCommand {
             NpmCacheVerify | DockerImagePrune | OllamaRm(_) => 900,
             DismComponentCleanup | DiskCleanup(_) => 3600,
             HibernateOff | HibernateReduced | ShadowDeleteOldest(_) => 300,
+            RestorePointCreate => 900,
         }
     }
 
     pub fn needs_elevation(&self) -> bool {
         use OfficialCommand::*;
-        matches!(self, DismComponentCleanup | HibernateOff | HibernateReduced | ShadowDeleteOldest(_) | DiskCleanup(_))
+        matches!(self, DismComponentCleanup | HibernateOff | HibernateReduced | ShadowDeleteOldest(_) | DiskCleanup(_) | RestorePointCreate)
     }
 
     /// Ce que fait la commande, en une phrase (affichée et commentée dans les scripts).
@@ -312,7 +403,8 @@ impl OfficialCommand {
             HibernateOff => "Désactive l'hibernation : plus de démarrage rapide ni de mise en veille prolongée",
             HibernateReduced => "Hibernation réduite : garde le démarrage rapide, plus de veille prolongée",
             ShadowDeleteOldest(_) => "Supprime uniquement le plus ancien point de restauration",
-            DiskCleanup(_) => "Ouvre le Nettoyage de disque de Windows",
+            DiskCleanup(_) => "Ouvre le Nettoyage de disque de Windows (Windows.old : « Installation(s) précédente(s) de Windows »)",
+            RestorePointCreate => "Crée un point de restauration du système avant les actions système",
         }
     }
 }
@@ -395,6 +487,37 @@ mod tests {
     fn delais_maximaux() {
         assert_eq!(OfficialCommand::GradleStop.timeout_secs(), 120);
         assert!(OfficialCommand::NpmCacheClean.timeout_secs() <= 1800);
+    }
+
+    #[test]
+    fn point_de_restauration_script_fige() {
+        let args = OfficialCommand::RestorePointCreate.args();
+        assert_eq!(&args[..5], ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand"]);
+        // Base64 de l'UTF-16LE : « $E » → 24 00 45 00.
+        assert!(args[5].starts_with("JABFAHIAcgBvAHIA"), "{}", &args[5][..20]);
+        assert!(args[5].chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=')));
+        assert_eq!(encoded_command("ab"), "YQBiAA==");
+        assert_eq!(encoded_command("abc"), "YQBiAGMA");
+        let c = OfficialCommand::RestorePointCreate;
+        assert!(c.needs_elevation() && c.satisfied_by(0) && c.satisfied_by(3) && !c.satisfied_by(4));
+        assert!(c.exit_meaning(3).unwrap().contains("24 h"));
+        assert!(!RESTORE_POINT_SCRIPT.contains("-All") && !RESTORE_POINT_SCRIPT.contains("Remove"));
+    }
+
+    #[test]
+    fn outils_systeme_par_chemin_complet() {
+        let d = tool_dirs("C:\\Windows\\System32");
+        let ps = Program::PowerShell.candidates(&d);
+        assert_eq!(ps[0].exe.display_string(), "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        assert_eq!(ps.len(), 1);
+        for p in [Program::Dism, Program::Powercfg, Program::Vssadmin, Program::Cleanmgr] {
+            let c = p.candidates(&d);
+            assert_eq!(c.len(), 1, "{p:?}");
+            assert!(c[0].exe.display_string().starts_with("C:\\Windows\\System32\\"));
+        }
+        // Jamais tous les points de restauration, jamais /ResetBase.
+        let dism = OfficialCommand::DismComponentCleanup.args();
+        assert!(!dism.iter().any(|a| a.eq_ignore_ascii_case("/ResetBase")));
     }
 
     #[test]

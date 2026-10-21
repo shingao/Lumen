@@ -2,6 +2,7 @@
 //! mais parce qu'une règle l'autorise explicitement, ou parce que l'utilisateur l'a coché dans une
 //! sélection de fichiers (Dormants, Doublons).
 
+use crate::check::Expected;
 use crate::path::WinPath;
 
 /// Ce qui autorise une action sur un élément.
@@ -9,8 +10,31 @@ use crate::path::WinPath;
 pub enum Authority {
     /// Règle du moteur de règles (`rules.toml`).
     Rule(String),
-    /// Sélection produite par Dormants ou Doublons, cochée par l'utilisateur.
+    /// Sélection produite par Dormants ou Gros fichiers, cochée par l'utilisateur.
     Selection(u64),
+    /// Exemplaires cochés dans des groupes de doublons : jamais tous ceux d'un groupe.
+    Duplicates(u64),
+}
+
+/// Un exemplaire d'un groupe de doublons, tel qu'il a été lu et haché.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DupMember {
+    pub path: WinPath,
+    pub expected: Expected,
+    /// BLAKE3 du contenu complet.
+    pub hash: [u8; 32],
+}
+
+/// Fichiers au contenu identique ; `safety` en garde toujours au moins un intact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DupGroup {
+    pub members: Vec<DupMember>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DuplicateSelection {
+    pub id: u64,
+    pub groups: Vec<DupGroup>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +66,7 @@ pub struct Selection {
 pub struct Allowlist {
     grants: Vec<RuleGrant>,
     selections: Vec<Selection>,
+    duplicates: Vec<DuplicateSelection>,
 }
 
 impl Allowlist {
@@ -55,6 +80,15 @@ impl Allowlist {
 
     pub fn add_selection(&mut self, selection: Selection) {
         self.selections.push(selection);
+    }
+
+    pub fn add_duplicates(&mut self, selection: DuplicateSelection) {
+        self.duplicates.push(selection);
+    }
+
+    /// Groupe de doublons auquel appartient `path` dans la sélection `id`.
+    pub fn duplicate_group(&self, id: u64, path: &WinPath) -> Option<&DupGroup> {
+        self.duplicates.iter().find(|s| s.id == id)?.groups.iter().find(|g| g.members.iter().any(|m| &m.path == path))
     }
 
     /// L'autorisation qui couvre `path`, s'il y en a une.
@@ -75,6 +109,7 @@ impl Allowlist {
                 .find(|s| s.id == *id)
                 .filter(|s| s.members.iter().any(|m| m == path))
                 .map(|_| Permit { min_age_secs: None }),
+            Authority::Duplicates(id) => self.duplicate_group(*id, path).map(|_| Permit { min_age_secs: None }),
         }
     }
 }

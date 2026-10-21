@@ -5,12 +5,13 @@
 
 use std::sync::atomic::AtomicBool;
 
+use crate::allow::{Allowlist, Authority};
 use crate::bin::recycle_allowed;
 use crate::check::{Checker, ExpectedNode, Refusal, SkipReason, Target, Validated, Verdict};
 use crate::commands::OfficialCommand;
 use crate::exec::{Effects, Event, Report};
 use crate::path::WinPath;
-use crate::probe::Probe;
+use crate::probe::{FileId, Probe};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteMode {
@@ -36,6 +37,18 @@ pub struct PlannedCommand {
     pub measured: Option<WinPath>,
     /// Taille estimée par le scan.
     pub bytes: u64,
+    /// Prérequis obligatoire : s'il n'est pas rempli, rien d'autre n'est fait.
+    pub required: bool,
+}
+
+impl PlannedCommand {
+    pub fn action(command: OfficialCommand, measured: Option<WinPath>, bytes: u64) -> PlannedCommand {
+        PlannedCommand { command, role: CommandRole::Action, measured, bytes, required: false }
+    }
+
+    pub fn prerequisite(command: OfficialCommand, required: bool) -> PlannedCommand {
+        PlannedCommand { command, role: CommandRole::Prerequisite, measured: None, bytes: 0, required }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +56,8 @@ pub struct Plan {
     mode: DeleteMode,
     items: Vec<Validated>,
     commands: Vec<PlannedCommand>,
+    /// Commandes « administrateur » autorisées (gouffres système) : lancées élevées.
+    elevated: bool,
     skipped: Vec<(WinPath, SkipReason)>,
     refused: Vec<(String, Refusal)>,
     fingerprint: [u8; 32],
@@ -76,7 +91,8 @@ impl Plan {
                 Verdict::Refused { path, refusal } => refused.push((path, refusal)),
             }
         }
-        let mut plan = Plan { mode, items, commands: Vec::new(), skipped, refused, fingerprint: [0; 32] };
+        let items = protect_duplicates(checker.allow, items, &mut refused);
+        let mut plan = Plan { mode, items, commands: Vec::new(), elevated: false, skipped, refused, fingerprint: [0; 32] };
         plan.fingerprint = fingerprint(&plan);
         plan
     }
@@ -92,6 +108,18 @@ impl Plan {
         self.commands.sort_by_key(|c| c.role != CommandRole::Prerequisite);
         self.fingerprint = fingerprint(&self);
         self
+    }
+
+    /// Autorise le lancement élevé (UAC) des commandes « administrateur » du plan. L'empreinte
+    /// le couvre : une confirmation donnée sans élévation ne vaut pas pour un plan élevé.
+    pub fn with_elevation(mut self) -> Plan {
+        self.elevated = true;
+        self.fingerprint = fingerprint(&self);
+        self
+    }
+
+    pub fn elevated(&self) -> bool {
+        self.elevated
     }
 
     pub fn mode(&self) -> DeleteMode {
@@ -131,6 +159,37 @@ impl Plan {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty() && self.commands.is_empty()
     }
+}
+
+/// Doublons : jamais tous les exemplaires d'un groupe, jamais des liens physiques du même fichier
+/// (en supprimer un ne libère rien, et l'« exemplaire gardé » serait le même fichier).
+fn protect_duplicates(allow: &Allowlist, items: Vec<Validated>, refused: &mut Vec<(String, Refusal)>) -> Vec<Validated> {
+    let group_of = |v: &Validated| match v.authority {
+        Authority::Duplicates(id) => allow.duplicate_group(id, &v.path),
+        _ => None,
+    };
+    let mut kept = Vec::with_capacity(items.len());
+    for v in &items {
+        let Some(group) = group_of(v) else {
+            kept.push(v.clone());
+            continue;
+        };
+        let mut ids: Vec<FileId> = group.members.iter().map(|m| m.expected.file_id).collect();
+        ids.sort_by_key(|f| (f.volume_serial, f.id));
+        ids.dedup();
+        let refusal = if ids.len() < group.members.len() {
+            Some(Refusal::HardLink)
+        } else if group.members.iter().all(|m| items.iter().any(|i| i.path == m.path && group_of(i).is_some())) {
+            Some(Refusal::LastCopy)
+        } else {
+            None
+        };
+        match refusal {
+            Some(r) => refused.push((v.requested.display_string(), r)),
+            None => kept.push(v.clone()),
+        }
+    }
+    kept
 }
 
 pub fn hex(bytes: &[u8]) -> String {
@@ -180,6 +239,7 @@ fn fingerprint(plan: &Plan) -> [u8; 32] {
         h.update(&i.facts.size.to_le_bytes());
         h.update(&i.facts.modified.to_le_bytes());
         h.update(&i.bytes.to_le_bytes());
+        h.update(&i.hash.unwrap_or([0; 32]));
         match &i.contents {
             Some(nodes) => {
                 h.update(&[1]);
@@ -190,13 +250,14 @@ fn fingerprint(plan: &Plan) -> [u8; 32] {
             }
         }
     }
+    h.update(&[u8::from(plan.elevated)]);
     h.update(&(plan.commands.len() as u64).to_le_bytes());
     for c in &plan.commands {
         hash_str(&mut h, c.command.program().binary());
         for a in c.command.args() {
             hash_str(&mut h, &a);
         }
-        h.update(&[u8::from(c.role == CommandRole::Prerequisite)]);
+        h.update(&[u8::from(c.role == CommandRole::Prerequisite), u8::from(c.required)]);
         hash_str(&mut h, &c.measured.as_ref().map(WinPath::verbatim).unwrap_or_default());
         h.update(&c.bytes.to_le_bytes());
     }
@@ -376,8 +437,8 @@ mod tests {
         changed.contents.as_mut().unwrap()[0].expected.size += 1;
         let b = Plan::build(&checker, &[changed], DeleteMode::Trash);
         assert_ne!(a.fingerprint(), b.fingerprint());
-        let cmd = PlannedCommand { command: OfficialCommand::GradleStop, role: CommandRole::Prerequisite, measured: None, bytes: 0 };
-        let action = PlannedCommand { command: OfficialCommand::NpmCacheClean, role: CommandRole::Action, measured: None, bytes: 7 };
+        let cmd = PlannedCommand::prerequisite(OfficialCommand::GradleStop, false);
+        let action = PlannedCommand::action(OfficialCommand::NpmCacheClean, None, 7);
         let c = Plan::build(&checker, &[t], DeleteMode::Trash).with_commands(vec![action.clone(), cmd.clone(), cmd]);
         assert_ne!(a.fingerprint(), c.fingerprint());
         // Prérequis en tête, sans doublon ; l'action compte dans le total.

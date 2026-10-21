@@ -2,6 +2,8 @@
 //! journal. Le front n'envoie que des identifiants de règles et le mode (Corbeille ou
 //! définitif) ; les chemins, identités et contenus attendus viennent de l'analyse, les
 //! autorisations des règles elles-mêmes (cible développée, portée, âge minimum).
+//! Le nettoyage avancé (jalon 6, `crate::advanced`) prépare ses sélections et passe par le même
+//! plan, la même exécution et le même journal.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,9 +37,12 @@ pub struct Selection {
     pub commands: Vec<PlannedCommand>,
     /// Règle de chaque cible, pour l'affichage.
     pub rule_names: HashMap<String, (String, String)>,
+    /// Commandes « administrateur » autorisées (gouffres système, une demande UAC chacune).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub elevated: bool,
 }
 
-fn expected(scan: &Scan, n: NodeId) -> Option<Expected> {
+pub(crate) fn expected(scan: &Scan, n: NodeId) -> Option<Expected> {
     let node = scan.node(n)?;
     let directory = node.kind == Kind::Dir || node.kind == Kind::CloudDir || node.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
     Some(Expected {
@@ -48,7 +53,7 @@ fn expected(scan: &Scan, n: NodeId) -> Option<Expected> {
     })
 }
 
-fn bytes_of(scan: &Scan, n: NodeId) -> u64 {
+pub(crate) fn bytes_of(scan: &Scan, n: NodeId) -> u64 {
     scan.node(n).map_or(0, |node| if node.flags & scan::model::F_HARDLINK_DUP != 0 { 0 } else { node.allocated })
 }
 
@@ -95,7 +100,7 @@ fn grant_for(applied: &Applied, scan: &Scan, rule: &Rule, n: NodeId) -> Option<R
 /// Cibles, autorisations et commandes des recommandations cochées.
 pub fn select(applied: &Applied, scan: &Scan, ids: &[String]) -> Result<Selection, LumenError> {
     let set = applied.set().ok_or_else(|| LumenError::UnknownReco(ids.join(", ")))?;
-    let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new() };
+    let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new(), elevated: false };
     for id in ids {
         let reco = applied.analysis.recos.iter().find(|r| &set.rules[r.rule].id == id).ok_or_else(|| LumenError::UnknownReco(id.clone()))?;
         let rule = &set.rules[reco.rule];
@@ -108,7 +113,7 @@ pub fn select(applied: &Applied, scan: &Scan, ids: &[String]) -> Result<Selectio
         for (i, c) in rule.commands.iter().filter_map(|c| c.official(applied.env.system_drive())).enumerate() {
             // Gain estimé porté par la première commande de la règle seulement.
             let bytes = if role == CommandRole::Action && i == 0 { reco.allocated } else { 0 };
-            sel.commands.push(PlannedCommand { command: c, role, measured: measured.clone(), bytes });
+            sel.commands.push(PlannedCommand { command: c, role, measured: measured.clone(), bytes, required: false });
         }
         if rule.action == Action::Command {
             continue; // Mesure seulement : la commande officielle fait le travail.
@@ -118,7 +123,7 @@ pub fn select(applied: &Applied, scan: &Scan, ids: &[String]) -> Result<Selectio
             sel.allow.grant(grant);
             let Some(exp) = expected(scan, n) else { continue };
             let contents = exp.directory.then(|| tree(scan, n));
-            sel.targets.push(Target { path: scan.path(n), authority: Authority::Rule(rule.id.clone()), expected: exp, bytes: bytes_of(scan, n), contents });
+            sel.targets.push(Target { path: scan.path(n), authority: Authority::Rule(rule.id.clone()), expected: exp, bytes: bytes_of(scan, n), contents, hash: None });
         }
     }
     Ok(sel)
@@ -149,6 +154,8 @@ pub struct PlanCommandDto {
     pub line: String,
     pub explanation: String,
     pub prerequisite: bool,
+    /// Prérequis obligatoire : s'il n'est pas rempli, rien d'autre n'est fait.
+    pub required: bool,
     pub needs_elevation: bool,
     pub size: u64,
 }
@@ -182,6 +189,8 @@ pub struct PlanDto {
     pub volumes: Vec<VolumeFreeDto>,
     pub refused: Vec<RefusedDto>,
     pub skipped_locked: usize,
+    /// Commandes « administrateur » lancées par Lumen (une demande UAC chacune).
+    pub elevated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -221,6 +230,8 @@ pub struct ItemReportDto {
 pub struct CommandReportDto {
     pub line: String,
     pub status: &'static str,
+    /// A fait son travail (un point de restauration déjà récent compte).
+    pub satisfied: bool,
     pub detail: Option<String>,
 }
 
@@ -241,6 +252,8 @@ pub struct ReportDto {
     pub cancelled: usize,
     pub items: Vec<ItemReportDto>,
     pub commands: Vec<CommandReportDto>,
+    /// Arrêt avant les actions (prérequis obligatoire non rempli).
+    pub aborted: Option<String>,
     pub journal_error: Option<String>,
 }
 
@@ -302,13 +315,21 @@ fn report_dto(plan_id: u32, r: &Report, action_id: Option<i64>, journal_error: O
             .map(|c| CommandReportDto {
                 line: command_line(&c.command),
                 status: journal::status_name(&c.status),
+                satisfied: c.satisfied(),
                 detail: match &c.status {
-                    CommandStatus::Failed(code) => Some(format!("code {code} — {}", c.stderr.lines().last().unwrap_or(""))),
+                    // Commande élevée : sorties non capturables, signification du code de sortie.
+                    CommandStatus::Failed(code) => Some(match c.command.exit_meaning(*code) {
+                        Some(m) => m.to_owned(),
+                        None => format!("code {code} — {}", c.stderr.lines().last().unwrap_or("")),
+                    }),
                     CommandStatus::Error(e) => Some(e.clone()),
+                    CommandStatus::Succeeded => c.command.exit_meaning(0).map(str::to_owned),
+                    _ if !c.stderr.is_empty() => Some(c.stderr.clone()),
                     _ => None,
                 },
             })
             .collect(),
+        aborted: r.aborted.clone(),
         journal_error,
     }
 }
@@ -321,6 +342,8 @@ struct Prepared {
     #[cfg_attr(not(windows), allow(dead_code))]
     allow: Allowlist,
     title: String,
+    /// Type de nettoyage, pour le journal.
+    kind: &'static str,
 }
 
 #[derive(Default)]
@@ -336,7 +359,7 @@ pub struct CleanState(Mutex<Inner>);
 #[derive(Default)]
 pub struct JournalState(Mutex<Option<Journal>>);
 
-fn unix_ms() -> i64 {
+pub(crate) fn unix_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
@@ -345,7 +368,7 @@ fn now_filetime() -> i64 {
     (unix_ms() / 1000 + 11_644_473_600) * 10_000_000
 }
 
-fn with_journal<T>(app: &AppHandle, f: impl FnOnce(&mut Journal) -> Result<T, journal::JournalError>) -> Result<T, LumenError> {
+pub(crate) fn with_journal<T>(app: &AppHandle, f: impl FnOnce(&mut Journal) -> Result<T, journal::JournalError>) -> Result<T, LumenError> {
     let state = app.state::<JournalState>();
     let mut guard = state.0.lock().map_err(|_| LumenError::Journal("journal indisponible".into()))?;
     if guard.is_none() {
@@ -366,7 +389,8 @@ mod platform {
         let layout = safety::win::system_layout().map_err(|e| LumenError::Plan(e.to_string()))?;
         let deny = safety::denylist::DenyList::new(&layout);
         let checker = safety::check::Checker { probe: &safety::win::WinProbe, deny: &deny, allow: &sel.allow, now: now_filetime() };
-        Ok(Plan::build(&checker, &sel.targets, mode).with_commands(sel.commands.clone()))
+        let plan = Plan::build(&checker, &sel.targets, mode).with_commands(sel.commands.clone());
+        Ok(if sel.elevated { plan.with_elevation() } else { plan })
     }
 
     #[cfg(windows)]
@@ -462,7 +486,7 @@ fn plan_dto(id: u32, p: &Prepared, sel: &Selection, display: &dyn Fn(&str) -> St
             .map(|i| {
                 let rule = match &i.authority {
                     Authority::Rule(r) => r.clone(),
-                    Authority::Selection(s) => s.to_string(),
+                    Authority::Selection(s) | Authority::Duplicates(s) => s.to_string(),
                 };
                 PlanItemDto {
                     path: display(&i.requested.display_string()),
@@ -481,6 +505,7 @@ fn plan_dto(id: u32, p: &Prepared, sel: &Selection, display: &dyn Fn(&str) -> St
                 line: command_line(&c.command),
                 explanation: c.command.explanation().to_owned(),
                 prerequisite: c.role == CommandRole::Prerequisite,
+                required: c.required,
                 needs_elevation: c.command.needs_elevation(),
                 size: c.bytes,
             })
@@ -488,6 +513,7 @@ fn plan_dto(id: u32, p: &Prepared, sel: &Selection, display: &dyn Fn(&str) -> St
         volumes: volumes.iter().map(|v| VolumeFreeDto { volume: v.display_string(), free: platform::free(v) }).collect(),
         refused: plan.refused().iter().take(MAX_LISTED).map(|(path, r)| RefusedDto { path: display(path), reason: r.to_string() }).collect(),
         skipped_locked: plan.skipped().len(),
+        elevated: plan.elevated(),
     }
 }
 
@@ -503,18 +529,34 @@ pub fn plan_create(
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
     let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
     let sel = select(applied, &entry.scan, &recos)?;
-    let mode = match mode {
-        ModeDto::Trash => DeleteMode::Trash,
-        ModeDto::Permanent => DeleteMode::Permanent,
-    };
-    let plan = platform::build(&sel, mode)?;
+    let mode = delete_mode(mode);
     let names: Vec<&str> = recos.iter().filter_map(|r| sel.rule_names.get(r)).map(|(fr, _)| fr.as_str()).collect();
     let title = if names.len() <= 3 { names.join(", ") } else { format!("{} recommandations", names.len()) };
-    let prepared = Prepared { plan, allow: sel.allow.clone(), title };
+    prepare(&state, &sel, mode, title, "recos", &|p| applied.display(p))
+}
+
+pub(crate) fn delete_mode(mode: ModeDto) -> DeleteMode {
+    match mode {
+        ModeDto::Trash => DeleteMode::Trash,
+        ModeDto::Permanent => DeleteMode::Permanent,
+    }
+}
+
+/// Construit le plan d'une sélection et le garde pour la confirmation (rien n'est fait ici).
+pub(crate) fn prepare(
+    state: &CleanState,
+    sel: &Selection,
+    mode: DeleteMode,
+    title: String,
+    kind: &'static str,
+    display: &dyn Fn(&str) -> String,
+) -> Result<PlanDto, LumenError> {
+    let plan = platform::build(sel, mode)?;
+    let prepared = Prepared { plan, allow: sel.allow.clone(), title, kind };
     let mut inner = state.0.lock().map_err(|_| LumenError::Plan("état indisponible".into()))?;
     inner.next_id += 1;
     let id = inner.next_id;
-    let dto = plan_dto(id, &prepared, &sel, &|p| applied.display(p));
+    let dto = plan_dto(id, &prepared, sel, display);
     // Seul le dernier plan affiché peut être confirmé.
     inner.plans.clear();
     inner.plans.insert(id, Arc::new(prepared));
@@ -580,7 +622,7 @@ pub fn plan_execute(app: AppHandle, state: State<'_, CleanState>, plan_id: u32, 
             let dto = match result {
                 Ok(report) => {
                     let script = platform::script(&prepared.plan, &prepared.title);
-                    let meta = ActionMeta { started_at: started, finished_at: unix_ms(), title: &prepared.title, planned_bytes: prepared.plan.total_bytes(), script: &script };
+                    let meta = ActionMeta { kind: prepared.kind, started_at: started, finished_at: unix_ms(), title: &prepared.title, planned_bytes: prepared.plan.total_bytes(), script: &script };
                     let (id, err) = match with_journal(&app, |j| j.record(&meta, &report)) {
                         Ok(id) => (Some(id), None),
                         Err(e) => (None, Some(e.to_string())),

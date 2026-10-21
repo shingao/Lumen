@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             expected: Expected::from_facts(&facts),
             bytes,
             contents,
+            hash: None,
         });
     }
     let checker = Checker { probe: &WinProbe, deny: &deny, allow: &allow, now: i64::MAX };

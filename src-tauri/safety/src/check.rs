@@ -58,6 +58,8 @@ pub struct Target {
     pub bytes: u64,
     /// Dossier : son contenu tel que le scan l'a vu (obligatoire). Fichier : `None`.
     pub contents: Option<Vec<ExpectedNode>>,
+    /// Doublon : BLAKE3 du contenu lu par la recherche, recalculé juste avant la suppression.
+    pub hash: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +98,10 @@ pub enum Refusal {
     Cloud,
     #[error("contenu du dossier inconnu : rien n'est fait sans la liste de l'analyse")]
     ContentsUnknown,
+    #[error("dernier exemplaire de ce groupe de doublons : il en reste toujours au moins un")]
+    LastCopy,
+    #[error("même fichier que les autres exemplaires (lien physique) : le supprimer ne libère rien")]
+    HardLink,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +123,8 @@ pub struct Validated {
     pub expected: Expected,
     /// Contenu attendu d'un dossier, recontrôlé élément par élément au moment de l'action.
     pub contents: Option<Vec<ExpectedNode>>,
+    /// Doublon : empreinte du contenu, recalculée au moment de l'action.
+    pub hash: Option<[u8; 32]>,
 }
 
 // Verdict éphémère, aussitôt consommé : la taille de `Accepted` est sans importance.
@@ -187,8 +195,16 @@ impl<P: Probe> Checker<'_, P> {
             return Err(Refusal::UnresolvedShortName(short.clone()));
         }
 
-        // 2. Liste blanche, sur le chemin réel.
+        // 2. Liste blanche, sur le chemin réel. Un doublon doit être exactement l'exemplaire haché :
+        //    même identité, même empreinte, et jamais un dossier.
         let permit = self.allow.permits(&canonical, &target.authority).ok_or(Refusal::NotAllowed)?;
+        if let Authority::Duplicates(id) = &target.authority {
+            let member = self.allow.duplicate_group(*id, &canonical).and_then(|g| g.members.iter().find(|m| m.path == canonical));
+            let same = member.is_some_and(|m| Some(m.hash) == target.hash && m.expected == target.expected && !target.expected.directory);
+            if !same {
+                return Err(Refusal::NotAllowed);
+            }
+        }
 
         // 3. Denylist sur le chemin réel (le chemin demandé peut contenir des noms courts 8.3,
         //    qui fausseraient la comparaison), puis attributs (SYSTEM, dossier git).
@@ -254,6 +270,7 @@ impl<P: Probe> Checker<'_, P> {
             bytes: target.bytes,
             expected: target.expected,
             contents: target.contents.clone(),
+            hash: target.hash,
         }))
     }
 }
@@ -315,7 +332,7 @@ mod tests {
         fn target(&self, raw: &str, rule: &str) -> Target {
             let path = WinPath::parse(raw).unwrap();
             let facts = self.probe.facts(&self.probe.canonicalize(&path).unwrap()).unwrap();
-            Target { path: raw.into(), authority: Authority::Rule(rule.into()), expected: Expected::from_facts(&facts), bytes: facts.size, contents: None }
+            Target { path: raw.into(), authority: Authority::Rule(rule.into()), expected: Expected::from_facts(&facts), bytes: facts.size, contents: None, hash: None }
         }
 
         fn verdict(&self, raw: &str, rule: &str) -> Verdict {
@@ -473,6 +490,7 @@ mod tests {
             expected: Expected::from_facts(&facts),
             bytes: facts.size,
             contents: None,
+            hash: None,
         };
         assert!(w.checker().check(&t).is_accepted());
         let other = Target { authority: Authority::Selection(4), ..t };

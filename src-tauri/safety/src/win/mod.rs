@@ -3,9 +3,12 @@
 //! Testé uniquement sur Windows (CI), avec de vraies fixtures (voir `tests.rs`).
 #![allow(unsafe_code)]
 
+pub mod content;
 mod effects;
+mod elevated;
 mod recycle;
 mod restore;
+pub mod sinks;
 #[cfg(test)]
 mod tests;
 mod volume;
@@ -246,6 +249,10 @@ impl Probe for WinProbe {
     /// Ouverture sans aucun partage : échoue si un autre programme a l'élément ouvert.
     fn volume_facts(&self, path: &WinPath) -> Result<VolumeFacts, ProbeError> {
         volume_facts(path)
+    }
+
+    fn content_hash(&self, path: &WinPath) -> Result<[u8; 32], ProbeError> {
+        content::hash_file(path, content::Digest::Full, None)
     }
 
     fn is_locked(&self, path: &WinPath) -> Result<bool, ProbeError> {
