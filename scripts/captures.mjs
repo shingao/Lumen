@@ -74,5 +74,57 @@ await shot("16-journal-sombre", {
     await p.locator("[aria-expanded]").first().click();
   },
 });
+// Jalon 6 : nettoyage avancé (dormants, doublons, gros fichiers, gouffres système).
+const advanced = async (p, tab) => {
+  await p.locator("nav").getByRole("button", { name: /^(Nettoyage|Cleanup)$/ }).click();
+  if (tab) await p.getByRole("button", { name: tab, exact: true }).click();
+};
+await shot("17-dormants", {
+  act: async (p) => {
+    await advanced(p);
+    await p.getByRole("checkbox", { name: /Mariage Julie/ }).first().check();
+  },
+});
+await shot("18-doublons", {
+  act: async (p) => {
+    await advanced(p, "Doublons");
+    await p.getByRole("button", { name: "Rechercher les doublons" }).click();
+    await p.getByText(/groupes de doublons/).waitFor({ timeout: 10000 });
+    await p.getByRole("button", { name: /^Cocher les copies \(/ }).click();
+  },
+});
+await shot("19-gros-fichiers-sombre", {
+  theme: "dark",
+  act: async (p) => {
+    await advanced(p, "Gros fichiers");
+    await p.getByRole("button", { name: /^Images disque/ }).click();
+  },
+});
+await shot("20-gouffres", {
+  act: async (p) => {
+    await advanced(p, "Gouffres système");
+    await p.getByRole("checkbox", { name: /WinSxS/ }).check();
+    await p.getByRole("group", { name: "Hibernation" }).getByRole("button", { name: "Réduire" }).click();
+    await p.getByRole("checkbox", { name: /Points de restauration/ }).check();
+  },
+});
+await shot("21-confirmation-systeme-sombre", {
+  theme: "dark",
+  act: async (p) => {
+    await advanced(p, "Gouffres système");
+    await p.getByRole("checkbox", { name: /WinSxS/ }).check();
+    await p.getByRole("group", { name: "Hibernation" }).getByRole("button", { name: "Désactiver" }).click();
+    await p.getByRole("button", { name: "Préparer les actions…" }).click();
+    await p.getByText("Voir la liste").click();
+  },
+});
+await shot("22-doublons-anglais", {
+  locale: "en-US",
+  act: async (p) => {
+    await advanced(p, "Duplicates");
+    await p.getByRole("button", { name: "Find duplicates" }).click();
+    await p.getByText(/duplicate groups/).waitFor({ timeout: 10000 });
+  },
+});
 await browser.close();
 console.log(`captures dans ${out}`);

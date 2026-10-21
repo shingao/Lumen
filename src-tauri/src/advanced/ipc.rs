@@ -107,7 +107,7 @@ struct DupDoneEvent {
     result: DuplicatesDto,
 }
 
-mod platform {
+pub(crate) mod platform {
     use super::*;
     use crate::advanced::duplicates::{ContentReader, ReadError};
     use safety::denylist::DenyList;

@@ -23,6 +23,7 @@ function methodOf(plan: CleanPlan, t: Translator): string {
 /** « Mettre 44,2 Go à la Corbeille », « Supprimer définitivement 44,2 Go », « Lancer les commandes · 13,4 Go ». */
 function cleanButtonLabel(plan: CleanPlan, t: Translator): string {
   const size = formatBytes(plan.total, t.locale);
+  if (plan.elevated && plan.items.length + plan.moreItems === 0) return t.plural("clean.go.system", plan.count, { n: formatCount(plan.count, t.locale) });
   if (plan.items.length + plan.moreItems === 0) return t("clean.go.command", { size });
   return t(plan.mode === "trash" ? "clean.go.trash" : "clean.go.permanent", { size });
 }
@@ -66,8 +67,8 @@ function PlanList({ plan }: { plan: CleanPlan }) {
             <span className={styles.entryText}>
               <code className={styles.mono}>{c.line}</code>
               <span className={styles.hint}>
-                {c.prerequisite ? t("clean.prerequisite") : c.explanation}
-                {c.needsElevation ? ` · ${t("clean.needsAdmin")}` : ""}
+                {c.required ? `${t("clean.prerequisite.required")} · ${c.explanation}` : c.prerequisite ? t("clean.prerequisite") : c.explanation}
+                {c.needsElevation ? ` · ${t(plan.elevated ? "clean.uac" : "clean.needsAdmin")}` : ""}
               </span>
             </span>
             {c.size > 0 && <span className={styles.size}>{formatBytes(c.size, t.locale)}</span>}
@@ -128,7 +129,8 @@ function Confirm({ plan }: { plan: CleanPlan }) {
       )}
       <PlanList plan={plan} />
       <Refused plan={plan} />
-      <p className={styles.note}>{t(plan.mode === "trash" ? "clean.note.trash" : "clean.note.permanent")}</p>
+      {plan.elevated && <p className={styles.notice}>{t("clean.elevated.note")}</p>}
+      {deletes && <p className={styles.note}>{t(plan.mode === "trash" ? "clean.note.trash" : "clean.note.permanent")}</p>}
       <div className={styles.actions}>
         <Button variant="link" onClick={cancelCleanup}>
           {t("clean.cancel")}
@@ -175,6 +177,7 @@ function Running() {
   const t = useT();
   const progress = useStore((s) => s.clean.progress);
   const cancelling = useStore((s) => s.clean.cancelling);
+  const elevated = useStore((s) => s.clean.plan?.elevated ?? false);
   const ratio = progress && progress.total > 0 ? Math.min(1, progress.index / progress.total) : 0;
   return (
     <>
@@ -182,7 +185,9 @@ function Running() {
         <span style={{ width: `${Math.round(ratio * 100)}%` }} />
       </div>
       <p className={styles.current}>
-        <span className={styles.hint}>{t(progress?.phase === "command" ? "clean.running.command" : "clean.running.item")}</span>
+        <span className={styles.hint}>
+          {t(progress?.phase === "command" ? (elevated ? "clean.running.uac" : "clean.running.command") : "clean.running.item")}
+        </span>
         <code className={styles.mono}>{progress?.label ?? "…"}</code>
       </p>
       <p className={styles.hint}>
@@ -230,6 +235,7 @@ function ReportView({ report }: { report: CleanReport }) {
             </div>
           ))}
       </dl>
+      {report.aborted && <p className={styles.warnText}>{t("clean.report.aborted", { reason: report.aborted })}</p>}
       {report.commands.length > 0 && (
         <ul className={styles.commands}>
           {report.commands.map((c) => (
@@ -238,8 +244,8 @@ function ReportView({ report }: { report: CleanReport }) {
                 <code className={styles.mono}>{c.line}</code>
                 {c.detail && <span className={styles.hint}>{c.detail}</span>}
               </span>
-              <span className={styles.status} data-status={c.status}>
-                {t(`clean.command.${c.status}`)}
+              <span className={styles.status} data-status={c.satisfied ? "succeeded" : c.status}>
+                {c.satisfied && c.status !== "succeeded" ? t("clean.command.satisfied") : t(`clean.command.${c.status}`)}
               </span>
             </li>
           ))}

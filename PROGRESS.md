@@ -8,13 +8,73 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 2 | Module `safety/` complet + tests (bloquants en CI) | **fait — validé** |
 | 3 | Scanner Rust (parcours parallèle puis MFT), progression, sélecteur de disque réel | **fait — validé** (PR #1 mergée) |
 | 4 | Moteur de règles, recommandations et KPI calculés | **fait — validé** (PR #2 mergée) |
-| 5 | Scripts, copie, exécution (simulation, confirmation, journal) | **fait — à tester** (dans Windows Sandbox ou une VM d'abord) |
-| 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | à faire |
+| 5 | Scripts, copie, exécution (simulation, confirmation, journal) | **fait — validé** (PR #3 mergée, testé en Sandbox) |
+| 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | **fait — à tester** (dans Windows Sandbox ou une VM d'abord) |
 | 7 | Snapshots et Timeline | à faire |
 | 8 | Dev et Jeux | à faire |
 | 9 | Déplacement intelligent, recherche instantanée, export de rapport | à faire |
 | 10 | Onboarding et astuces contextuelles | à faire |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | à faire |
+
+---
+
+## Jalon 6 — nettoyage avancé
+
+Nouvelles formes de suppression (doublons, fichiers choisis) et premières commandes lancées en administrateur. **À tester d'abord dans Windows Sandbox ou une VM.**
+
+### Livré
+
+- **Fichiers dormants** (`src-tauri/src/advanced/dormant.rs`) : fichiers non utilisés depuis 3 / 6 / 12 / 24 mois (6 par défaut, Paramètres), groupés par dossier.
+  - **Date de dernier accès seulement si Windows la tient à jour** : `NtfsDisableLastAccessUpdate` lu dans le registre (la valeur qu'affiche `fsutil behavior query disablelastaccess`, bit 0 à 1 = désactivé, valeur absente = non fiable) **et** l'analyse l'a jugée fiable. Sinon **bascule sur la date de modification**, affichée en clair avec la valeur brute (« … = 0x80000003 : Lumen se base sur la date de dernière modification »).
+  - Toujours **« À vérifier »**, rien de coché par défaut. Exclus : dossiers d'applis et système (`AppData`, `ProgramData`, `Program Files`, `Windows`, `node_modules`, jeux…, dossiers `.xxx` et `$…`), **projets git** (dossier contenant `.git` et tout ce qu'il contient), fichiers cachés ou système, fichiers cloud, denylist, éléments déjà couverts par une recommandation, fichiers de moins de 1 Mo.
+- **Doublons** (`advanced/duplicates.rs`, lecture dans `safety::win::content`) — la seule fonctionnalité qui lit le contenu des fichiers :
+  - lecture **avec la date de dernier accès gelée** (`SetFileTime` à `0xFFFFFFFF` sur le handle avant toute lecture ; si le gel est refusé, le fichier n'est pas lu), **E/S basse priorité** (`THREAD_MODE_BACKGROUND_BEGIN` pendant la lecture), **annulable** entre deux blocs de 1 Mio, progression par événements ;
+  - **fichiers cloud jamais lus ni rapatriés** : attributs vérifiés avant l'ouverture, puis `FILE_FLAG_OPEN_NO_RECALL`, puis attributs revérifiés sur le handle ;
+  - **les liens physiques ne sont pas des doublons** : un fichier (file ID) n'est compté qu'une fois, ses autres noms sont écartés et comptés à part ;
+  - même taille → mêmes bords (64 Kio au début et à la fin, et la taille) → même contenu complet (BLAKE3) ;
+  - **empreintes en cache** dans la base du journal (schéma v2, table `hash_cache`), par volume + file ID + taille + date de modification ; un fichier modifié est relu ; oubli après 6 mois sans servir ;
+  - un **exemplaire à garder présélectionné** (le plus ancien, puis le chemin le plus court) ; **rien n'est coché par défaut**, « Cocher les copies » coche tout sauf lui ; l'interface empêche de cocher le dernier exemplaire d'un groupe ;
+  - **`safety` refuse toute sélection qui retirerait tous les exemplaires d'un groupe** (`Refusal::LastCopy`) ou qui désignerait deux noms d'un même fichier (`Refusal::HardLink`) ; **au moment de la suppression**, il vérifie qu'un autre exemplaire non sélectionné est intact (identité, taille, date, pas un lien, même empreinte), puis **recalcule l'empreinte de l'élément** : si le contenu a changé, l'élément est sauté (« contenu modifié depuis la recherche de doublons »).
+- **Gros fichiers** (`advanced/largest.rs`) : les **100 plus gros** de l'analyse, **filtre par type** (vidéos, images, audio, archives, images disque, installeurs, documents, autres) avec le nombre par type ; toujours **« À vérifier »** ; fichiers protégés, cachés, système et cloud exclus.
+- **Gouffres système** (`safety::win::sinks` pour les faits lus sans droits, `safety::win::elevated` pour l'action) :
+  - **commande officielle lancée directement en administrateur** par `ShellExecuteEx` (« runas ») : une demande UAC par commande, **binaire par son chemin complet** sous `%SystemRoot%\System32`, **arguments fixes issus de la liste fermée** (refus de tout argument contenant un espace, un guillemet ou un caractère de shell). **L'assistant MFT n'est pas élargi** : il reste mono-tâche. Code de sortie relevé ; refus de l'UAC signalé (« refusée (UAC) ») ;
+  - **WinSxS** : `Dism.exe /Online /Cleanup-Image /StartComponentCleanup`, **sans `/ResetBase`** (non proposé : il rendrait les mises à jour installées impossibles à désinstaller) ;
+  - **Hibernation** : `powercfg /hibernate off` (libère `hiberfil.sys`, mais **plus de démarrage rapide** ni de veille prolongée, dit en clair) ou `/type reduced` (garde le démarrage rapide) ;
+  - **Points de restauration** : `vssadmin delete shadows /for=C: /oldest /quiet`, **uniquement le plus ancien, jamais `/all`** ;
+  - **Windows.old** : **`cleanmgr` uniquement**, lancé en interactif (`/d C:`) — coche « Installation(s) précédente(s) de Windows ». **Pas de `/sagerun`, donc aucune clé `StateFlags` écrite** dans le registre ;
+  - **pagefile.sys** (et swapfile.sys) : **informatif**, sans action ;
+  - **point de restauration proposé avant** (activé par défaut) : script PowerShell figé dans le binaire (`-EncodedCommand`, aucun texte variable), **prérequis obligatoire** : s'il n'est pas rempli, rien d'autre n'est lancé et le bilan dit pourquoi. **Limite de Windows d'un point par 24 h** gérée : le script lit la fréquence (`SystemRestorePointCreationFrequency`, 1 440 min par défaut) et, si un point plus récent existe, **sort avec le code 3 que Lumen affiche** (« un point de restauration existe déjà depuis moins de 24 h : il sert de point de retour ») au lieu d'échouer en silence ; protection désactivée (5) ou point non créé (4) : arrêt avant les actions ;
+  - **gain mesuré par l'espace libre du lecteur système avant et après**, journalisé comme au jalon 5 (type `system`, commandes, codes de sortie et leur signification).
+- **Plan, exécution, journal communs** : `advanced_plan` (requête `dormant` / `largest` / `duplicates` avec des identifiants de nœuds **proposés par la dernière recherche**, ou `system` avec des actions de la liste fermée) → même `cleanup::prepare`, même confirmation (empreinte), même exécution, même journal. Le front n'envoie jamais de chemin. Journal en **schéma v2** (migration automatique) : type de nettoyage, raison d'un arrêt avant les actions, cache des empreintes.
+- **Interface** : écran **Nettoyage** à 4 onglets (dormants, doublons, gros fichiers, gouffres système) ; confirmation adaptée aux commandes élevées (prérequis obligatoire, « autorisation administrateur (UAC) », « une fois lancée, une commande système se termine seule ») ; bilan avec « déjà fait » (point de restauration récent) et l'arrêt éventuel ; journal avec le type de nettoyage.
+- **Tests** : `safety` 82 tests portables + 41 sous Windows, dont nouveaux : doublons jamais tous les exemplaires, liens physiques jamais des doublons, doublon modifié avant suppression sauté, exemplaire gardé disparu → rien supprimé, commandes élevées seulement si le plan l'autorise, point de restauration obligatoire avant les actions ; **fixtures Windows** : hash sans toucher au dernier accès (volume de test où il est tenu à jour), hash du contenu et des bords, fichier cloud jamais lu, commande élevée et son code de sortie, script du point de restauration exécuté, gouffres lus sans admin. Appli : dormants (base de date, exclusions), gros fichiers, doublons (liens physiques, cloud, applis, cache, annulation), sélections → autorisations, actions système (jamais `/ResetBase` ni `/all`), journal v2 (migration, cache, bilans avec arrêt). Interface (vitest). **Bout en bout sur la CI Windows** : faux profil analysé, doublons trouvés par lecture réelle (lien physique, projet git et AppData écartés, dernier accès inchangé, cache), sélection de tous les exemplaires refusée, une copie supprimée (Corbeille) et l'autre **modifiée juste avant la suppression puis sautée**, dormant supprimé, le reste intact.
+
+### Décisions
+
+- **Gouffres système par `ShellExecuteEx` « runas » plutôt que par l'assistant élevé** (demande à la validation du jalon 5) : l'assistant MFT reste muet, éphémère et mono-tâche. Conséquences assumées : **un processus élevé ne peut pas être arrêté** par Lumen non élevé (annuler ou le délai maximal ne font que cesser d'attendre, ce que le bilan dit), et **ses sorties ne sont pas capturables** : le journal garde le code de sortie et sa signification ; le gain est mesuré sur le disque.
+- **cleanmgr en interactif plutôt que `/sagerun`** : pas de clé `StateFlags` à écrire puis retirer dans `HKLM\…\VolumeCaches`, l'utilisateur voit et coche lui-même « Installation(s) précédente(s) de Windows ».
+- **Point de restauration par un script PowerShell figé** (Checkpoint-Computer) passé en `-EncodedCommand` : aucun texte variable, binaire par son chemin complet, mêmes règles que les autres commandes élevées. Code 3 = un point récent existe : **compte comme rempli**.
+- **Empreinte = BLAKE3(taille ‖ contenu)** ; les bords (64 Kio + 64 Kio) ne servent qu'à écarter vite les fichiers différents, jamais à décider d'un doublon.
+- **Doublons : seuil 1 Mo par défaut** (Paramètres), au plus 500 groupes affichés (les totaux restent exacts). Dormants : seuil 1 Mo.
+- **Rien n'est coché par défaut** dans les quatre onglets : tout y est « À vérifier ». Pas de hachures (réservées au « sans risque »).
+- Les sélections ne valent que pour la dernière recherche de l'analyse affichée : un identifiant qui n'en vient pas est refusé.
+
+### Écarts avec la maquette
+
+- La maquette n'a pas d'écran Nettoyage : il prolonge sa DA (même conteneur et même en-tête que l'Explorer, contrôles segmentés, listes à bord fin, chemins et tailles en mono, pastille « À vérifier » ambre, bouton vert « Nettoyer »). Captures : `design/captures/jalon-6/` (17 à 22).
+
+### Test manuel (jalon 6) — dans Windows Sandbox ou une VM
+
+1. Dans la Sandbox : `fsutil behavior query disablelastaccess`, puis analyse le profil et ouvre **Nettoyage › Fichiers dormants** : la phrase sous le choix des mois cite la même valeur et dit sur quelle date Lumen se base. Change-la (`fsutil behavior set disablelastaccess 1`, redémarrage de Lumen) : la bascule sur la date de modification est annoncée.
+2. Crée un vieux fichier (`(Get-Item x.zip).LastWriteTime = (Get-Date).AddYears(-1)`) dans Documents, un autre dans un dossier contenant `.git` et un dans `AppData` : seul le premier est proposé, rien n'est coché.
+3. **Doublons** : copie une vidéo à deux endroits, crée un lien physique (`New-Item -ItemType HardLink`) vers l'original. « Rechercher les doublons » : un groupe de 3, le lien n'y est pas ; la date de dernier accès des fichiers est inchangée (`(Get-Item f).LastAccessTime` avant / après).
+4. Essaie de cocher tous les exemplaires d'un groupe : le dernier ne se coche pas. « Cocher les copies », puis modifie une copie avant de confirmer : elle est sautée (« contenu modifié »), l'autre part à la Corbeille.
+5. Relance la recherche : elle est quasi immédiate (empreintes en cache).
+6. **Gros fichiers** : le filtre par type fonctionne, rien n'est coché ; nettoie un fichier, il est dans la Corbeille et au journal.
+7. **Gouffres système** : coche WinSxS et « Réduire » l'hibernation, garde le point de restauration : la confirmation annonce une demande UAC par commande. Confirme : UAC pour le point de restauration, puis pour chaque commande ; le bilan montre le gain mesuré sur C:.
+8. Relance aussitôt : le point de restauration est signalé « déjà fait » (moins de 24 h), les actions continuent.
+9. Refuse l'UAC d'une commande : elle est « refusée (UAC) », rien d'autre ne casse. Désactive la protection du système puis relance avec le point de restauration : arrêt avant les actions, raison affichée.
+10. Windows.old (si présent) : le Nettoyage de disque s'ouvre ; aucune clé `StateFlags` n'apparaît sous `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches`.
 
 ---
 

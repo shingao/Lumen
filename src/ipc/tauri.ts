@@ -14,6 +14,11 @@ import type {
   CleanPlan,
   CleanProgress,
   CleanReport,
+  DormantResult,
+  DuplicatesProgress,
+  DuplicatesResult,
+  LargestResult,
+  SystemSinks,
   JournalAction,
   JournalDetail,
   Kpis,
@@ -282,8 +287,11 @@ export function createTauriBackend(): Backend {
       return invoke<string>("plan_script", { planId: plan.planId });
     },
 
-    async planCleanup(scanId, ids, mode) {
-      const dto = await invoke<PlanDto>("plan_create", { scanId, recos: ids, mode });
+    async planCleanup(scanId, request, mode) {
+      const dto =
+        request.kind === "recos"
+          ? await invoke<PlanDto>("plan_create", { scanId, recos: request.ids, mode })
+          : await invoke<PlanDto>("advanced_plan", { scanId, request, mode });
       const plan: CleanPlan = { ...dto, items: dto.items.map((i) => ({ ...i, ruleName: locale === "en" ? i.ruleName[1] : i.ruleName[0] })) };
       return plan;
     },
@@ -301,6 +309,19 @@ export function createTauriBackend(): Backend {
       return () => offs.forEach((p) => void p.then((off) => off()));
     },
 
+    dormant: (scanId, months) => invoke<DormantResult>("dormant_find", { scanId, months }),
+    largest: (scanId, kind) => invoke<LargestResult>("largest_files", { scanId, kind }),
+    startDuplicates: (scanId, minSizeMb) => invoke("duplicates_start", { scanId, minSizeMb }),
+    cancelDuplicates: (scanId) => invoke("duplicates_cancel", { scanId }),
+    onDuplicatesEvent(listener) {
+      const offs = [
+        listen<DuplicatesProgress>("dup:progress", (e) => listener({ type: "progress", progress: e.payload })),
+        listen<DuplicatesResult>("dup:done", (e) => listener({ type: "done", result: e.payload })),
+        listen<{ scanId: number; cancelled: boolean; message: string }>("dup:failed", (e) => listener({ type: "failed", ...e.payload })),
+      ];
+      return () => offs.forEach((p) => void p.then((off) => off()));
+    },
+    systemSinks: () => invoke<SystemSinks>("system_sinks"),
     journal: () => invoke<JournalAction[]>("journal_list"),
     journalDetail: (actionId) => invoke<JournalDetail>("journal_detail", { actionId }),
     journalScript: (actionId) => invoke<string>("journal_script", { actionId }),

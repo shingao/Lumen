@@ -8,7 +8,9 @@ import type {
   CleanEvent,
   CleanPlan,
   CleanReport,
+  CleanKind,
   Crumb,
+  DuplicatesEvent,
   JournalAction,
   JournalDetail,
   Kpis,
@@ -25,6 +27,7 @@ import type {
 } from "../types";
 import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
+import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockProgram, mockSinks } from "./advanced";
 
 const SETTINGS_KEY = "lumen-dev-settings";
 /** Durée d'une étape du nettoyage simulé. */
@@ -252,6 +255,11 @@ export function createMockBackend(now: () => number = Date.now): Backend {
   const emitClean = (e: CleanEvent) => cleanListeners.forEach((fn) => fn(e));
   const journalActions: JournalAction[] = [];
   const journalDetails = new Map<number, JournalDetail>();
+  const planKinds = new Map<number, CleanKind>();
+  // Doublons simulés : avancement par étapes, annulable.
+  const dupListeners = new Set<(e: DuplicatesEvent) => void>();
+  const emitDup = (e: DuplicatesEvent) => dupListeners.forEach((fn) => fn(e));
+  const dupCancelled = new Set<number>();
 
   return {
     setLocale(next) {
@@ -368,13 +376,35 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       return resolved(parts.join("\n\n"));
     },
 
-    planCleanup(_scanId, ids, mode) {
+    planCleanup(_scanId, request, mode) {
+      if (request.kind !== "recos") {
+        const { items, commands } = mockAdvancedPlan(request, locale === "en");
+        const total = items.reduce((a, i) => a + i.size, 0) + commands.reduce((a, c) => a + c.size, 0);
+        const plan: CleanPlan = {
+          planId: ++nextPlan,
+          fingerprint: (nextPlan * 2654435761).toString(16).padStart(64, "0"),
+          mode,
+          total,
+          count: items.length + commands.filter((c) => !c.prerequisite).length,
+          items,
+          moreItems: 0,
+          commands,
+          volumes: [{ volume: "C:\\", free: gb(KPI.freeNow) }],
+          refused: [],
+          skippedLocked: 0,
+          elevated: request.kind === "system",
+        };
+        plans.set(plan.planId, plan);
+        planKinds.set(plan.planId, request.kind);
+        return resolved(plan);
+      }
+      const ids = request.ids;
       const chosen = RECOS.filter((r) => ids.includes(r.id));
       const commands = chosen
         .filter((r) => r.id === "npm")
         .flatMap((r) => [
-          { line: "npm cache clean --force", explanation: l({ fr: "Outil officiel : vide le cache npm", en: "Official tool: clears the npm cache" }), prerequisite: false, needsElevation: false, size: gb(r.size) },
-          { line: "npm cache verify", explanation: l({ fr: "Vérifie l'intégrité du cache npm", en: "Checks the npm cache integrity" }), prerequisite: false, needsElevation: false, size: 0 },
+          { line: "npm cache clean --force", explanation: l({ fr: "Outil officiel : vide le cache npm", en: "Official tool: clears the npm cache" }), prerequisite: false, required: false, needsElevation: false, size: gb(r.size) },
+          { line: "npm cache verify", explanation: l({ fr: "Vérifie l'intégrité du cache npm", en: "Checks the npm cache integrity" }), prerequisite: false, required: false, needsElevation: false, size: 0 },
         ]);
       const items = chosen
         .filter((r) => r.id !== "npm")
@@ -392,8 +422,10 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         volumes: [{ volume: "C:\\", free: gb(KPI.freeNow) }],
         refused: [],
         skippedLocked: 0,
+        elevated: false,
       };
       plans.set(plan.planId, plan);
+      planKinds.set(plan.planId, "recos");
       return resolved(plan);
     },
 
@@ -431,7 +463,13 @@ export function createMockBackend(now: () => number = Date.now): Backend {
             issues: [],
             moreIssues: 0,
           })),
-          commands: plan.commands.map((c, k) => ({ line: c.line, status: k < done ? "succeeded" : "cancelled", detail: null })),
+          // Point de restauration : Windows en garde un par 24 h, celui de moins de 24 h compte.
+          commands: plan.commands.map((c, k) =>
+            c.required && k < done
+              ? { line: c.line, status: "failed", satisfied: true, detail: l({ fr: "un point de restauration existe déjà depuis moins de 24 h (limite de Windows) : il sert de point de retour", en: "a restore point already exists from the last 24 h (Windows limit): it is used as the fallback" }) }
+              : { line: c.line, status: k < done ? "succeeded" : "cancelled", satisfied: k < done, detail: null },
+          ),
+          aborted: null,
           journalError: null,
         };
         const action: JournalAction = {
@@ -450,6 +488,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           itemsRefused: 0,
           itemsFailed: 0,
           itemsCancelled: report.cancelled,
+          kind: planKinds.get(planId) ?? "recos",
+          aborted: null,
         };
         journalActions.unshift(action);
         journalDetails.set(action.id, {
@@ -468,10 +508,10 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           })),
           commands: plan.commands.map((c, k) => ({
             role: c.prerequisite ? "prerequisite" : "action",
-            program: "C:\\Program Files\\nodejs\\node.exe",
+            program: mockProgram(c.line),
             args: c.line.split(" ").slice(1),
-            status: k < done ? "succeeded" : "cancelled",
-            exitCode: k < done ? 0 : null,
+            status: c.required && k < done ? "failed" : k < done ? "succeeded" : "cancelled",
+            exitCode: c.required && k < done ? 3 : k < done ? 0 : null,
             stdout: "",
             stderr: "",
             durationMs: 1200,
@@ -509,6 +549,42 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       cleanListeners.add(listener);
       return () => cleanListeners.delete(listener);
     },
+
+    dormant: (_scanId, months) => resolved(mockDormant(months, now())),
+    largest: (_scanId, kind) => resolved(mockLargest(kind, now())),
+
+    startDuplicates(scanId) {
+      dupCancelled.delete(scanId);
+      const steps: ["edges" | "full", number, number][] = [
+        ["edges", 120, 640],
+        ["edges", 400, 640],
+        ["edges", 640, 640],
+        ["full", 6, 18],
+        ["full", 18, 18],
+      ];
+      steps.forEach(([phase, done, total], i) => {
+        setTimeout(() => {
+          if (!dupCancelled.has(scanId)) emitDup({ type: "progress", progress: { scanId, phase, done, total } });
+        }, (i + 1) * 150);
+      });
+      setTimeout(() => {
+        if (dupCancelled.has(scanId)) emitDup({ type: "failed", scanId, cancelled: true, message: "recherche annulée" });
+        else emitDup({ type: "done", result: mockDuplicates(scanId, now()) });
+      }, (steps.length + 1) * 150);
+      return resolved(undefined);
+    },
+
+    cancelDuplicates(scanId) {
+      dupCancelled.add(scanId);
+      return resolved(undefined);
+    },
+
+    onDuplicatesEvent(listener) {
+      dupListeners.add(listener);
+      return () => dupListeners.delete(listener);
+    },
+
+    systemSinks: () => resolved(mockSinks()),
 
     journal: () => resolved([...journalActions]),
 

@@ -210,6 +210,8 @@ export interface PlanCommand {
   line: string;
   explanation: string;
   prerequisite: boolean;
+  /** Prérequis obligatoire : s'il n'est pas rempli, rien d'autre n'est fait. */
+  required: boolean;
   needsElevation: boolean;
   size: number;
 }
@@ -229,6 +231,8 @@ export interface CleanPlan {
   volumes: { volume: string; free: number | null }[];
   refused: { path: string; reason: string }[];
   skippedLocked: number;
+  /** Commandes « administrateur » lancées par Lumen : une demande UAC chacune. */
+  elevated: boolean;
 }
 
 export interface CleanProgress {
@@ -242,7 +246,7 @@ export interface CleanProgress {
 }
 
 export type ItemOutcome = "done" | "partial" | "skipped" | "refused" | "failed" | "cancelled";
-export type CommandOutcome = "succeeded" | "failed" | "timedOut" | "notFound" | "needsElevation" | "cancelled" | "error";
+export type CommandOutcome = "succeeded" | "failed" | "timedOut" | "notFound" | "needsElevation" | "declined" | "cancelled" | "error";
 
 export interface CleanReport {
   planId: number;
@@ -268,7 +272,10 @@ export interface CleanReport {
     issues: { path: string; reason: string }[];
     moreIssues: number;
   }[];
-  commands: { line: string; status: CommandOutcome; detail: string | null }[];
+  /** `satisfied` : a fait son travail (un point de restauration déjà récent compte). */
+  commands: { line: string; status: CommandOutcome; satisfied: boolean; detail: string | null }[];
+  /** Arrêt avant les actions : un prérequis obligatoire n'a pas été rempli. */
+  aborted: string | null;
   journalError: string | null;
 }
 
@@ -293,6 +300,8 @@ export interface JournalAction {
   itemsRefused: number;
   itemsFailed: number;
   itemsCancelled: number;
+  kind: CleanKind;
+  aborted: string | null;
 }
 
 export interface JournalItem {
@@ -325,3 +334,107 @@ export interface JournalDetail {
   items: JournalItem[];
   commands: JournalCommand[];
 }
+
+// --- Nettoyage avancé (jalon 6) ------------------------------------------------------------
+
+export type CleanKind = "recos" | "dormant" | "largest" | "duplicates" | "system";
+
+export type FileKind = "video" | "image" | "audio" | "archive" | "disk" | "installer" | "document" | "other";
+export const FILE_KINDS: readonly FileKind[] = ["video", "image", "audio", "archive", "disk", "installer", "document", "other"];
+
+/** Un fichier proposé : toujours « À vérifier ». */
+export interface FileRow {
+  id: number;
+  name: string;
+  /** Chemin affiché (`~\…`). */
+  path: string;
+  size: number;
+  logical: number;
+  modified: number;
+  accessed: number;
+  kind: FileKind;
+  /** Dans un dossier d'appli : à vérifier avec soin. */
+  app: boolean;
+}
+
+export interface DormantResult {
+  months: number;
+  /** Date utilisée : dernier accès (si Windows le tient à jour) ou dernière modification. */
+  basis: "lastAccess" | "lastWrite";
+  /** Valeur brute de `NtfsDisableLastAccessUpdate` (`fsutil behavior query disablelastaccess`). */
+  lastAccessRaw: number | null;
+  total: number;
+  count: number;
+  folders: { path: string; size: number; count: number; files: FileRow[] }[];
+}
+
+export interface LargestResult {
+  files: FileRow[];
+  kinds: [FileKind, number][];
+}
+
+export interface DuplicateGroup {
+  id: number;
+  size: number;
+  /** Ce que libère la suppression de tous les exemplaires sauf un. */
+  wasted: number;
+  members: FileRow[];
+  /** Exemplaire présélectionné pour être gardé (le plus ancien). */
+  keep: number;
+}
+
+export interface DuplicateStats {
+  candidates: number;
+  read: number;
+  cached: number;
+  skippedCloud: number;
+  skippedNotFrozen: number;
+  errors: number;
+  hardLinks: number;
+}
+
+export interface DuplicatesResult {
+  scanId: number;
+  groups: DuplicateGroup[];
+  moreGroups: number;
+  wasted: number;
+  stats: DuplicateStats;
+}
+
+export interface DuplicatesProgress {
+  scanId: number;
+  phase: "edges" | "full";
+  done: number;
+  total: number;
+}
+
+export type DuplicatesEvent =
+  | { type: "progress"; progress: DuplicatesProgress }
+  | { type: "done"; result: DuplicatesResult }
+  | { type: "failed"; scanId: number; cancelled: boolean; message: string };
+
+export type SystemAction = "components" | "hibernateOff" | "hibernateReduced" | "oldestRestorePoint" | "windowsOld";
+
+export interface SystemSinks {
+  /** Faits lus sur ce PC (faux hors de Windows). */
+  available: boolean;
+  systemDrive: string;
+  hiberfil: number | null;
+  pagefile: number | null;
+  swapfile: number | null;
+  hibernateEnabled: boolean | null;
+  fastStartup: boolean | null;
+  windowsOld: boolean;
+  restorePointFrequencyMin: number;
+  lastAccessRaw: number | null;
+  lastAccessUpdated: boolean;
+  free: number | null;
+}
+
+/** Ce que l'interface demande à safety : jamais un chemin, seulement des identifiants. */
+export type CleanRequest =
+  | { kind: "recos"; ids: string[] }
+  | { kind: "dormant"; ids: number[] }
+  | { kind: "largest"; ids: number[] }
+  | { kind: "duplicates"; ids: number[] }
+  | { kind: "system"; actions: SystemAction[]; restorePoint: boolean };

@@ -7,9 +7,14 @@ import type {
   CleanEvent,
   CleanMode,
   CleanPlan,
+  CleanRequest,
+  DormantResult,
+  DuplicatesEvent,
+  FileKind,
   JournalAction,
   JournalDetail,
   Kpis,
+  LargestResult,
   NodeId,
   Recommendation,
   RecommendationDetail,
@@ -19,6 +24,7 @@ import type {
   ScanTarget,
   SearchHit,
   Settings,
+  SystemSinks,
   TreeSlice,
   Volume,
 } from "./types";
@@ -38,8 +44,18 @@ export interface Backend {
   recommendation(id: string): Promise<RecommendationDetail>;
   /** Script PowerShell des recommandations données (simulation par défaut, garde-fous embarqués). */
   script(scanId: number, ids: readonly string[]): Promise<string>;
-  /** Plan validé par safety pour les recommandations cochées ; rien n'est fait. */
-  planCleanup(scanId: number, ids: readonly string[], mode: CleanMode): Promise<CleanPlan>;
+  /** Plan validé par safety pour la sélection (recommandations, nettoyage avancé) ; rien n'est fait. */
+  planCleanup(scanId: number, request: CleanRequest, mode: CleanMode): Promise<CleanPlan>;
+  /** Fichiers dormants (« À vérifier ») non utilisés depuis `months` mois. */
+  dormant(scanId: number, months: number): Promise<DormantResult>;
+  /** Les 100 plus gros fichiers, filtrés par type. */
+  largest(scanId: number, kind: FileKind | null): Promise<LargestResult>;
+  /** Recherche des doublons (lit le contenu) ; résultat par `onDuplicatesEvent`. */
+  startDuplicates(scanId: number, minSizeMb: number): Promise<void>;
+  cancelDuplicates(scanId: number): Promise<void>;
+  onDuplicatesEvent(listener: (event: DuplicatesEvent) => void): () => void;
+  /** Gouffres système, lus sans droits d'administrateur. */
+  systemSinks(): Promise<SystemSinks>;
   /** Exécution réelle du plan affiché (son empreinte), avancement et bilan par `onCleanEvent`. */
   executePlan(planId: number, fingerprint: string, permanentAcknowledged: boolean): Promise<void>;
   cancelPlan(planId: number): Promise<void>;

@@ -114,7 +114,9 @@ function ActionRow({ action, open, onToggle }: { action: JournalAction; open: bo
         <span className={styles.titleText}>
           <span className={styles.name}>{action.title}</span>
           <span className={styles.hint}>
-            {t(action.method === "trash" ? "clean.method.trash" : "clean.method.permanent")}
+            {t(`journal.kind.${action.kind}`)}
+            {" · "}
+            {action.kind === "system" ? t("clean.method.command") : t(action.method === "trash" ? "clean.method.trash" : "clean.method.permanent")}
             {" · "}
             {t.plural("journal.done", action.itemsDone + action.itemsPartial, { n: formatCount(action.itemsDone + action.itemsPartial, t.locale) })}
             {left > 0 ? ` · ${t.plural("journal.left", left, { n: formatCount(left, t.locale) })}` : ""}
@@ -130,6 +132,7 @@ function ActionRow({ action, open, onToggle }: { action: JournalAction; open: bo
           )}
         </span>
       </button>
+      {open && action.aborted && <p className={styles.aborted}>{t("journal.aborted", { reason: action.aborted })}</p>}
       {open && <Detail action={action} />}
     </li>
   );

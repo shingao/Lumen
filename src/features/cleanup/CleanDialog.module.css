@@ -161,6 +161,16 @@
   background-image: var(--hatch);
 }
 
+.notice {
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+  padding: 8px 12px;
+  border-radius: var(--r-pop);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-soft);
+}
+
 .warnText {
   font-size: var(--fs-12-5);
   line-height: 1.5;
@@ -248,6 +258,7 @@
 
 .status[data-status="failed"],
 .status[data-status="timedOut"],
+.status[data-status="declined"],
 .status[data-status="error"],
 .status[data-status="refused"],
 .status[data-status="notFound"],
