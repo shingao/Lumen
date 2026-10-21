@@ -388,8 +388,8 @@ exit 0
 /// 8 le plus ancien n'est plus celui qui a été affiché, 9 lecture ou suppression impossible.
 const SHADOW_DELETE_TEMPLATE: &str = r#"$ErrorActionPreference = 'Stop'
 $attendu = '@ID@'
-$limite = [DateTimeOffset]::FromUnixTimeSeconds(@LIMITE@).UtcDateTime
 try {
+  $limite = [DateTimeOffset]::FromUnixTimeSeconds(@LIMITE@).UtcDateTime
   $volume = (Get-CimInstance -ClassName Win32_Volume | Where-Object { $_.DriveLetter -eq '@D@:' }).DeviceID
   $copies = @(Get-CimInstance -ClassName Win32_ShadowCopy | Where-Object { $_.VolumeName -eq $volume })
 } catch { exit 9 }
@@ -397,7 +397,7 @@ if ($copies.Count -lt 2) { exit 6 }
 $plusAncien = $copies | Sort-Object InstallDate | Select-Object -First 1
 if ($plusAncien.ID.ToUpperInvariant() -ne $attendu) { exit 8 }
 if ($plusAncien.InstallDate.ToUniversalTime() -ge $limite) { exit 7 }
-& (Join-Path $env:SystemRoot 'System32\vssadmin.exe') delete shadows "/shadow=$attendu" /quiet
+try { & (Join-Path $env:SystemRoot 'System32\vssadmin.exe') delete shadows "/shadow=$attendu" /quiet } catch { exit 9 }
 if ($LASTEXITCODE -ne 0) { exit 9 }
 exit 0
 "#;
@@ -425,9 +425,13 @@ fn ps_literal(s: &str) -> String {
     s.replace('\'', "''")
 }
 
+/// Plus grande date que `DateTimeOffset` accepte (31/12/9999) : au-delà, la conversion échouerait.
+const MAX_UNIX_SECS: i64 = 253_402_300_799;
+
 /// Script de suppression du plus ancien point de restauration, valeurs validées insérées.
 pub fn shadow_delete_script(drive: Drive, shadow: &ShadowId, not_after: i64) -> String {
-    SHADOW_DELETE_TEMPLATE.replace("@D@", &drive.0.to_string()).replace("@ID@", shadow.as_str()).replace("@LIMITE@", &not_after.to_string())
+    let limit = not_after.clamp(0, MAX_UNIX_SECS);
+    SHADOW_DELETE_TEMPLATE.replace("@D@", &drive.0.to_string()).replace("@ID@", shadow.as_str()).replace("@LIMITE@", &limit.to_string())
 }
 
 /// Script de lecture des points de restauration, valeurs validées insérées.
@@ -640,6 +644,9 @@ mod tests {
         // Mêmes règles que `oldest_deletable` : au moins 2 points, assez ancien, celui affiché.
         assert!(script.contains("$copies.Count -lt 2) { exit 6 }"));
         assert!(script.contains("FromUnixTimeSeconds(1700000000)"));
+        // Date hors de ce que PowerShell accepte : bornée, jamais d'exception non rattrapée.
+        assert!(shadow_delete_script(d, &ShadowId::parse(ID).unwrap(), i64::MAX).contains("FromUnixTimeSeconds(253402300799)"));
+        assert!(shadow_delete_script(d, &ShadowId::parse(ID).unwrap(), -5).contains("FromUnixTimeSeconds(0)"));
         assert!(script.contains("-ge $limite) { exit 7 }"));
         assert!(script.contains("-ne $attendu) { exit 8 }"));
         let cmd = OfficialCommand::ShadowDeleteOldest { drive: d, shadow: ShadowId::parse(ID).unwrap(), not_after: 1_700_000_000 };

@@ -878,7 +878,7 @@ fn fixture_point_le_plus_ancien_jamais_le_dernier() {
     let cmd = OfficialCommand::ShadowDeleteOldest {
         drive,
         shadow: crate::commands::ShadowId::parse("{00000000-0000-0000-0000-000000000000}").unwrap(),
-        not_after: i64::MAX / 2,
+        not_after: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
     };
     let run = WinEffects::new().run_elevated(&cmd, &AtomicBool::new(false));
     let expected = if before < 2 { 6 } else { 8 };
