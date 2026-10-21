@@ -241,6 +241,8 @@ project_inactive_days = 0            # node_modules des projets sans commit depu
 
 Léger : tailles agrégées par dossier sur **4 niveaux max**, jamais la liste des fichiers. Dossiers sous 50 Mo regroupés dans leur parent pour borner la taille (quelques milliers de lignes par snapshot).
 
+> Jalon 7 (réalisé) : seuil 1 Mio et plafond de 5 000 dossiers ; volumes identifiés par GUID (table `volumes`, la lettre n'est qu'un dernier état), racines et chemins relatifs au volume, séries = volume + racine + méthode, rétention 7 j / 30 j / 6 mois / mensuelle. Schéma réel : `SCHEMA_V4` de `src-tauri/src/journal.rs` (le schéma ci-dessous est celui du plan initial).
+
 ### 4.4 Schéma SQLite (`%LOCALAPPDATA%\Lumen\lumen.db`, WAL)
 
 ```sql
