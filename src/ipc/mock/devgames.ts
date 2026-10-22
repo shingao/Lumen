@@ -26,28 +26,58 @@ function dockerState(): "on" | "off" | "absent" {
   }
 }
 
-type MockGame = Omit<Game, "lastPlayed" | "status" | "size"> & { size: number | null; daysAgo: number | null; hue: number };
+type MockGame = Omit<Game, "lastPlayed" | "status" | "size" | "canMove" | "data"> & {
+  size: number | null;
+  daysAgo: number | null;
+  hue: number;
+  /** Données et sauvegardes hors du dossier du jeu (Go) et leurs dossiers. */
+  data?: [number, string[]];
+};
 
 const GAMES: MockGame[] = [
-  { id: "steam:1086940", launcher: "steam", name: "Baldur's Gate 3", installDir: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Baldurs Gate 3", size: 149.8, sizeSource: "launcher", drive: "C:", daysAgo: 3, cover: true, open: "uri", hue: 18 },
-  { id: "steam:1091500", launcher: "steam", name: "Cyberpunk 2077", installDir: "D:\\SteamLibrary\\steamapps\\common\\Cyberpunk 2077", size: 71.4, sizeSource: "launcher", drive: "D:", daysAgo: 290, cover: true, open: "uri", hue: 55 },
+  {
+    id: "steam:1086940", launcher: "steam", name: "Baldur's Gate 3", installDir: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Baldurs Gate 3", size: 149.8, sizeSource: "launcher", drive: "C:", daysAgo: 3, cover: true, open: "uri", hue: 18,
+    data: [3.4, ["C:\\Users\\Arthur\\AppData\\Local\\Larian Studios\\Baldur's Gate 3", "C:\\Program Files (x86)\\Steam\\userdata\\123\\1086940"]],
+  },
+  {
+    id: "steam:1091500", launcher: "steam", name: "Cyberpunk 2077", installDir: "D:\\SteamLibrary\\steamapps\\common\\Cyberpunk 2077", size: 71.4, sizeSource: "launcher", drive: "D:", daysAgo: 290, cover: true, open: "uri", hue: 55,
+    data: [1.2, ["C:\\Users\\Arthur\\Saved Games\\CD Projekt Red\\Cyberpunk 2077", "C:\\Users\\Arthur\\AppData\\Local\\CD Projekt Red\\Cyberpunk 2077"]],
+  },
   { id: "steam:730", launcher: "steam", name: "Counter-Strike 2", installDir: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive", size: 33.2, sizeSource: "launcher", drive: "C:", daysAgo: 1, cover: true, open: "uri", hue: 210 },
   { id: "steam:1245620", launcher: "steam", name: "Elden Ring", installDir: "D:\\SteamLibrary\\steamapps\\common\\ELDEN RING", size: 49.1, sizeSource: "launcher", drive: "D:", daysAgo: 410, cover: false, open: "uri", hue: 40 },
   { id: "epic:Fortnite", launcher: "epic", name: "Fortnite", installDir: "D:\\Epic Games\\Fortnite", size: 38.6, sizeSource: "launcher", drive: "D:", daysAgo: null, cover: false, open: "app", hue: 280 },
   { id: "gog:1207664663", launcher: "gog", name: "The Witcher 3: Wild Hunt", installDir: "C:\\GOG Games\\The Witcher 3 Wild Hunt GOTY", size: null, sizeSource: "measured", drive: "C:", daysAgo: null, cover: false, open: "app", hue: 0 },
   { id: "battlenet:Fen", launcher: "battlenet", name: "Diablo IV", installDir: "D:\\Battle.net\\Diablo IV", size: null, sizeSource: "measured", drive: "D:", daysAgo: null, cover: false, open: "app", hue: 0 },
+  { id: "riot:league_of_legends.live", launcher: "riot", name: "League of Legends", installDir: "C:\\Riot Games\\League of Legends", size: null, sizeSource: "measured", drive: "C:", daysAgo: null, cover: false, open: "app", hue: 0 },
+  { id: "riot:valorant.live", launcher: "riot", name: "VALORANT", installDir: "C:\\Riot Games\\VALORANT", size: null, sizeSource: "measured", drive: "C:", daysAgo: null, cover: false, open: "app", hue: 0 },
+  {
+    id: "curseforge:All the Mods 9", launcher: "curseforge", name: "All the Mods 9", installDir: "C:\\Users\\Arthur\\curseforge\\minecraft\\Instances\\All the Mods 9", size: null, sizeSource: "measured", drive: "C:", daysAgo: 4, cover: false, open: "app", hue: 0,
+    data: [0.9, ["C:\\Users\\Arthur\\curseforge\\minecraft\\Instances\\All the Mods 9\\saves"]],
+  },
+  { id: "curseforge:Vanilla+", launcher: "curseforge", name: "Vanilla+", installDir: "C:\\Users\\Arthur\\curseforge\\minecraft\\Instances\\Vanilla+", size: null, sizeSource: "measured", drive: "C:", daysAgo: 240, cover: false, open: "app", hue: 0 },
+  { id: "xbox:Microsoft.624F8B84B80", launcher: "xbox", name: "Forza Horizon 5", installDir: "D:\\XboxGames\\Forza Horizon 5", size: null, sizeSource: "measured", drive: "D:", daysAgo: null, cover: false, open: "uri", hue: 0 },
 ];
 
-const MEASURED: Record<string, number> = { "gog:1207664663": 46.3, "battlenet:Fen": 88.9 };
+const MEASURED: Record<string, number> = {
+  "gog:1207664663": 46.3,
+  "battlenet:Fen": 88.9,
+  "riot:league_of_legends.live": 22.6,
+  "riot:valorant.live": 35.4,
+  "curseforge:All the Mods 9": 3.1,
+  "curseforge:Vanilla+": 0.6,
+  "xbox:Microsoft.624F8B84B80": 118.2,
+};
 
 export function mockGames(now: number): GamesResult {
-  const games: Game[] = GAMES.map(({ daysAgo, hue: _hue, size, ...g }) => {
+  const games: Game[] = GAMES.map(({ daysAgo, hue: _hue, size, data, ...g }) => {
     const lastPlayed = daysAgo === null ? null : now - daysAgo * DAY;
     return {
       ...g,
       size: gb(size ?? MEASURED[g.id] ?? 0),
       lastPlayed,
       status: lastPlayed !== null && now - lastPlayed > 183 * DAY ? "review" : "keep",
+      canMove: g.launcher !== "riot" && g.launcher !== "curseforge",
+      data: data ? { size: gb(data[0]), paths: data[1] } : null,
     };
   });
   return {
@@ -55,8 +85,9 @@ export function mockGames(now: number): GamesResult {
     ignored: [
       { launcher: "steam", file: "D:\\SteamLibrary\\steamapps\\appmanifest_292030.acf", reason: "malformed" },
       { launcher: "epic", file: "C:\\ProgramData\\Epic\\EpicGamesLauncher\\Data\\Manifests\\A1B2C3.item", reason: "incomplete" },
+      { launcher: "curseforge", file: "C:\\Users\\Arthur\\curseforge\\minecraft\\Instances\\Test\\minecraftinstance.json", reason: "malformed" },
     ],
-    launchers: ["steam", "epic", "gog", "battlenet"],
+    launchers: ["steam", "epic", "gog", "battlenet", "riot", "curseforge", "xbox"],
     steamShaderCaches: [
       { path: "C:\\Program Files (x86)\\Steam\\steamapps\\shadercache", size: gb(2.4) },
       { path: "D:\\SteamLibrary\\steamapps\\shadercache", size: gb(0.9) },

@@ -44,6 +44,10 @@ pub enum DenyReason {
     GitInternals,
     #[error("identifiants, clés, cookies ou configuration d'un outil : jamais supprimés")]
     Secret,
+    #[error("sauvegarde de jeu : jamais supprimée")]
+    GameSave,
+    #[error("jeux et applis du Microsoft Store (WindowsApps, XboxGames) : uniquement par l'appli Xbox ou le Store")]
+    StoreApps,
 }
 
 /// Emplacements réels de la machine (dossiers connus de Windows), fournis par `safety::win`.
@@ -91,6 +95,24 @@ const SECRET_NAMES: &[&str] = &[
     "COOKIES.SQLITE", "LOGINS.JSON", "KEY3.DB", "KEY4.DB", "CERT9.DB",
 ];
 const SECRET_PREFIXES: &[&str] = &["ID_RSA", "ID_ED25519", "ID_ECDSA", "ID_DSA"];
+
+/// Sauvegardes de jeux, où qu'elles soient (AppData, Documents\My Games, Saved Games, dossier
+/// d'une instance Minecraft…) : dossiers par leur nom, fichiers par leur extension. Jamais
+/// proposées, jamais supprimables, pas même par Doublons, Dormants ou Gros fichiers.
+const SAVE_NAMES: &[&str] = &[
+    "SAVES", "SAVE", "SAVEGAME", "SAVEGAMES", "SAVE GAMES", "SAVEDGAMES", "SAVED GAMES", "SAVEDATA", "PLAYERPROFILES",
+];
+const SAVE_SUFFIXES: &[&str] = &[".SAV", ".SAVE", ".LSV"];
+
+/// Jeux et applis du Microsoft Store : leurs dossiers ne se gèrent que par l'appli Xbox ou le
+/// Store (n'importe où dans le chemin), et le dossier des jeux Gaming Services à la racine d'un
+/// volume (`XboxGames`, `.GamingRoot`).
+const STORE_NAMES: &[&str] = &["WINDOWSAPPS", "WPSYSTEM"];
+const STORE_ROOT_NAMES: &[&str] = &["XBOXGAMES", ".GAMINGROOT"];
+
+fn is_save_name(name: &str) -> bool {
+    SAVE_NAMES.contains(&name) || SAVE_SUFFIXES.iter().any(|s| name.ends_with(s))
+}
 const SECRET_SUFFIXES: &[&str] = &[".JKS", ".KEYSTORE", ".PFX", ".P12", ".KDBX", ".PPK"];
 
 /// Configurations d'outils dans le profil (chemins relatifs) : `true` = dossier entier.
@@ -189,6 +211,9 @@ impl DenyList {
             if first.starts_with('$') {
                 return Some(NtfsMetadata);
             }
+            if STORE_ROOT_NAMES.contains(&first.as_str()) {
+                return Some(StoreApps);
+            }
         }
         for (i, n) in names.iter().enumerate() {
             match n.as_str() {
@@ -197,6 +222,8 @@ impl DenyList {
                 "$EXTEND" => return Some(NtfsMetadata),
                 ".GIT" => return Some(GitInternals),
                 n if is_secret_name(n) => return Some(Secret),
+                n if is_save_name(n) => return Some(GameSave),
+                n if STORE_NAMES.contains(&n) => return Some(StoreApps),
                 "CONFIG" if i > 0 && names[i - 1] == "SYSTEM32" => return Some(RegistryHive),
                 _ => {}
             }
@@ -392,6 +419,47 @@ mod tests {
         ] {
             assert_eq!(deny(&format!("{p}\\{rel}")), None, "{rel}");
         }
+    }
+
+    #[test]
+    fn sauvegardes_de_jeux_jamais_supprimees() {
+        let p = "C:\\Users\\Arthur";
+        for rel in [
+            "AppData\\Local\\Larian Studios\\Baldur's Gate 3\\PlayerProfiles",
+            "AppData\\Local\\Larian Studios\\Baldur's Gate 3\\PlayerProfiles\\Public\\Savegames\\Story\\x.lsv",
+            "AppData\\LocalLow\\Team Cherry\\Hollow Knight\\Saves\\user1.dat",
+            "Documents\\My Games\\Skyrim Special Edition\\Saves\\Save 12.ess",
+            "Saved Games",
+            "Saved Games\\CD Projekt Red\\Cyberpunk 2077\\ManualSave-3\\sav.dat",
+            "AppData\\Roaming\\EldenRing\\76561198000000000\\ER0000.sl2.save",
+            "AppData\\Local\\Pal\\Saved\\SaveGames\\0\\Level.sav",
+            "curseforge\\minecraft\\Instances\\All the Mods 9\\saves\\Monde",
+            "Documents\\copie de partie.SAV",
+            "AppData\\Local\\Temp\\x\\SaveData",
+        ] {
+            assert_eq!(deny(&format!("{p}\\{rel}")), Some(GameSave), "{rel}");
+        }
+        // Les autres données des jeux et les fichiers au nom proche restent possibles ailleurs.
+        for rel in ["AppData\\Local\\Larian Studios\\Baldur's Gate 3\\LevelCache", "Documents\\My Games\\Skyrim Special Edition\\Logs", "Documents\\saves.txt", "Documents\\savoir.pdf"] {
+            assert_eq!(deny(&format!("{p}\\{rel}")), None, "{rel}");
+        }
+    }
+
+    #[test]
+    fn windowsapps_et_jeux_du_store_intouchables() {
+        for raw in [
+            "C:\\Program Files\\WindowsApps\\Microsoft.GamingApp_x",
+            "D:\\WindowsApps",
+            "D:\\WindowsApps\\Microsoft.624F8B84B80_1.0.0.0_x64__8wekyb3d8bbwe\\Content",
+            "E:\\WpSystem\\S-1-5-21\\AppData",
+            "D:\\XboxGames",
+            "D:\\XboxGames\\Forza Horizon 5\\Content\\x.pak",
+            "E:\\.GamingRoot",
+        ] {
+            assert_eq!(deny(raw), Some(StoreApps), "{raw}");
+        }
+        // Un dossier nommé XboxGames ailleurs qu'à la racine n'est pas celui de Gaming Services.
+        assert_eq!(deny("C:\\Users\\Arthur\\Documents\\XboxGames"), None);
     }
 
     #[test]

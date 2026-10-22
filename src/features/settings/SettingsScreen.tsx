@@ -9,7 +9,7 @@ import { Segmented } from "../../components/Segmented";
 import { Toggle } from "../../components/Toggle";
 import { formatBytes, formatCount, formatPercent } from "../../core/format";
 import { currentT, useT } from "../../i18n";
-import type { DatabaseInfo, LanguagePref, Settings, ThemePref } from "../../ipc/types";
+import type { DatabaseInfo, LanguagePref, ScanCacheInfo, Settings, ThemePref } from "../../ipc/types";
 import pkg from "../../../package.json";
 import styles from "./SettingsScreen.module.css";
 
@@ -79,6 +79,40 @@ function DatabaseRow() {
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Analyses gardées en mémoire pendant la session : consommation et limite. */
+function CacheRow() {
+  const t = useT();
+  const [info, setInfo] = useState<ScanCacheInfo | null>(null);
+  useEffect(() => {
+    void backend.scanCacheInfo().then(setInfo, () => setInfo(null));
+  }, []);
+  const n = info?.entries.length ?? 0;
+  const detail = info?.entries
+    .map((e) => `${e.target === "userProfile" ? t("settings.cache.profile") : e.target} ${formatBytes(e.bytes, t.locale)}`)
+    .join(" · ");
+  return (
+    <div className={styles.row}>
+      <div className={styles.rowText}>
+        <span className={styles.rowLabel}>{t("settings.cache")}</span>
+        {info && (
+          <span className={`${styles.rowHint} ${styles.mono}`}>
+            {t("settings.cacheSize", { size: formatBytes(info.total, t.locale), limit: formatBytes(info.limit, t.locale), count: t.plural("settings.cache.count", n, { n }) })}
+          </span>
+        )}
+        {detail && <span className={`${styles.rowHint} ${styles.mono}`}>{detail}</span>}
+        <span className={styles.rowHint}>{t("settings.cacheHint", { limit: formatBytes(info?.limit ?? 600 * 1024 * 1024, t.locale) })}</span>
+      </div>
+      {info && (
+        <div className={styles.rowControl}>
+          <span className={styles.meter} role="meter" aria-label={t("settings.cache")} aria-valuemin={0} aria-valuemax={info.limit} aria-valuenow={info.total}>
+            <span style={{ width: `${Math.round(Math.min(1, info.total / Math.max(1, info.limit)) * 100)}%` }} />
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -159,6 +193,7 @@ export function SettingsScreen() {
                 options={DUP_SIZES.map((n) => ({ value: n, label: `${n} ${t.locale === "fr" ? "Mo" : "MB"}` }))}
               />
             </Row>
+            <CacheRow />
           </Group>
 
           <Group title={t("settings.cleaning")}>

@@ -6,7 +6,7 @@
 use crate::path::WinPath;
 
 /// Launchers de jeux (nom de l'exécutable, casse ignorée).
-pub const LAUNCHER_PROCESSES: [&str; 11] = [
+pub const LAUNCHER_PROCESSES: [&str; 17] = [
     "steam.exe",
     "steamwebhelper.exe",
     "EpicGamesLauncher.exe",
@@ -18,6 +18,12 @@ pub const LAUNCHER_PROCESSES: [&str; 11] = [
     "Origin.exe",
     "UbisoftConnect.exe",
     "upc.exe",
+    "RiotClientServices.exe",
+    "RiotClientUx.exe",
+    "Riot Client.exe",
+    "CurseForge.exe",
+    "MinecraftLauncher.exe",
+    "XboxPcApp.exe",
 ];
 
 /// Processus en cours, tel que Windows le décrit.

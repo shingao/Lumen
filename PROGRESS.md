@@ -11,7 +11,7 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 5 | Scripts, copie, exécution (simulation, confirmation, journal) | **fait — validé** (PR #3 mergée, testé en Sandbox) |
 | 6 | Nettoyage avancé : dormants, doublons, gros fichiers, gouffres système | **fait — validé en lecture seule** (PR #4 mergée) ; nettoyage réel **non vérifié en réel** (Sandbox), gouffres système **non vérifiés en réel** (VM) et désactivés par défaut |
 | 7 | Snapshots et Timeline | **fait — validé** (testé sur PC ; PR #5) |
-| 8 | Dev et Jeux | **fait — à tester** (PR à venir) ; purge des artefacts, shaders, Docker **non vérifiés en réel** (Sandbox), compactage WSL **non vérifié en réel** (VM) et désactivé par défaut |
+| 8 | Dev et Jeux | **fait — validé en lecture seule** (jeux et projets détectés sur PC ; PR #6) ; purge des artefacts, shaders, Docker **non vérifiés en réel** (Sandbox), compactage WSL **non vérifié en réel** (VM) et désactivé par défaut |
 | 9 | Déplacement intelligent, recherche instantanée, export de rapport | à faire |
 | 10 | Onboarding et astuces contextuelles | à faire |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | à faire |
@@ -46,8 +46,23 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 - **Bout en bout Windows** (`e2e::purge_des_artefacts_de_faux_projets`) : deux faux projets (web avec lockfile, `.git` avec HEAD / objets / refs, `node_modules`, `.next` ; Rust avec `target`) analysés, artefacts purgés par `dev::select_artifacts` + `safety` → **seuls les artefacts partent à la Corbeille, le source et `.git` sont identiques octet pour octet**.
 - Interface (vitest) : jeux sans case, « inconnue », Désinstaller / Déplacer n'ouvrent que le launcher, shaders jamais cochés et bloqués si un jeu tourne, projets triés et purgés par identifiants, Cargo et `.m2` à vérifier, Docker arrêté, WSL derrière le réglage Expérimental.
 
+### Compléments demandés à la validation (testé en lecture seule sur PC : jeux et projets détectés)
+
+- **Launchers supplémentaires, en lecture seule, mêmes règles** (Lumen n'ouvre que le launcher) :
+  - **Riot Client** : `%ProgramData%\Riot Games\Metadata\<produit>.<branche>\*.product_settings.yaml` (`product_install_full_path`), client exclu, exécutable lu dans `RiotClientInstalls.json` ; repli sur les clés Uninstall « Riot Game … » (ni Riot Client ni Vanguard).
+  - **CurseForge / Minecraft** : chaque instance de `%USERPROFILE%\curseforge\minecraft\Instances` (ou l'ancien `Documents\Curse\Minecraft\Instances`) est un jeu, avec sa taille mesurée et sa dernière partie (`lastPlayed` de `minecraftinstance.json`, « 0001-01-01 » = inconnue) ; Minecraft: Java Edition (`%APPDATA%\.minecraft`, dernière partie = `lastUsed` des profils) et chaque installation du Minecraft Launcher qui a son propre dossier de jeu.
+  - **Xbox / Microsoft Store** : `.GamingRoot` à la racine de chaque disque fixe (dossier `XboxGames` par défaut), `Content\MicrosoftGame.config` de chaque jeu (nom affiché, logo local) ; **affichés seulement**, « Désinstaller » et « Déplacer » ouvrent l'appli Xbox. **WindowsApps, WpSystem, XboxGames et .GamingRoot sont dans la denylist** (`StoreApps`) : jamais lus en contenu, jamais supprimables.
+  - Fichiers absents, tronqués ou mal formés (YAML sans chemin, JSON d'instance tronqué, `.GamingRoot` corrompu, jeu Xbox sans configuration) : ignorés et comptés ; tests sur fixtures.
+- **Données de jeu hors du dossier d'installation** (`Documents\My Games`, `Saved Games`, `AppData\LocalLow\*`, éditeurs connus de `AppData\Local` et `Roaming`, `curseforge`, `.minecraft`) : zone **« Jeux »** des règles, statut **« À garder »** (aucune règle ne les propose ; les dossiers non ludiques de LocalLow restent « Outils & autres »).
+- **Sauvegardes dans la denylist de `safety`** (`GameSave`), où qu'elles soient : dossiers `Saves`, `Save`, `Savegame(s)`, `Save Games`, `Saved Games`, `SavedGames`, `SaveData`, `PlayerProfiles` et fichiers `.sav`, `.save`, `.lsv` — jamais proposées, jamais supprimables, même par Doublons, Dormants ou Gros fichiers (qui consultent la denylist), et un dossier nettoyé qui en contient les garde. Tests : `.sav` en double, dormant et gros jamais proposé (`advanced::saves_tests`), sauvegarde dans un dossier nettoyé laissée en place (`exec`), denylist, règles.
+- **Onglet Jeux : « Données et sauvegardes : X Go (protégées) »** sous chaque jeu quand elles sont trouvées (nom du jeu ou de son dossier comparé aux dossiers de `My Games`, `Saved Games`, `AppData\Local|LocalLow|Roaming` — sous un éditeur, le début ou la fin du nom suffit ; `userdata\<compte>\<appid>` de Steam ; `saves` d'une instance Minecraft), dossiers en infobulle, taille mesurée sans lire le contenu.
+- **Analyses gardées bornées en mémoire** : 600 Mio au plus au total (estimation : nœuds, noms, résultats des règles), **la moins récemment utilisée est oubliée** (chaque accès à une analyse la rend récente ; celle qui sert n'est jamais oubliée, même seule au-dessus de la limite). **Paramètres › Analyse › Analyses gardées en mémoire** : total, limite, détail par disque et jauge.
+
 ### Décisions
 
+- **Riot Client et CurseForge s'installent hors de Program Files** (`C:\Riot Games`, `%LOCALAPPDATA%\Programs`), donc modifiables sans droits d'administrateur : `safety::launch::LauncherOpen::UserApp` ne les ouvre (nom d'exécutable en liste fermée, disque local, aucun lien sur le chemin) **que si Lumen n'est pas élevé** — sinon un programme modifiable par l'utilisateur hériterait des droits d'administrateur ; message « ouvre ce launcher toi-même ». Riot Client et CurseForge ne déplacent pas de jeu : « Déplacer » grisé, avec la raison.
+- **Appli Xbox et Minecraft Launcher du Store** ouverts par leur identifiant d'appli figé (`shell:AppsFolder\Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App`, `…Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft`) ; l'ancien Minecraft Launcher sous Program Files est préféré s'il existe.
+- **Sauvegardes protégées par leur nom**, de façon large (y compris `Save` et `SaveData`) : un refus de trop ne coûte rien, une sauvegarde perdue est irrécupérable. Les autres données de jeu (caches, journaux) restent « À garder » sans être dans la denylist.
 - **Liens profonds des launchers autres que Steam non utilisés** (`com.epicgames.launcher://…`, `goggalaxy://…` : comportement non documenté ou variable selon les versions) : Lumen ouvre l'exécutable du launcher, l'utilisateur va dans sa bibliothèque. Pour Steam, `steam://uninstall/<appid>` et le gestionnaire de stockage (`steam://open/settings`).
 - **Docker : seulement les images sans étiquette** (`image prune` sans `--all`) : les images étiquetées peuvent servir à un projet ; c'est la liste montrée qui part.
 - **Jaquettes : seulement Steam** garde des jaquettes locales fiables (`librarycache`) ; Epic, GOG, Battle.net, EA et Ubisoft n'en ont pas de lisibles sans réseau → vignette à l'initiale (couleur « Jeux » de la treemap).
@@ -72,6 +87,9 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 8. Docker lancé : la liste des images sans étiquette s'affiche ; « Supprimer ces images » puis confirmation → `docker image ls` ne les montre plus, les images étiquetées sont restées. Docker arrêté : message, bouton grisé.
 9. En VM : Paramètres › Expérimental › Compactage WSL / Docker ; une distribution cochée → confirmation avec `wsl --shutdown` et l'avertissement, une demande UAC, puis le gain mesuré dans le bilan et le Journal ; le `.vhdx` existe toujours et la distribution démarre.
 10. ← vers un autre disque déjà analysé dans la session : l'analyse réapparaît tout de suite, sans relancer de scan.
+11. Riot, CurseForge / Minecraft, Xbox : tes jeux apparaissent (instances CurseForge avec leur taille) ; « Désinstaller » ouvre le Riot Client, CurseForge ou l'appli Xbox ; « Déplacer » est grisé pour Riot et CurseForge. Lumen lancé en administrateur : Riot Client et CurseForge ne s'ouvrent pas, avec le message.
+12. « Données et sauvegardes : X Go (protégées) » sous Baldur's Gate 3, Cyberpunk… (dossiers en infobulle). Nettoyage › Doublons / Dormants / Gros fichiers : aucun `.sav`, `.lsv` ni fichier d'un dossier `Saves` n'est proposé, même copié en double dans Documents.
+13. Paramètres › Analyse › Analyses gardées en mémoire : la consommation augmente à chaque disque analysé et ne dépasse pas 600 Mo ; au-delà, le disque le moins récemment consulté doit être réanalysé.
 
 ---
 

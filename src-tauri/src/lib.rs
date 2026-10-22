@@ -50,6 +50,7 @@ pub fn run() {
             scanning::scan_tree,
             scanning::scan_find,
             scanning::scan_cached,
+            scanning::scan_cache_info,
             scanning::recommendations,
             scanning::recommendation_detail,
             scanning::rule_kpis,

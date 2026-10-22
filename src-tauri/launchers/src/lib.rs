@@ -1,14 +1,19 @@
 //! Jeux installés, détectés en lecture seule dans les fichiers et les clés de registre de leurs
-//! launchers (Steam, Epic, GOG, Battle.net, EA app, Ubisoft Connect, avec repli sur les clés
-//! Uninstall de Windows). Toute lecture est tolérante : un fichier absent, illisible, verrouillé,
+//! launchers (Steam, Epic, GOG, Battle.net, EA app, Ubisoft Connect, Riot Client, CurseForge et
+//! Minecraft, jeux Xbox / Microsoft Store de Gaming Services, avec repli sur les clés Uninstall de
+//! Windows). Toute lecture est tolérante : un fichier absent, illisible, verrouillé,
 //! trop gros ou mal formé est ignoré et compté (`Ignored`), jamais une erreur qui arrête tout.
 //! Aucun accès réseau : les jaquettes ne viennent que du cache local des launchers.
 
+pub mod data;
 pub mod epic;
+pub mod minecraft;
 pub mod registry;
+pub mod riot;
 pub mod steam;
 pub mod uninstall;
 pub mod vdf;
+pub mod xbox;
 
 use std::path::{Path, PathBuf};
 
@@ -27,10 +32,26 @@ pub enum Launcher {
     BattleNet,
     Ea,
     Ubisoft,
+    Riot,
+    CurseForge,
+    Minecraft,
+    /// Jeux du Microsoft Store / Xbox (Gaming Services) : affichés seulement.
+    Xbox,
 }
 
 impl Launcher {
-    pub const ALL: [Launcher; 6] = [Launcher::Steam, Launcher::Epic, Launcher::Gog, Launcher::BattleNet, Launcher::Ea, Launcher::Ubisoft];
+    pub const ALL: [Launcher; 10] = [
+        Launcher::Steam,
+        Launcher::Epic,
+        Launcher::Gog,
+        Launcher::BattleNet,
+        Launcher::Ea,
+        Launcher::Ubisoft,
+        Launcher::Riot,
+        Launcher::CurseForge,
+        Launcher::Minecraft,
+        Launcher::Xbox,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
@@ -40,7 +61,16 @@ impl Launcher {
             Launcher::BattleNet => "battlenet",
             Launcher::Ea => "ea",
             Launcher::Ubisoft => "ubisoft",
+            Launcher::Riot => "riot",
+            Launcher::CurseForge => "curseforge",
+            Launcher::Minecraft => "minecraft",
+            Launcher::Xbox => "xbox",
         }
+    }
+
+    /// Le launcher sait-il déplacer un jeu ? (Riot Client et CurseForge : non.)
+    pub fn can_move(self) -> bool {
+        !matches!(self, Launcher::Riot | Launcher::CurseForge)
     }
 }
 
@@ -88,6 +118,9 @@ pub struct Detection {
     pub found: Vec<Launcher>,
     /// Bibliothèques Steam (shadercache, informatif).
     pub steam_libraries: Vec<PathBuf>,
+    /// Exécutables de launchers lus dans leurs propres fichiers (Riot Client, CurseForge), le
+    /// plus souvent hors de Program Files : `safety::launch` décide s'ils peuvent être ouverts.
+    pub launcher_exes: Vec<(Launcher, PathBuf)>,
 }
 
 impl Detection {
@@ -133,6 +166,65 @@ pub fn read_text(path: &Path) -> Result<String, Reason> {
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
+/// Lecture tolérante d'un fichier binaire de launcher (`.GamingRoot`).
+pub fn read_bytes(path: &Path) -> Result<Vec<u8>, Reason> {
+    use std::io::Read;
+    let meta = std::fs::metadata(path).map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { Reason::Missing } else { Reason::Unreadable })?;
+    if !meta.is_file() {
+        return Err(Reason::Unreadable);
+    }
+    if meta.len() > MAX_FILE {
+        return Err(Reason::TooLarge);
+    }
+    let mut buf = Vec::new();
+    std::fs::File::open(path).and_then(|f| f.take(MAX_FILE).read_to_end(&mut buf)).map_err(|_| Reason::Unreadable)?;
+    Ok(buf)
+}
+
+/// Sous-dossiers d'un dossier, triés ; dossier absent ou illisible : vide.
+pub fn list_dirs(dir: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|it| it.filter_map(Result::ok).filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.path()).collect())
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// Date ISO 8601 (`2026-05-12T18:22:13.1234567+02:00`, `…Z`, sans fuseau = UTC) en secondes
+/// Unix ; années avant 1971 (`0001-01-01T00:00:00` = jamais) ou texte illisible : `None`.
+pub fn parse_iso(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let num = |a: usize, b: usize| s.get(a..b).filter(|t| t.bytes().all(|c| c.is_ascii_digit())).and_then(|t| t.parse::<i64>().ok());
+    let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    if s.as_bytes().get(4) != Some(&b'-') || s.as_bytes().get(7) != Some(&b'-') || !(1971..=9999).contains(&y) || !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let (h, mi, sec) = if s.len() >= 19 && matches!(s.as_bytes()[10], b'T' | b' ') { (num(11, 13)?, num(14, 16)?, num(17, 19)?) } else { (0, 0, 0) };
+    if h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    // Fuseau : `Z`, `+hh:mm` ou `-hh:mm` après les secondes et leurs décimales.
+    let tail = s.get(19..).unwrap_or("").trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let offset = match tail.as_bytes().first() {
+        Some(b'+') | Some(b'-') => {
+            let sign = if tail.starts_with('-') { -1 } else { 1 };
+            let hh = tail.get(1..3).and_then(|t| t.parse::<i64>().ok())?;
+            let mm = tail.get(4..6).and_then(|t| t.parse::<i64>().ok()).unwrap_or(0);
+            sign * (hh * 3600 + mm * 60)
+        }
+        _ => 0,
+    };
+    // Jours depuis 1970 (algorithme de Howard Hinnant).
+    let yy = if mo <= 2 { y - 1 } else { y };
+    let era = yy.div_euclid(400);
+    let yoe = yy - era * 400;
+    let mp = (mo + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + h * 3600 + mi * 60 + sec - offset)
+}
+
 /// Fichiers d'un dossier dont le nom vérifie `keep`, triés ; dossier absent ou illisible : vide.
 pub fn list_files(dir: &Path, keep: impl Fn(&str) -> bool) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -149,10 +241,18 @@ pub fn needs_review(last_played: Option<i64>, now: i64) -> bool {
 }
 
 /// Où chercher sur cette machine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Env {
     /// `%ProgramData%`.
     pub program_data: PathBuf,
+    /// Profil de l'utilisateur (`%USERPROFILE%`).
+    pub profile: Option<PathBuf>,
+    /// `%LOCALAPPDATA%`.
+    pub local_app_data: Option<PathBuf>,
+    /// `%APPDATA%`.
+    pub app_data: Option<PathBuf>,
+    /// Racines des disques fixes (`C:\`, `D:\`…), pour les jeux Xbox.
+    pub drives: Vec<PathBuf>,
 }
 
 /// Tous les launchers, dans l'ordre ; les clés Uninstall ne servent qu'en repli.
@@ -160,6 +260,9 @@ pub fn detect(env: &Env, reg: &dyn Registry) -> Detection {
     let mut d = Detection::default();
     steam::detect(reg, &mut d);
     epic::detect(&env.program_data, &mut d);
+    riot::detect(&env.program_data, &mut d);
+    minecraft::detect(env, &mut d);
+    xbox::detect(&env.drives, &mut d);
     uninstall::detect(reg, &mut d);
     d.games.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.launcher.cmp(&b.launcher)));
     d

@@ -44,7 +44,7 @@ describe("Jeux", () => {
     render(<GamesScreen />);
     const list = await screen.findByRole("list", { name: "Jeux installés" });
     const cards = within(list).getAllByRole("listitem");
-    expect(cards.length).toBe(7);
+    expect(cards.length).toBe(12);
     // Trié par taille : Baldur's Gate 3 d'abord.
     expect(cards[0]?.getAttribute("aria-label")).toBe("Baldur's Gate 3");
     expect(within(list).queryAllByRole("checkbox")).toHaveLength(0);
@@ -56,7 +56,7 @@ describe("Jeux", () => {
     expect(within(fortnite).getByText("À garder")).toBeTruthy();
     const witcher = within(list).getByRole("listitem", { name: "The Witcher 3: Wild Hunt" });
     expect(within(witcher).getByText("mesurée")).toBeTruthy();
-    expect(screen.getByText(/2 fichiers de launchers ignorés/)).toBeTruthy();
+    expect(screen.getByText(/3 fichiers de launchers ignorés/)).toBeTruthy();
   });
 
   it("Désinstaller et Déplacer ouvrent le launcher, jamais une suppression", async () => {
@@ -73,6 +73,38 @@ describe("Jeux", () => {
     expect(plan).not.toHaveBeenCalled();
   });
 
+  it("Riot, CurseForge, Xbox : ouverts par leur launcher ; Riot et CurseForge ne déplacent pas", async () => {
+    const open = vi.spyOn(backend, "openGame");
+    render(<GamesScreen />);
+    const lol = await screen.findByRole("listitem", { name: "League of Legends" });
+    expect(within(lol).getByText(/Riot Client · C:/)).toBeTruthy();
+    const move = within(lol).getByRole("button", { name: "Déplacer" }) as HTMLButtonElement;
+    expect(move.disabled).toBe(true);
+    expect(move.title).toMatch(/Riot Client ne déplace pas les jeux/);
+    fireEvent.click(within(lol).getByRole("button", { name: "Désinstaller" }));
+    const atm = screen.getByRole("listitem", { name: "All the Mods 9" });
+    expect(within(atm).getByText(/CurseForge · C:/)).toBeTruthy();
+    expect((within(atm).getByRole("button", { name: "Déplacer" }) as HTMLButtonElement).disabled).toBe(true);
+    const fh5 = screen.getByRole("listitem", { name: "Forza Horizon 5" });
+    const xboxMove = within(fh5).getByRole("button", { name: "Déplacer" }) as HTMLButtonElement;
+    expect(xboxMove.title).toMatch(/appli Xbox/);
+    fireEvent.click(xboxMove);
+    expect(open.mock.calls).toEqual([
+      ["riot:league_of_legends.live", "uninstall"],
+      ["xbox:Microsoft.624F8B84B80", "move"],
+    ]);
+  });
+
+  it("données et sauvegardes rattachées au jeu, protégées", async () => {
+    render(<GamesScreen />);
+    const bg3 = await screen.findByRole("listitem", { name: "Baldur's Gate 3" });
+    const line = within(bg3).getByText(/^Données et sauvegardes : 3,4 Go \(protégées\)$/);
+    expect(line.getAttribute("title")).toMatch(/Larian Studios/);
+    // Pas de ligne quand rien n'est trouvé.
+    expect(within(screen.getByRole("listitem", { name: "Fortnite" })).queryByText(/Données et sauvegardes/)).toBeNull();
+    expect(within(screen.getByRole("listitem", { name: "All the Mods 9" })).getByText(/Données et sauvegardes/)).toBeTruthy();
+  });
+
   it("tri par dernière partie : la plus ancienne d'abord, inconnue en dernier", async () => {
     render(<GamesScreen />);
     await screen.findByRole("list", { name: "Jeux installés" });
@@ -80,8 +112,8 @@ describe("Jeux", () => {
     const names = within(screen.getByRole("list", { name: "Jeux installés" }))
       .getAllByRole("listitem")
       .map((c) => c.getAttribute("aria-label"));
-    expect(names.slice(0, 2)).toEqual(["Elden Ring", "Cyberpunk 2077"]);
-    expect(names.slice(-3)).toEqual(expect.arrayContaining(["Fortnite", "Diablo IV"]));
+    expect(names.slice(0, 3)).toEqual(["Elden Ring", "Cyberpunk 2077", "Vanilla+"]);
+    expect(names.slice(-7)).toEqual(expect.arrayContaining(["Fortnite", "Diablo IV", "League of Legends", "Forza Horizon 5"]));
   });
 
   it("shaders : À vérifier, jamais cochés, explication et conseil, shadercache Steam informatif", async () => {

@@ -1,11 +1,15 @@
 //! Programmes en cours (garde des jeux et launchers) et ouverture d'un launcher : adresse Steam
-//! de la liste fermée, ou exécutable de launcher connu sous Program Files, par `ShellExecuteEx`
-//! (jamais élevé, aucun argument).
+//! de la liste fermée, appli du Store à l'identifiant figé, exécutable de launcher connu sous
+//! Program Files, ou launcher de l'utilisateur (Riot Client, CurseForge) seulement si Lumen n'est
+//! pas élevé ; par `ShellExecuteEx` (jamais élevé par Lumen, aucun argument).
 
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
-use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
@@ -69,11 +73,29 @@ pub enum OpenError {
 }
 
 /// Ouvre le launcher (désinstaller ou déplacer un jeu se fait toujours chez lui).
+/// Lumen tourne-t-il avec les droits administrateur ? (Illisible : on le suppose, par prudence.)
+pub fn process_elevated() -> bool {
+    let mut token = HANDLE::default();
+    // SAFETY : pseudo-handle du processus courant ; jeton fermé juste après.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
+        return true;
+    }
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut size = 0u32;
+    // SAFETY : structure possédée, taille annoncée.
+    let ok = unsafe {
+        GetTokenInformation(token, TokenElevation, Some(&mut elevation as *mut TOKEN_ELEVATION as *mut std::ffi::c_void), std::mem::size_of::<TOKEN_ELEVATION>() as u32, &mut size)
+    };
+    // SAFETY : jeton ouvert ci-dessus.
+    let _ = unsafe { CloseHandle(token) };
+    ok.is_err() || elevation.TokenIsElevated != 0
+}
+
 pub fn open_launcher(target: &LauncherOpen) -> Result<(), OpenError> {
     let layout = super::system_layout().map_err(|e| OpenError::Failed(e.to_string()))?;
-    target.validate(&layout.program_files)?;
+    target.validate(&layout.program_files, process_elevated())?;
     let file = match target {
-        LauncherOpen::App(exe) => {
+        LauncherOpen::App(exe) | LauncherOpen::UserApp(exe) => {
             // Le fichier existe, n'est pas un dossier, et ni lui ni ses parents ne sont des liens.
             let probe = super::WinProbe;
             let attrs = |p: &WinPath| crate::probe::Probe::attributes(&probe, p);

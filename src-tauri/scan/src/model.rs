@@ -242,6 +242,14 @@ pub struct SliceNode {
 }
 
 impl Scan {
+    /// Mémoire occupée (octets, estimation par excès) : nœuds, noms, file ID longs.
+    pub fn memory_bytes(&self) -> u64 {
+        let nodes = self.nodes.capacity() * std::mem::size_of::<Node>();
+        // Table de hachage : clé, valeur et un octet de contrôle par case, à moitié pleine au pire.
+        let ids = self.id_high.capacity() * (std::mem::size_of::<NodeId>() + std::mem::size_of::<u64>() + 1) * 2;
+        (std::mem::size_of::<Scan>() + nodes + self.names.capacity() + ids + self.root_path.capacity()) as u64
+    }
+
     pub fn root(&self) -> NodeId {
         0
     }

@@ -1,4 +1,4 @@
-//! GOG, Ubisoft Connect, Battle.net et EA app : leurs clés de registre quand elles existent
+//! GOG, Ubisoft Connect, Battle.net, EA app et Riot : leurs clés de registre quand elles existent
 //! (`GOG.com\Games`, `Ubisoft\Launcher\Installs`), puis les clés Uninstall de Windows en repli
 //! (éditeur ou nom de clé). Un jeu déjà trouvé ailleurs (même dossier) n'est jamais compté deux
 //! fois ; les jeux Steam (« Steam App … ») restent à Steam.
@@ -60,6 +60,8 @@ fn launcher_of(e: &Entry) -> Option<Launcher> {
         Some(Launcher::BattleNet)
     } else if p.starts_with("electronic arts") && !["ea app", "ea", "origin", "ea desktop"].contains(&n.as_str()) {
         Some(Launcher::Ea)
+    } else if (e.key.to_ascii_lowercase().starts_with("riot game ") || p.starts_with("riot games")) && !n.starts_with("riot client") && !n.starts_with("riot vanguard") {
+        Some(Launcher::Riot)
     } else {
         None
     }
@@ -93,7 +95,7 @@ pub fn detect(reg: &dyn Registry, d: &mut Detection) {
         let name = entry.map(|e| e.name.clone()).unwrap_or(folder);
         push(d, Launcher::Ubisoft, &format!("Uplay Install {id}"), &name, Some(&dir), entry.and_then(|e| e.size));
     }
-    // Repli : entrées Uninstall des quatre launchers.
+    // Repli : entrées Uninstall de ces launchers.
     for e in &all {
         let n = e.name.to_ascii_lowercase();
         if n == "battle.net" {
@@ -104,6 +106,8 @@ pub fn detect(reg: &dyn Registry, d: &mut Detection) {
             d.found(Launcher::Gog);
         } else if n.starts_with("ubisoft connect") || n.starts_with("uplay") {
             d.found(Launcher::Ubisoft);
+        } else if n.starts_with("riot client") {
+            d.found(Launcher::Riot);
         }
         if let Some(l) = launcher_of(e) {
             d.found(l);

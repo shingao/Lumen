@@ -40,8 +40,10 @@ all denylist::tests::chaque_entree_de_la_denylist
 all denylist::tests::faits_du_fichier
 all denylist::tests::parents_des_zones_protegees
 all denylist::tests::prefixe_verbatim_et_point_point
+all denylist::tests::sauvegardes_de_jeux_jamais_supprimees
 all denylist::tests::secrets_et_configurations_jamais_supprimes
 all denylist::tests::variantes_de_casse
+all denylist::tests::windowsapps_et_jeux_du_store_intouchables
 all denylist::tests::zones_utilisateur_autorisees
 all exec::tests::annulation_entre_deux_elements
 all exec::tests::commandes_d_abord_jamais_elevees
@@ -61,10 +63,12 @@ all exec::tests::jeu_ou_launcher_ouvert_rien_n_est_fait
 all exec::tests::jonction_apparue_dans_un_dossier_jamais_suivie
 all exec::tests::liens_physiques_jamais_des_doublons
 all exec::tests::point_de_restauration_obligatoire_avant_les_actions_systeme
+all exec::tests::sauvegarde_de_jeu_dans_un_dossier_jamais_supprimee
 all exec::tests::secret_dans_un_cache_jamais_supprime
 all exec::tests::temp_seuls_les_anciens_partent
 all exec::tests::verrouille_laisse_et_signale
 all guard::tests::launcher_ou_jeu_ouvert_bloque
+all launch::tests::launchers_de_l_utilisateur_et_applis_du_store
 all launch::tests::liste_fermee_des_launchers
 all path::tests::chaine_des_parents
 all path::tests::chemins_de_peripherique_refuses

@@ -3,7 +3,7 @@ import type { DevProject, Game } from "../ipc/types";
 import { sortGames, sortProjects } from "./devgames";
 
 const game = (name: string, size: number | null, lastPlayed: number | null): Game => ({
-  id: name, launcher: "steam", name, installDir: null, size, sizeSource: "launcher", drive: "C:", lastPlayed, status: "keep", cover: false, open: "uri",
+  id: name, launcher: "steam", name, installDir: null, size, sizeSource: "launcher", drive: "C:", lastPlayed, status: "keep", cover: false, open: "uri", canMove: true, data: null,
 });
 
 const project = (name: string, lastActivity: number | null, artifactsSize: number): DevProject => ({

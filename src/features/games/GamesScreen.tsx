@@ -7,7 +7,7 @@ import { Segmented } from "../../components/Segmented";
 import { StatusDot } from "../../components/StatusDot";
 import { sortGames, type GameSort } from "../../core/devgames";
 import { formatBytes, formatCount, formatRelative } from "../../core/format";
-import { useT, type MessageKey } from "../../i18n";
+import { useT, type MessageKey, type Translator } from "../../i18n";
 import type { Game, GamesResult, LauncherId } from "../../ipc/types";
 import adv from "../advanced/Advanced.module.css";
 import { Check, SelectionBar } from "../advanced/FileRows";
@@ -23,13 +23,26 @@ const LAUNCHER_KEYS: Record<LauncherId, MessageKey> = {
   battlenet: "games.launcher.battlenet",
   ea: "games.launcher.ea",
   ubisoft: "games.launcher.ubisoft",
+  riot: "games.launcher.riot",
+  curseforge: "games.launcher.curseforge",
+  minecraft: "games.launcher.minecraft",
+  xbox: "games.launcher.xbox",
 };
+
+/** Infobulle de « Désinstaller » / « Déplacer » : ce que Lumen ouvre. */
+function openTitle(game: Game, action: "uninstall" | "move", launcher: string, t: Translator): string {
+  if (game.open === "none") return t("games.open.none", { launcher });
+  if (action === "move" && !game.canMove) return t("games.move.none", { launcher });
+  if (game.launcher === "xbox") return t("games.xbox.title");
+  if (action === "uninstall") return t("games.uninstall.title", { launcher });
+  return t(game.launcher === "steam" ? "games.move.steam" : "games.move.title", { launcher });
+}
 
 function GameCard({ game }: { game: Game }) {
   const t = useT();
   const cover = useDevGames((s) => s.covers[game.id] ?? null);
   const launcher = t(LAUNCHER_KEYS[game.launcher]);
-  const noOpen = game.open === "none" ? t("games.open.none", { launcher }) : undefined;
+  const noOpen = game.open === "none";
   return (
     <li className={styles.game} aria-label={game.name}>
       <div className={styles.cover}>{cover ? <img src={cover} alt="" /> : <span aria-hidden="true">{game.name.slice(0, 1)}</span>}</div>
@@ -52,11 +65,16 @@ function GameCard({ game }: { game: Game }) {
           <StatusDot status={game.status} />
           {t(game.status === "review" ? "status.review" : "status.keep")}
         </span>
+        {game.data && (
+          <span className={styles.data} title={[t("games.data.hint"), ...game.data.paths].join("\n")}>
+            {t("games.data", { size: formatBytes(game.data.size, t.locale) })}
+          </span>
+        )}
         <span className={styles.actions}>
-          <Button variant="link" disabled={!!noOpen} title={noOpen ?? t("games.uninstall.title", { launcher })} onClick={() => void openGame(game.id, "uninstall")}>
+          <Button variant="link" disabled={noOpen} title={openTitle(game, "uninstall", launcher, t)} onClick={() => void openGame(game.id, "uninstall")}>
             {t("games.uninstall")}
           </Button>
-          <Button variant="link" disabled={!!noOpen} title={noOpen ?? t(game.launcher === "steam" ? "games.move.steam" : "games.move.title", { launcher })} onClick={() => void openGame(game.id, "move")}>
+          <Button variant="link" disabled={noOpen || !game.canMove} title={openTitle(game, "move", launcher, t)} onClick={() => void openGame(game.id, "move")}>
             {t("games.move")}
           </Button>
         </span>

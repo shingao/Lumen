@@ -594,7 +594,7 @@ export interface DatabaseInfo {
 
 // --- Jeux et Dev (jalon 8) ------------------------------------------------------------------
 
-export type LauncherId = "steam" | "epic" | "gog" | "battlenet" | "ea" | "ubisoft";
+export type LauncherId = "steam" | "epic" | "gog" | "battlenet" | "ea" | "ubisoft" | "riot" | "curseforge" | "minecraft" | "xbox";
 
 export interface Game {
   /** `launcher:clé`, seul identifiant renvoyé au backend. */
@@ -610,8 +610,12 @@ export interface Game {
   lastPlayed: number | null;
   status: "keep" | "review";
   cover: boolean;
-  /** Ce que Lumen peut ouvrir : adresse Steam, le launcher, ou rien. */
+  /** Ce que Lumen peut ouvrir : adresse Steam ou appli du Store, le launcher, ou rien. */
   open: "uri" | "app" | "none";
+  /** Le launcher sait-il déplacer un jeu ? (Riot Client, CurseForge : non.) */
+  canMove: boolean;
+  /** Données et sauvegardes hors du dossier du jeu, protégées (jamais proposées). */
+  data: { size: number; paths: string[] } | null;
 }
 
 export interface GamesResult {
@@ -677,4 +681,12 @@ export interface WslDisks {
   disks: { id: number; name: string; kind: "wsl" | "docker"; path: string; size: number }[];
   /** Module Hyper-V présent : Optimize-VHD ; sinon diskpart en lecture seule. */
   hyperv: boolean;
+}
+
+/** Analyses gardées en mémoire pendant la session (une par disque), bornées. */
+export interface ScanCacheInfo {
+  /** Du plus récemment utilisé au moins récent ; `target` : `userProfile` ou la lettre du disque. */
+  entries: { scanId: number; target: string; bytes: number; lastUsed: number }[];
+  total: number;
+  limit: number;
 }

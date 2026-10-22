@@ -303,5 +303,16 @@ await shot("44-jeux-anglais", { locale: "en-US", act: async (p) => {
   await nav(p, "Games");
   await p.getByRole("list", { name: "Installed games" }).waitFor();
 } });
+// Retours de test de la PR #6 : nouveaux launchers, données protégées, mémoire des analyses.
+await shot("45-jeux-launchers-1920", { width: 1920, height: 1080, act: async (p) => {
+  await nav(p, "Jeux");
+  await p.getByRole("list", { name: "Jeux installés" }).waitFor();
+  await p.getByRole("listitem", { name: "League of Legends" }).getByRole("button", { name: "Déplacer" }).hover();
+} });
+await shot("46-parametres-memoire", { act: async (p) => {
+  await p.locator("[data-level='3']").first().waitFor();
+  await p.getByRole("button", { name: "Paramètres" }).click();
+  await p.getByText(/sur 600 Mo/).waitFor();
+} });
 await browser.close();
 console.log(`captures dans ${out}`);

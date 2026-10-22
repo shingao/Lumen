@@ -26,6 +26,7 @@ import type {
   SearchHit,
   Settings,
   SeriesKey,
+  ScanCacheInfo,
   DevOverview,
   DockerImages,
   GamesResult,
@@ -55,6 +56,8 @@ export interface Backend {
   findNode(scanId: number, path: string): Promise<NodeId | null>;
   /** Dernière analyse d'une cible gardée pendant la session (retour instantané), ou null. */
   cachedScan(target: ScanTarget): Promise<ScanSummary | null>;
+  /** Mémoire des analyses gardées pendant la session (Paramètres). */
+  scanCacheInfo(): Promise<ScanCacheInfo>;
   kpis(target: ScanTarget, summary: ScanSummary | null): Promise<Kpis>;
   recommendations(scanId: number): Promise<Recommendation[]>;
   recommendation(id: string): Promise<RecommendationDetail>;

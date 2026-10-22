@@ -228,6 +228,19 @@ fn secret_dans_un_cache_jamais_supprime() {
 }
 
 #[test]
+fn sauvegarde_de_jeu_dans_un_dossier_jamais_supprimee() {
+    let w = World::new();
+    cache(&w);
+    w.probe.file("C:\\Users\\Arthur\\cache\\sous\\partie.sav", 1);
+    let plan = w.plan(&["C:\\Users\\Arthur\\cache\\sous"], "cache", DeleteMode::Trash);
+    let fx = Fake::new(&w.probe);
+    let r = w.run(&plan, &fx);
+    assert_eq!(r.items[0].issues[0].reason, IssueReason::Denied(DenyReason::GameSave));
+    assert!(w.probe.exists("C:\\Users\\Arthur\\cache\\sous\\partie.sav"));
+    assert!(w.probe.exists("C:\\Users\\Arthur\\cache\\sous"));
+}
+
+#[test]
 fn temp_seuls_les_anciens_partent() {
     let w = World::new();
     w.probe.dir("C:\\Users\\Arthur\\AppData\\Local\\Temp\\setup");

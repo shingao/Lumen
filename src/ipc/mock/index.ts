@@ -335,6 +335,20 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       return resolved(last === null ? null : summaryOf(last));
     },
 
+    scanCacheInfo() {
+      // Taille factice par cible, de l'ordre de celle d'une vraie analyse.
+      const mib: Record<string, number> = { user: 96, "C:": 412, "D:": 74 };
+      const latest = new Map<string, number>();
+      for (const id of finished) {
+        const key = scans.get(id) ?? "";
+        latest.set(key, Math.max(latest.get(key) ?? 0, id));
+      }
+      const entries = [...latest.entries()]
+        .map(([key, id]) => ({ scanId: id, target: key === "user" ? "userProfile" : key, bytes: (mib[key] ?? 120) * 1024 * 1024, lastUsed: id }))
+        .sort((a, b) => b.lastUsed - a.lastUsed);
+      return resolved({ entries, total: entries.reduce((a, e) => a + e.bytes, 0), limit: 600 * 1024 * 1024 });
+    },
+
     cancelScan(scanId) {
       emit({ type: "failed", scanId, cancelled: true, message: "analyse annulée" });
       return resolved(undefined);

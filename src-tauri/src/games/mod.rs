@@ -48,8 +48,20 @@ pub struct GameDto {
     /// `keep` ou `review` ; jamais coché, Lumen ne supprime jamais un jeu.
     pub status: &'static str,
     pub cover: bool,
-    /// Ce que le launcher permet : `uri` (Steam), `app` (ouvrir le launcher) ou `none`.
+    /// Ce que le launcher permet : `uri` (Steam, appli du Store), `app` (ouvrir le launcher) ou `none`.
     pub open: &'static str,
+    /// Le launcher sait-il déplacer un jeu ? (Riot Client, CurseForge : non.)
+    pub can_move: bool,
+    /// Données et sauvegardes hors du dossier du jeu (AppData, My Games, Saved Games…),
+    /// protégées : jamais proposées (sauvegardes dans la denylist de `safety`).
+    pub data: Option<GameDataDto>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDataDto {
+    pub size: u64,
+    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,8 +110,9 @@ fn drive_of(p: &Path) -> Option<String> {
     (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()).then(|| s[..2].to_ascii_uppercase())
 }
 
-/// Ce que l'on sait d'un jeu, mis en forme ; `measured` : taille mesurée faute de mieux.
-pub(crate) fn game_dto(g: &Game, measured: Option<u64>, apps: &[(Launcher, PathBuf)], now_secs: i64) -> GameDto {
+/// Ce que l'on sait d'un jeu, mis en forme ; `measured` : taille mesurée faute de mieux ;
+/// `apps` : launchers trouvés (Program Files, ou lus dans leurs fichiers pour Riot et CurseForge).
+pub(crate) fn game_dto(g: &Game, measured: Option<u64>, data: Option<GameDataDto>, apps: &[(Launcher, PathBuf)], now_secs: i64) -> GameDto {
     let (size, size_source) = match (g.size, measured) {
         (Some(s), _) => (Some(s), "launcher"),
         (None, Some(m)) => (Some(m), "measured"),
@@ -119,14 +132,18 @@ pub(crate) fn game_dto(g: &Game, measured: Option<u64>, apps: &[(Launcher, PathB
         open: match g.launcher {
             Launcher::Steam if g.key.parse::<u32>().is_ok_and(|id| id > 0) => "uri",
             l if apps.iter().any(|(a, _)| *a == l) => "app",
+            // Appli Xbox ; Minecraft Launcher du Store faute de l'ancien sous Program Files.
+            Launcher::Xbox | Launcher::Minecraft => "uri",
             _ => "none",
         },
+        can_move: g.launcher.can_move(),
+        data,
     }
 }
 
 /// Exécutables des launchers aux emplacements d'installation habituels (Program Files).
 fn launcher_apps(program_files: &[PathBuf]) -> Vec<(Launcher, PathBuf)> {
-    let candidates: [(Launcher, &str); 10] = [
+    let candidates: [(Launcher, &str); 11] = [
         (Launcher::Epic, "Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe"),
         (Launcher::Epic, "Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe"),
         (Launcher::Gog, "GOG Galaxy\\GalaxyClient.exe"),
@@ -137,6 +154,7 @@ fn launcher_apps(program_files: &[PathBuf]) -> Vec<(Launcher, PathBuf)> {
         (Launcher::Ubisoft, "Ubisoft\\Ubisoft Game Launcher\\UbisoftConnect.exe"),
         (Launcher::Ubisoft, "Ubisoft\\Ubisoft Game Launcher\\upc.exe"),
         (Launcher::Gog, "GOG Galaxy\\GalaxyClient.exe"),
+        (Launcher::Minecraft, "Minecraft Launcher\\MinecraftLauncher.exe"),
     ];
     let mut out: Vec<(Launcher, PathBuf)> = Vec::new();
     for (l, rel) in candidates {
@@ -191,14 +209,29 @@ mod platform {
         }
     }
 
+    /// Dossiers connus de l'utilisateur et disques fixes.
     #[cfg(windows)]
-    pub fn detect() -> Detection {
-        let program_data = std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\ProgramData"));
-        launchers::detect(&launchers::Env { program_data }, &WinRegistry)
+    pub fn env() -> (launchers::Env, Option<PathBuf>) {
+        let vars = safety::win::rule_variables();
+        let var = |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, p)| PathBuf::from(p.display_string()));
+        let program_data = var("PROGRAMDATA").unwrap_or_else(|| PathBuf::from("C:\\ProgramData"));
+        let drives = scan::win::volumes().iter().filter(|v| v.kind == scan::win::VolumeKind::Fixed).map(|v| PathBuf::from(format!("{}:\\", v.letter))).collect();
+        let env = launchers::Env { program_data, profile: var("USERPROFILE"), local_app_data: var("LOCALAPPDATA"), app_data: var("APPDATA"), drives };
+        (env, var("DOCUMENTS"))
     }
 
     #[cfg(not(windows))]
-    pub fn detect() -> Detection {
+    pub fn env() -> (launchers::Env, Option<PathBuf>) {
+        (launchers::Env::default(), None)
+    }
+
+    #[cfg(windows)]
+    pub fn detect(env: &launchers::Env) -> Detection {
+        launchers::detect(env, &WinRegistry)
+    }
+
+    #[cfg(not(windows))]
+    pub fn detect(_: &launchers::Env) -> Detection {
         Detection::default()
     }
 
@@ -246,17 +279,47 @@ pub(crate) fn now_secs() -> i64 {
     crate::cleanup::unix_ms() / 1000
 }
 
+/// Données et sauvegardes d'un jeu, mesurées (lecture des métadonnées seulement).
+fn game_data(g: &Game, candidates: &[launchers::data::Candidate], steam_users: &[PathBuf], measure: &dyn Fn(&Path) -> Option<u64>) -> Option<GameDataDto> {
+    let dirs = launchers::data::data_dirs(g, candidates, steam_users);
+    let mut size = 0;
+    let mut paths = Vec::new();
+    for d in dirs {
+        if let Some(s) = measure(&d).filter(|s| *s > 0) {
+            size += s;
+            paths.push(d.display().to_string());
+        }
+    }
+    (!paths.is_empty()).then_some(GameDataDto { size, paths })
+}
+
 /// Détection complète, tailles manquantes mesurées : appelée hors du fil de l'interface.
 fn list(state: &GamesState) -> GamesDto {
-    let detection = platform::detect();
-    let apps = launcher_apps(&platform::program_files());
+    let (env, documents) = platform::env();
+    let detection = platform::detect(&env);
+    // Launchers ouvrables : sous Program Files, puis ceux lus dans leurs fichiers (Riot, CurseForge).
+    let mut apps = launcher_apps(&platform::program_files());
+    for (l, p) in &detection.launcher_exes {
+        if !apps.iter().any(|(a, _)| a == l) && p.is_file() {
+            apps.push((*l, p.clone()));
+        }
+    }
+    let roots = launchers::data::DataRoots {
+        documents,
+        profile: env.profile.clone(),
+        local_app_data: env.local_app_data.clone(),
+        app_data: env.app_data.clone(),
+        steam_users: detection.steam_libraries.iter().flat_map(|lib| launchers::list_dirs(&lib.join("userdata"))).collect(),
+    };
+    let candidates = roots.candidates();
     let now = now_secs();
     let games = detection
         .games
         .iter()
         .map(|g| {
             let measured = if g.size.is_none() { g.install_dir.as_deref().and_then(platform::measure) } else { None };
-            game_dto(g, measured, &apps, now)
+            let data = game_data(g, &candidates, &roots.steam_users, &platform::measure);
+            game_dto(g, measured, data, &apps, now)
         })
         .collect();
     let steam_shader_caches = detection
@@ -323,7 +386,10 @@ fn base64(bytes: &[u8]) -> String {
 
 /// Ce que le launcher ouvre pour une action : jamais Lumen ne désinstalle ni ne déplace un jeu.
 pub(crate) fn open_target(found: &Found, game: &Game, action: &str) -> Result<safety::launch::LauncherOpen, LumenError> {
-    use safety::launch::LauncherOpen;
+    use safety::launch::{LauncherOpen, StoreApp};
+    if action == "move" && !game.launcher.can_move() {
+        return Err(LumenError::Games("ce launcher ne déplace pas les jeux : désinstalle puis réinstalle ailleurs depuis le launcher".into()));
+    }
     if game.launcher == Launcher::Steam {
         let appid = game.key.parse::<u32>().map_err(|_| LumenError::Games("identifiant Steam invalide".into()))?;
         return Ok(match action {
@@ -331,9 +397,22 @@ pub(crate) fn open_target(found: &Found, game: &Game, action: &str) -> Result<sa
             _ => LauncherOpen::SteamSettings,
         });
     }
-    let exe = found.apps.iter().find(|(l, _)| *l == game.launcher).map(|(_, p)| p).ok_or_else(|| LumenError::Games("launcher introuvable sous Program Files".into()))?;
+    if game.launcher == Launcher::Xbox {
+        return Ok(LauncherOpen::Store(StoreApp::Xbox));
+    }
+    let exe = found.apps.iter().find(|(l, _)| *l == game.launcher).map(|(_, p)| p);
+    let Some(exe) = exe else {
+        return match game.launcher {
+            Launcher::Minecraft => Ok(LauncherOpen::Store(StoreApp::MinecraftLauncher)),
+            _ => Err(LumenError::Games("launcher introuvable".into())),
+        };
+    };
     let path = safety::path::WinPath::parse(&exe.display().to_string()).map_err(|e| LumenError::Games(e.to_string()))?;
-    Ok(LauncherOpen::App(path))
+    Ok(match game.launcher {
+        // Installés pour l'utilisateur seul, hors de Program Files.
+        Launcher::Riot | Launcher::CurseForge => LauncherOpen::UserApp(path),
+        _ => LauncherOpen::App(path),
+    })
 }
 
 #[tauri::command]
@@ -432,14 +511,34 @@ mod tests {
     fn statut_taille_et_ouverture() {
         let now = 1_792_584_000;
         let apps = vec![(Launcher::Epic, PathBuf::from("C:\\Program Files (x86)\\Epic Games\\EpicGamesLauncher.exe"))];
-        let old = game_dto(&game(Launcher::Steam, "570", Some(now - 200 * 86_400), Some(10)), None, &apps, now);
+        let old = game_dto(&game(Launcher::Steam, "570", Some(now - 200 * 86_400), Some(10)), None, None, &apps, now);
         assert_eq!((old.status, old.open, old.size_source, old.drive.as_deref()), ("review", "uri", "launcher", Some("D:")));
         assert_eq!(old.last_played, Some((now - 200 * 86_400) * 1000));
         // Date inconnue : « À garder », jamais une date inventée.
-        let epic = game_dto(&game(Launcher::Epic, "Fortnite", None, None), Some(42), &apps, now);
+        let epic = game_dto(&game(Launcher::Epic, "Fortnite", None, None), Some(42), None, &apps, now);
         assert_eq!((epic.status, epic.last_played, epic.size, epic.size_source, epic.open), ("keep", None, Some(42), "measured", "app"));
-        let gog = game_dto(&game(Launcher::Gog, "1", None, None), None, &apps, now);
+        let gog = game_dto(&game(Launcher::Gog, "1", None, None), None, None, &apps, now);
         assert_eq!((gog.size, gog.size_source, gog.open), (None, "unknown", "none"));
+        // Xbox : appli Xbox ; Riot sans client trouvé : rien ; Riot ne déplace pas.
+        let xbox = game_dto(&game(Launcher::Xbox, "Microsoft.X", None, None), None, None, &apps, now);
+        assert_eq!((xbox.open, xbox.can_move), ("uri", true));
+        let riot = game_dto(&game(Launcher::Riot, "valorant.live", None, None), None, None, &apps, now);
+        assert_eq!((riot.open, riot.can_move), ("none", false));
+    }
+
+    #[test]
+    fn donnees_et_sauvegardes_mesurees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("Local");
+        let bg3 = local.join("Larian Studios").join("Baldur's Gate 3");
+        std::fs::create_dir_all(bg3.join("PlayerProfiles")).unwrap();
+        let roots = launchers::data::DataRoots { local_app_data: Some(local), ..Default::default() };
+        let g = Game { name: "Baldur's Gate 3".into(), ..game(Launcher::Steam, "1086940", None, None) };
+        let data = game_data(&g, &roots.candidates(), &[], &|_| Some(3 << 30)).unwrap();
+        assert_eq!((data.size, data.paths.len()), (3 << 30, 1));
+        assert!(data.paths[0].ends_with("Baldur's Gate 3"));
+        // Dossier vide ou illisible : pas de ligne.
+        assert_eq!(game_data(&g, &roots.candidates(), &[], &|_| None), None);
     }
 
     #[test]
@@ -451,6 +550,13 @@ mod tests {
         assert!(matches!(open_target(&found, &game(Launcher::Epic, "F", None, None), "uninstall").unwrap(), LauncherOpen::App(_)));
         assert!(open_target(&found, &game(Launcher::Gog, "1", None, None), "uninstall").is_err());
         assert!(open_target(&found, &game(Launcher::Steam, "abc", None, None), "uninstall").is_err());
+        // Xbox et Minecraft du Store : identifiant figé ; Riot et CurseForge : launcher de l'utilisateur.
+        use safety::launch::StoreApp;
+        assert_eq!(open_target(&found, &game(Launcher::Xbox, "Microsoft.X", None, None), "move").unwrap(), LauncherOpen::Store(StoreApp::Xbox));
+        assert_eq!(open_target(&found, &game(Launcher::Minecraft, "java", None, None), "uninstall").unwrap(), LauncherOpen::Store(StoreApp::MinecraftLauncher));
+        let riot = Found { detection: Detection::default(), apps: vec![(Launcher::Riot, PathBuf::from("C:\\Riot Games\\Riot Client\\RiotClientServices.exe"))] };
+        assert!(matches!(open_target(&riot, &game(Launcher::Riot, "valorant.live", None, None), "uninstall").unwrap(), LauncherOpen::UserApp(_)));
+        assert!(open_target(&riot, &game(Launcher::Riot, "valorant.live", None, None), "move").is_err(), "Riot ne déplace pas");
     }
 
     #[test]

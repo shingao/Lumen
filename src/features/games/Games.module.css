@@ -85,6 +85,17 @@
   background: var(--st-keep);
 }
 
+/* Données et sauvegardes : protégées, sur fond « À garder ». */
+.data {
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: var(--r-field);
+  background: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+
 .actions {
   margin-top: auto;
   display: flex;
