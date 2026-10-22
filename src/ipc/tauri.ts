@@ -34,6 +34,12 @@ import type {
   ScanSummary,
   Settings,
   DailyStatus,
+  DevProject,
+  DockerImages,
+  GamesResult,
+  ShaderCaches,
+  ScanCacheInfo,
+  WslDisks,
   DatabaseInfo,
   TimelineCompare,
   TimelineData,
@@ -245,6 +251,8 @@ export function createTauriBackend(): Backend {
     },
 
     findNode: (scanId, path) => invoke<number | null>("scan_find", { scanId, path }),
+    cachedScan: (target) => invoke<ScanSummary | null>("scan_cached", { target }),
+    scanCacheInfo: () => invoke<ScanCacheInfo>("scan_cache_info"),
     async kpis(target, summary) {
       const list = volumes.length > 0 ? volumes : await loadVolumes();
       const letter = target.kind === "volume" ? target.letter : (summary?.volume ?? "C:");
@@ -329,6 +337,20 @@ export function createTauriBackend(): Backend {
       ];
       return () => offs.forEach((p) => void p.then((off) => off()));
     },
+    games: () => invoke<GamesResult>("games_list"),
+    gameCover: (id) => invoke<string | null>("game_cover", { id }),
+    openGame: (id, action) => invoke("game_open", { id, action }),
+    gamesRunning: () => invoke<string[]>("games_running"),
+    shaderCaches: (scanId) => invoke<ShaderCaches>("games_shaders", { scanId }),
+    async devOverview(scanId) {
+      const dto = await invoke<{ projects: DevProject[]; caches: RecoDto[] }>("dev_overview", { scanId });
+      return {
+        projects: dto.projects,
+        caches: dto.caches.map((c) => ({ id: c.id, status: c.status, name: pick(c.name, locale), path: c.path, size: c.size, command: c.action === "command" })),
+      };
+    },
+    dockerImages: () => invoke<DockerImages>("docker_images"),
+    wslDisks: () => invoke<WslDisks>("wsl_disks"),
     timelineSeries: () => invoke<TimelineSeries[]>("timeline_series"),
     timeline: (series) => invoke<TimelineData>("timeline_data", { series }),
     timelineTrend: (target) => invoke<number | null>("timeline_trend", { target }),

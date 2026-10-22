@@ -71,6 +71,8 @@ pub trait Effects {
     /// Lance une commande « administrateur » de la liste fermée, élevée (UAC), par son chemin
     /// complet sous `%SystemRoot%` et avec ses arguments fixes ; seulement si le plan l'autorise.
     fn run_elevated(&self, command: &OfficialCommand, cancel: &AtomicBool) -> CommandRun;
+    /// Programmes en cours (garde des plans qui l'exigent : jeux, launchers).
+    fn running_processes(&self) -> Vec<crate::guard::RunningProcess>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,6 +431,13 @@ pub(crate) fn run<P: Probe, E: Effects, F: FnMut(Event)>(
             cancelled: false,
             aborted: None,
         };
+
+    // Garde : un jeu ou un launcher ouvert = rien n'est fait, ni commande ni élément.
+    if let Some(guard) = plan.guard() {
+        if let Some(p) = guard.blocking(&effects.running_processes()) {
+            report.aborted = Some(format!("{} est ouvert : ferme-le avant de nettoyer, rien n'a été fait", p.name));
+        }
+    }
 
     // Commandes d'abord : les prérequis (gradle --stop…) doivent précéder les suppressions.
     let total = plan.commands().len();

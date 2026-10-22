@@ -16,7 +16,7 @@ const MAX_HIGHLIGHT: usize = 200;
 /// Fichiers listés dans le détail, au plus.
 const MAX_FILES: usize = 8;
 
-fn builtin() -> &'static Result<RuleSet, String> {
+pub(crate) fn builtin() -> &'static Result<RuleSet, String> {
     static RULES: OnceLock<Result<RuleSet, String>> = OnceLock::new();
     RULES.get_or_init(|| rules::builtin().map_err(|e| e.to_string()))
 }
@@ -26,7 +26,7 @@ fn builtin() -> &'static Result<RuleSet, String> {
 pub struct Applied {
     pub analysis: Analysis,
     pub env: rules::Env,
-    profile: Option<String>,
+    pub(crate) profile: Option<String>,
 }
 
 #[cfg(windows)]

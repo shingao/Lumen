@@ -28,6 +28,7 @@ import type {
 import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
 import { createMockTimeline } from "./timeline";
+import { DEV_EXTRA_CACHES, mockCover, mockDevCaches, mockDocker, mockGames, mockProjects, mockRunning, mockShaders, mockWsl } from "./devgames";
 import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockNoProtection, mockProgram, mockRestorePoints, mockSinks } from "./advanced";
 
 const SETTINGS_KEY = "lumen-dev-settings";
@@ -48,6 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
   explorerMenu: true,
   logsFolder: "%LOCALAPPDATA%\\Lumen\\logs",
   experimentalSystem: false,
+  experimentalWsl: false,
 };
 
 const gb = (n: number) => Math.round(n * GIB);
@@ -193,6 +195,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
 
   // Analyses factices : chaque cible pointe vers un jeu de données de la maquette.
   const scans = new Map<number, string>();
+  /** Analyses terminées (la dernière de chaque cible est gardée, comme dans l'appli). */
+  const finished = new Set<number>();
   let nextScan = 0;
   const listeners = new Set<(e: ScanEvent) => void>();
   const emit = (e: ScanEvent) => listeners.forEach((fn) => fn(e));
@@ -317,8 +321,32 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           });
         }, (i + 1) * 100);
       });
-      setTimeout(() => emit({ type: "done", summary: total }), 400);
+      setTimeout(() => {
+        finished.add(id);
+        emit({ type: "done", summary: total });
+      }, 400);
       return resolved(id);
+    },
+
+    cachedScan(target) {
+      const key = targetKey(target);
+      const ids = [...finished].filter((id) => scans.get(id) === key);
+      const last = ids.length > 0 ? Math.max(...ids) : null;
+      return resolved(last === null ? null : summaryOf(last));
+    },
+
+    scanCacheInfo() {
+      // Taille factice par cible, de l'ordre de celle d'une vraie analyse.
+      const mib: Record<string, number> = { user: 96, "C:": 412, "D:": 74 };
+      const latest = new Map<string, number>();
+      for (const id of finished) {
+        const key = scans.get(id) ?? "";
+        latest.set(key, Math.max(latest.get(key) ?? 0, id));
+      }
+      const entries = [...latest.entries()]
+        .map(([key, id]) => ({ scanId: id, target: key === "user" ? "userProfile" : key, bytes: (mib[key] ?? 120) * 1024 * 1024, lastUsed: id }))
+        .sort((a, b) => b.lastUsed - a.lastUsed);
+      return resolved({ entries, total: entries.reduce((a, e) => a + e.bytes, 0), limit: 600 * 1024 * 1024 });
     },
 
     cancelScan(scanId) {
@@ -398,7 +426,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
 
     planCleanup(_scanId, request, mode) {
       if (request.kind !== "recos") {
-        const { items, commands } = mockAdvancedPlan(request, locale === "en");
+        const { items, commands } = mockAdvancedPlan(request, locale === "en", now());
         const total = items.reduce((a, i) => a + i.size, 0) + commands.reduce((a, c) => a + c.size, 0);
         const plan: CleanPlan = {
           planId: ++nextPlan,
@@ -412,11 +440,12 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           volumes: [{ volume: "C:\\", free: gb(KPI.freeNow) }],
           refused: [],
           skippedLocked: 0,
-          elevated: request.kind === "system",
+          elevated: request.kind === "system" || request.kind === "wslCompact",
           withoutRestorePoint: request.kind === "system" && !request.restorePoint,
+          processGuard: request.kind === "shaders",
         };
         plans.set(plan.planId, plan);
-        planKinds.set(plan.planId, request.kind);
+        planKinds.set(plan.planId, request.kind === "dockerPrune" ? "docker" : request.kind === "wslCompact" ? "wsl" : request.kind);
         return resolved(plan);
       }
       const ids = request.ids;
@@ -427,9 +456,14 @@ export function createMockBackend(now: () => number = Date.now): Backend {
           { line: "npm cache clean --force", explanation: l({ fr: "Outil officiel : vide le cache npm", en: "Official tool: clears the npm cache" }), prerequisite: false, required: false, needsElevation: false, size: gb(r.size) },
           { line: "npm cache verify", explanation: l({ fr: "Vérifie l'intégrité du cache npm", en: "Checks the npm cache integrity" }), prerequisite: false, required: false, needsElevation: false, size: 0 },
         ]);
+      const extra = DEV_EXTRA_CACHES.filter((c) => ids.includes(c.id));
+      for (const c of extra.filter((x) => x.line)) {
+        commands.push({ line: c.line ?? "", explanation: l({ fr: `Outil officiel : vide le ${c.fr.toLowerCase()}`, en: `Official tool: clears the ${c.en}` }), prerequisite: false, required: false, needsElevation: false, size: gb(c.size) });
+      }
       const items = chosen
         .filter((r) => r.id !== "npm")
-        .flatMap((r) => r.files.map(([path, size]) => ({ path: l(path), size: gb(size), directory: true, rule: r.id, ruleName: l(r.name) })));
+        .flatMap((r) => r.files.map(([path, size]) => ({ path: l(path), size: gb(size), directory: true, rule: r.id, ruleName: l(r.name) })))
+        .concat(extra.filter((c) => !c.line).map((c) => ({ path: `C:\\Users\\Arthur${c.path.slice(1)}`, size: gb(c.size), directory: true, rule: c.id, ruleName: l(c) })));
       const total = items.reduce((a, i) => a + i.size, 0) + commands.reduce((a, c) => a + c.size, 0);
       const plan: CleanPlan = {
         planId: ++nextPlan,
@@ -445,6 +479,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         skippedLocked: 0,
         elevated: false,
         withoutRestorePoint: false,
+        processGuard: false,
       };
       plans.set(plan.planId, plan);
       planKinds.set(plan.planId, "recos");
@@ -617,6 +652,17 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       return () => dupListeners.delete(listener);
     },
 
+    games: () => resolved(mockGames(now())),
+    gameCover: (id) => resolved(mockCover(id)),
+    openGame: () => resolved(undefined),
+    gamesRunning: () => resolved(mockRunning()),
+    shaderCaches: (scanId) => resolved(mockShaders(scanId)),
+    devOverview(_scanId) {
+      const base = RECOS.filter((r) => ["npm", "gradle", "pip"].includes(r.id)).map((r) => ({ id: r.id, status: r.status, name: l(r.name), path: l(r.path), size: gb(r.size), command: r.id === "npm" }));
+      return resolved({ projects: mockProjects(now()), caches: mockDevCaches(base, locale === "en") });
+    },
+    dockerImages: () => resolved(mockDocker()),
+    wslDisks: () => resolved(mockWsl()),
     timelineSeries: () => resolved(timeline.series()),
     timeline: (series) => resolved(timeline.data(series)),
     timelineTrend: (target) => resolved(timeline.trend(target)),

@@ -6,6 +6,7 @@
 pub mod content;
 mod effects;
 mod elevated;
+pub mod process;
 mod recycle;
 mod restore;
 pub mod sinks;
@@ -14,12 +15,19 @@ mod tests;
 mod volume;
 
 pub use effects::{tool_dirs, WinEffects};
+pub use process::{open_launcher, running_processes, OpenError};
 
 /// Lit (en administrateur, une demande UAC) les clichés instantanés et points de restauration
 /// du lecteur dans `out` (JSON). Lecture seule : aucune suppression.
 pub fn read_restore_points(drive: crate::commands::Drive, out: crate::commands::OutputFile, cancel: &std::sync::atomic::AtomicBool) -> crate::exec::CommandRun {
     let command = crate::commands::OfficialCommand::RestorePointsList { drive, out };
     crate::exec::Effects::run_elevated(&WinEffects::new(), &command, cancel)
+}
+
+/// Commande de lecture seule de la liste fermée, non élevée (images Docker sans étiquette) ;
+/// `None` pour toute autre commande.
+pub fn run_read_only(command: &crate::commands::OfficialCommand, cancel: &std::sync::atomic::AtomicBool) -> Option<crate::exec::CommandRun> {
+    (command.read_only() && !command.needs_elevation()).then(|| crate::exec::Effects::run_command(&WinEffects::new(), command, cancel))
 }
 
 /// Ouvre « Protection du système » de Windows (aucun argument).

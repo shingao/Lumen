@@ -62,11 +62,12 @@ struct Fake<'a> {
     commands: RefCell<Vec<OfficialCommand>>,
     /// Code de sortie simulé du point de restauration.
     restore_point: i32,
+    running: Vec<crate::guard::RunningProcess>,
 }
 
 impl<'a> Fake<'a> {
     fn new(probe: &'a MemoryProbe) -> Fake<'a> {
-        Fake { probe, recycled: RefCell::default(), deleted: RefCell::default(), free: Cell::new(1_000_000), fail: None, commands: RefCell::default(), restore_point: 0 }
+        Fake { probe, recycled: RefCell::default(), deleted: RefCell::default(), free: Cell::new(1_000_000), fail: None, commands: RefCell::default(), restore_point: 0, running: Vec::new() }
     }
 
     fn take(&self, unit: &Unit) -> Result<(), RemoveError> {
@@ -111,6 +112,10 @@ impl Effects for Fake<'_> {
             _ => CommandStatus::Succeeded,
         };
         CommandRun { program: Some("C:\\Windows\\System32\\x.exe".into()), ..CommandRun::new(command, status) }
+    }
+
+    fn running_processes(&self) -> Vec<crate::guard::RunningProcess> {
+        self.running.clone()
     }
 
     fn run_command(&self, command: &OfficialCommand, _: &AtomicBool) -> CommandRun {
@@ -220,6 +225,19 @@ fn secret_dans_un_cache_jamais_supprime() {
     let r = w.run(&plan, &fx);
     assert_eq!(r.items[0].issues[0].reason, IssueReason::Denied(DenyReason::Secret));
     assert!(w.probe.exists("C:\\Users\\Arthur\\cache\\sous\\id_rsa"));
+}
+
+#[test]
+fn sauvegarde_de_jeu_dans_un_dossier_jamais_supprimee() {
+    let w = World::new();
+    cache(&w);
+    w.probe.file("C:\\Users\\Arthur\\cache\\sous\\partie.sav", 1);
+    let plan = w.plan(&["C:\\Users\\Arthur\\cache\\sous"], "cache", DeleteMode::Trash);
+    let fx = Fake::new(&w.probe);
+    let r = w.run(&plan, &fx);
+    assert_eq!(r.items[0].issues[0].reason, IssueReason::Denied(DenyReason::GameSave));
+    assert!(w.probe.exists("C:\\Users\\Arthur\\cache\\sous\\partie.sav"));
+    assert!(w.probe.exists("C:\\Users\\Arthur\\cache\\sous"));
 }
 
 #[test]
@@ -524,4 +542,31 @@ fn doublon_hors_groupe_ou_empreinte_differente_refuse() {
     let mut t = dup_targets(&g, &[1]);
     t[0].path = "C:\\Users\\Arthur\\Documents\\c.mov".into();
     assert_eq!(dup_plan(&w, &t).refused()[0].1, Refusal::NotAllowed);
+}
+
+#[test]
+fn jeu_ou_launcher_ouvert_rien_n_est_fait() {
+    let w = World::new();
+    cache(&w);
+    let guard = crate::guard::ProcessGuard::games(vec![p("D:\\Jeux\\Cyberpunk 2077")]);
+    let plan = w.plan(&["C:\\Users\\Arthur\\cache\\sous", "C:\\Users\\Arthur\\cache\\index.json"], "cache", DeleteMode::Trash).with_process_guard(guard.clone());
+    // Steam ouvert : aucune commande, aucun élément, le bilan dit pourquoi.
+    let mut fx = Fake::new(&w.probe);
+    fx.running = vec![crate::guard::RunningProcess { name: "steam.exe".into(), path: Some(p("C:\\Program Files (x86)\\Steam\\steam.exe")) }];
+    let report = w.run(&plan, &fx);
+    assert_eq!(report.aborted.as_deref(), Some("steam.exe est ouvert : ferme-le avant de nettoyer, rien n'a été fait"));
+    assert!(report.items.iter().all(|i| i.outcome == ItemOutcome::Cancelled));
+    assert!(fx.recycled.borrow().is_empty());
+    assert!(w.probe.exists("C:\\Users\\Arthur\\cache\\index.json"));
+    // Jeu lancé depuis son dossier : idem.
+    fx.running = vec![crate::guard::RunningProcess { name: "Cyberpunk2077.exe".into(), path: Some(p("D:\\Jeux\\Cyberpunk 2077\\bin\\Cyberpunk2077.exe")) }];
+    assert!(w.run(&plan, &fx).aborted.is_some());
+    // La garde fait partie de l'empreinte : une confirmation du plan sans garde ne vaut pas.
+    let unguarded = w.plan(&["C:\\Users\\Arthur\\cache\\sous", "C:\\Users\\Arthur\\cache\\index.json"], "cache", DeleteMode::Trash);
+    assert_ne!(unguarded.fingerprint(), plan.fingerprint());
+    // Rien d'ouvert : le nettoyage a lieu.
+    fx.running = vec![crate::guard::RunningProcess { name: "explorer.exe".into(), path: None }];
+    let report = w.run(&plan, &fx);
+    assert_eq!(report.aborted, None);
+    assert_eq!(fx.recycled.borrow().len(), 2);
 }

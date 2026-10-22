@@ -187,6 +187,33 @@ pub enum ArgError {
     ShadowId(String),
     #[error("fichier de sortie invalide : « {0} »")]
     OutputFile(String),
+    #[error("disque virtuel invalide : « {0} »")]
+    Vhdx(String),
+}
+
+/// Disque virtuel WSL ou Docker (`ext4.vhdx`, `docker_data.vhdx`) : chemin absolu sur une
+/// lettre de lecteur, extension `.vhdx`, sans guillemet ni caractère de contrôle. Il n'est
+/// jamais supprimé : seulement compacté, par un script figé qui revérifie tout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Vhdx(WinPath);
+
+impl Vhdx {
+    pub fn new(path: &WinPath) -> Result<Vhdx, ArgError> {
+        let text = path.display_string();
+        let bad = || ArgError::Vhdx(text.clone());
+        let name = path.file_name().unwrap_or_default();
+        if !matches!(path.prefix(), crate::path::Prefix::Drive(_)) || !name.to_ascii_lowercase().ends_with(".vhdx") || name.len() <= 5 {
+            return Err(bad());
+        }
+        if text.chars().any(|c| c == '"' || c == '`' || c.is_control()) {
+            return Err(bad());
+        }
+        Ok(Vhdx(path.clone()))
+    }
+
+    pub fn path(&self) -> &WinPath {
+        &self.0
+    }
 }
 
 /// Nom de modèle Ollama validé (`deepseek-coder`, `llama3:8b`, `library/mistral`).
@@ -333,8 +360,16 @@ pub enum OfficialCommand {
     UvCacheClean,
     GradleStop,
     NugetLocalsClear,
-    /// Images Docker inutilisées (confirmation spécifique dans l'interface).
+    /// Images Docker sans étiquette (`dangling`), celles que liste `DockerDanglingImages`
+    /// (confirmation spécifique dans l'interface).
     DockerImagePrune,
+    /// Compactage d'un disque virtuel WSL ou Docker (élevé, après `wsl --shutdown`) :
+    /// `Optimize-VHD` si le module Hyper-V est là, sinon `diskpart` « compact vdisk » sur le
+    /// disque attaché en lecture seule. Jamais de suppression du fichier.
+    VhdCompact(Vhdx),
+    /// Lecture seule : images Docker sans étiquette (identifiant, dépôt, étiquette, taille, âge),
+    /// une par ligne. Échoue si Docker ne tourne pas.
+    DockerDanglingImages,
     OllamaRm(ModelName),
     WslShutdown,
     /// Magasin de composants (WinSxS), sans `/ResetBase` ; sortie gardée par `/LogPath`.
@@ -425,6 +460,34 @@ fn ps_literal(s: &str) -> String {
     s.replace('\'', "''")
 }
 
+/// Compactage d'un disque virtuel, chemin validé inséré : revérifie que c'est un fichier
+/// `.vhdx` ordinaire (ni lien ni parent lien), puis `Optimize-VHD` monté en lecture seule, ou
+/// `diskpart` (attach readonly, compact, detach). Seul le script diskpart temporaire est retiré.
+/// Codes : 0 compacté, 10 absent, 11 pas un vhdx ordinaire, 12 Optimize-VHD, 13 diskpart.
+pub fn vhd_compact_script(vhdx: &Vhdx) -> String {
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
+$vhd = '{path}'
+if (-not (Test-Path -LiteralPath $vhd -PathType Leaf)) {{ exit 10 }}
+$item = Get-Item -LiteralPath $vhd -Force
+if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($item.Extension -ne '.vhdx')) {{ exit 11 }}
+$dir = $item.Directory
+while ($dir) {{ if ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) {{ exit 11 }}; $dir = $dir.Parent }}
+if (Get-Command Optimize-VHD -ErrorAction SilentlyContinue) {{
+  try {{ Mount-VHD -Path $vhd -ReadOnly; Optimize-VHD -Path $vhd -Mode Full }} catch {{ exit 12 }} finally {{ try {{ Dismount-VHD -Path $vhd }} catch {{}} }}
+  exit 0
+}}
+$etapes = Join-Path $env:TEMP ('lumen-compact-' + [guid]::NewGuid().ToString() + '.txt')
+@('select vdisk file="' + $vhd + '"', 'attach vdisk readonly', 'compact vdisk', 'detach vdisk') | Set-Content -Encoding ascii -LiteralPath $etapes
+$code = 1
+try {{ & (Join-Path $env:SystemRoot 'System32\diskpart.exe') /s $etapes | Out-Null; $code = $LASTEXITCODE }} catch {{ $code = 1 }} finally {{ Remove-Item -LiteralPath $etapes -Force -ErrorAction SilentlyContinue }}
+if ($code -ne 0) {{ exit 13 }}
+exit 0
+"#,
+        path = ps_literal(&vhdx.path().display_string())
+    )
+}
+
 /// Plus grande date que `DateTimeOffset` accepte (31/12/9999) : au-delà, la conversion échouerait.
 const MAX_UNIX_SECS: i64 = 253_402_300_799;
 
@@ -475,13 +538,13 @@ impl OfficialCommand {
             UvCacheClean => Program::Uv,
             GradleStop => Program::Gradle,
             NugetLocalsClear => Program::Dotnet,
-            DockerImagePrune => Program::Docker,
+            DockerImagePrune | DockerDanglingImages => Program::Docker,
             OllamaRm(_) => Program::Ollama,
             WslShutdown => Program::Wsl,
             DismComponentCleanup(_) => Program::Dism,
             HibernateOff | HibernateReduced => Program::Powercfg,
             DiskCleanup(_) => Program::Cleanmgr,
-            RestorePointCreate | ShadowDeleteOldest { .. } | RestorePointsList { .. } => Program::PowerShell,
+            RestorePointCreate | ShadowDeleteOldest { .. } | RestorePointsList { .. } | VhdCompact(_) => Program::PowerShell,
         }
     }
 
@@ -498,7 +561,8 @@ impl OfficialCommand {
             UvCacheClean => v(&["cache", "clean"]),
             GradleStop => v(&["--stop"]),
             NugetLocalsClear => v(&["nuget", "locals", "all", "--clear"]),
-            DockerImagePrune => v(&["image", "prune", "--all", "--force"]),
+            DockerImagePrune => v(&["image", "prune", "--force"]),
+            DockerDanglingImages => v(&["image", "ls", "--filter", "dangling=true", "--format", "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}"]),
             OllamaRm(model) => vec!["rm".into(), model.as_str().to_owned()],
             WslShutdown => v(&["--shutdown"]),
             DismComponentCleanup(log) => {
@@ -514,6 +578,7 @@ impl OfficialCommand {
             RestorePointsList { drive, out } => powershell_args(&restore_points_list_script(*drive, out)),
             DiskCleanup(Drive(d)) => vec!["/d".into(), format!("{d}:")],
             RestorePointCreate => powershell_args(RESTORE_POINT_SCRIPT),
+            VhdCompact(vhdx) => powershell_args(&vhd_compact_script(vhdx)),
         }
     }
 
@@ -540,6 +605,11 @@ impl OfficialCommand {
                 Some("lecture ou suppression des points de restauration impossible")
             }
             (OfficialCommand::DismComponentCleanup(Some(_)), _) => Some("sortie complète dans le journal de DISM (/LogPath)"),
+            (OfficialCommand::VhdCompact(_), 0) => Some("disque virtuel compacté"),
+            (OfficialCommand::VhdCompact(_), 10) => Some("disque virtuel introuvable : rien n'a été fait"),
+            (OfficialCommand::VhdCompact(_), 11) => Some("ce n'est plus un disque virtuel ordinaire (lien ou autre fichier) : rien n'a été fait"),
+            (OfficialCommand::VhdCompact(_), 12) => Some("Optimize-VHD a échoué (disque encore utilisé ?) : le disque est intact"),
+            (OfficialCommand::VhdCompact(_), 13) => Some("diskpart n'a pas pu compacter le disque : il est intact"),
             _ => None,
         }
     }
@@ -561,20 +631,39 @@ impl OfficialCommand {
     pub fn timeout_secs(&self) -> u64 {
         use OfficialCommand::*;
         match self {
-            GradleStop | WslShutdown => 120,
+            GradleStop | WslShutdown | DockerDanglingImages => 120,
             NpmCacheClean | PnpmStorePrune | YarnCacheClean | PipCachePurge | UvCacheClean | NugetLocalsClear => 1800,
             NpmCacheVerify | DockerImagePrune | OllamaRm(_) => 900,
             DismComponentCleanup(_) | DiskCleanup(_) => 3600,
             HibernateOff | HibernateReduced | ShadowDeleteOldest { .. } | RestorePointsList { .. } => 300,
             RestorePointCreate => 900,
+            VhdCompact(_) => 7200,
         }
+    }
+
+    /// Action système qui appelle un point de restauration avant elle (gouffres système) ; le
+    /// compactage d'un disque virtuel WSL ou Docker ne touche pas au système.
+    pub fn wants_restore_point(&self) -> bool {
+        self.needs_elevation() && !matches!(self, OfficialCommand::VhdCompact(_) | OfficialCommand::RestorePointsList { .. })
+    }
+
+    /// Commande de lecture seule, lançable hors d'un plan (rien n'est modifié).
+    pub fn read_only(&self) -> bool {
+        matches!(self, OfficialCommand::DockerDanglingImages | OfficialCommand::RestorePointsList { .. })
     }
 
     pub fn needs_elevation(&self) -> bool {
         use OfficialCommand::*;
         matches!(
             self,
-            DismComponentCleanup(_) | HibernateOff | HibernateReduced | ShadowDeleteOldest { .. } | DiskCleanup(_) | RestorePointCreate | RestorePointsList { .. }
+            DismComponentCleanup(_)
+                | HibernateOff
+                | HibernateReduced
+                | ShadowDeleteOldest { .. }
+                | DiskCleanup(_)
+                | RestorePointCreate
+                | RestorePointsList { .. }
+                | VhdCompact(_)
         )
     }
 
@@ -598,7 +687,9 @@ impl OfficialCommand {
             UvCacheClean => "Outil officiel : vide le cache uv",
             GradleStop => "Arrête les démons Gradle avant de toucher à leurs caches",
             NugetLocalsClear => "Outil officiel : vide les caches locaux NuGet",
-            DockerImagePrune => "Supprime les images Docker qu'aucun conteneur n'utilise",
+            DockerImagePrune => "Supprime les images Docker sans étiquette (dangling), qu'aucun conteneur n'utilise",
+            DockerDanglingImages => "Liste les images Docker sans étiquette (aucune modification)",
+            VhdCompact(_) => "Compacte le disque virtuel de WSL ou de Docker (jamais supprimé)",
             OllamaRm(_) => "Supprime le modèle d'Ollama (retéléchargeable avec ollama pull)",
             WslShutdown => "Arrête WSL et Docker avant le compactage de leur disque virtuel",
             DismComponentCleanup(_) => "Nettoie le magasin de composants de Windows (WinSxS) avec l'outil officiel",
@@ -617,6 +708,38 @@ impl OfficialCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disque_virtuel_compacte_jamais_supprime() {
+        let p = |s: &str| WinPath::parse(s).unwrap();
+        let ok = Vhdx::new(&p("C:\\Users\\Arthur\\AppData\\Local\\Packages\\Ubuntu\\LocalState\\ext4.vhdx")).unwrap();
+        let script = vhd_compact_script(&ok);
+        assert!(script.contains("$vhd = 'C:\\Users\\Arthur\\AppData\\Local\\Packages\\Ubuntu\\LocalState\\ext4.vhdx'"));
+        assert!(script.contains("Mount-VHD -Path $vhd -ReadOnly") && script.contains("attach vdisk readonly") && script.contains("compact vdisk"));
+        // Jamais de suppression du disque : le seul Remove-Item vise le script diskpart temporaire.
+        assert_eq!(script.matches("Remove-Item").count(), 1);
+        assert!(script.contains("Remove-Item -LiteralPath $etapes"));
+        assert!(!script.contains("Remove-Item -LiteralPath $vhd") && !script.to_lowercase().contains("delete"));
+        let cmd = OfficialCommand::VhdCompact(ok);
+        assert!(cmd.needs_elevation() && !cmd.read_only());
+        assert_eq!(cmd.program(), Program::PowerShell);
+        // Apostrophe doublée dans le littéral PowerShell ; guillemet, autre extension ou chemin
+        // réseau refusés.
+        let quote = Vhdx::new(&p("D:\\WSL\\l'arch\\ext4.vhdx")).unwrap();
+        assert!(vhd_compact_script(&quote).contains("'D:\\WSL\\l''arch\\ext4.vhdx'"));
+        assert!(Vhdx::new(&p("D:\\WSL\\ext4.vhd")).is_err());
+        assert!(Vhdx::new(&p("D:\\WSL\\.vhdx")).is_err());
+        assert!(Vhdx::new(&p("\\\\serveur\\partage\\ext4.vhdx")).is_err());
+    }
+
+    #[test]
+    fn docker_seulement_les_images_listees() {
+        // La liste affichée et ce qui part sont les mêmes images : sans étiquette, jamais --all.
+        assert_eq!(OfficialCommand::DockerImagePrune.args(), ["image", "prune", "--force"]);
+        assert!(OfficialCommand::DockerDanglingImages.args().contains(&"dangling=true".to_owned()));
+        assert!(OfficialCommand::DockerDanglingImages.read_only() && !OfficialCommand::DockerImagePrune.read_only());
+        assert!(!OfficialCommand::NpmCacheClean.read_only());
+    }
 
     #[test]
     fn arguments_en_tableau() {

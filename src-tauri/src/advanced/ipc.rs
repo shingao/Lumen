@@ -190,6 +190,15 @@ pub enum AdvancedRequest {
     Dormant { ids: Vec<i64> },
     Largest { ids: Vec<i64> },
     Duplicates { ids: Vec<i64> },
+    /// Caches de shaders (onglet Jeux) : refusé au moment de l'action si un jeu ou un launcher
+    /// tourne.
+    Shaders,
+    /// Artefacts de projets cochés dans l'onglet Dev (nœuds couverts par les règles d'artefacts).
+    Artifacts { ids: Vec<i64> },
+    /// `docker image prune` (images sans étiquette listées), si Docker tourne.
+    DockerPrune,
+    /// Compactage des disques virtuels WSL / Docker cochés (identifiants de la dernière liste).
+    WslCompact { ids: Vec<u32> },
     System {
         actions: Vec<SystemAction>,
         #[serde(rename = "restorePoint")]
@@ -394,7 +403,7 @@ pub(crate) fn select_files(scan: &Scan, ids: &[NodeId], label: (&str, &str)) -> 
     }
     let mut allow = Allowlist::new();
     allow.add_selection(AllowSelection { id: SELECTION_ID, members });
-    Ok(Selection { targets, allow, commands: Vec::new(), rule_names: names(label.0, label.1), elevated: false })
+    Ok(Selection { targets, allow, commands: Vec::new(), rule_names: names(label.0, label.1), elevated: false, guard: None })
 }
 
 /// Exemplaires cochés : chaque groupe concerné est transmis en entier à `safety` (empreinte et
@@ -436,7 +445,7 @@ pub(crate) fn select_duplicates(scan: &Scan, found: &Found, ids: &[i64]) -> Resu
     }
     let mut allow = Allowlist::new();
     allow.add_duplicates(DuplicateSelection { id: SELECTION_ID, groups: dup_groups });
-    Ok(Selection { targets, allow, commands: Vec::new(), rule_names: names("Doublons", "Duplicates"), elevated: false })
+    Ok(Selection { targets, allow, commands: Vec::new(), rule_names: names("Doublons", "Duplicates"), elevated: false, guard: None })
 }
 
 /// Actions système : commandes officielles élevées, mesurées sur le lecteur système, après un
@@ -479,7 +488,7 @@ pub(crate) fn select_system(ctx: &SystemContext<'_>, actions: &[SystemAction], r
         };
         commands.push(PlannedCommand::action(command, Some(root.clone()), bytes));
     }
-    Ok(Selection { targets: Vec::new(), allow: Allowlist::new(), commands, rule_names: HashMap::new(), elevated: true })
+    Ok(Selection { targets: Vec::new(), allow: Allowlist::new(), commands, rule_names: HashMap::new(), elevated: true, guard: None })
 }
 
 fn display_of(entry: &crate::scanning::Entry) -> impl Fn(&str) -> String + '_ {
@@ -654,7 +663,31 @@ pub fn advanced_plan(
         let volume_key = crate::timeline::volume_key(&format!("{drive}:"));
         return cleanup::prepare(&clean, &sel, mode, "Gouffres système".into(), ("system", volume_key), &|p| p.to_owned());
     }
+    // Docker et WSL ne dépendent d'aucune analyse.
+    if let AdvancedRequest::WslCompact { ids } = &request {
+        let paths = crate::dev::wsl_paths(&app.state::<crate::dev::DevState>(), ids)?;
+        let sel = crate::dev::wsl::select(&paths)?;
+        let letter = paths.first().map(|p| p.to_string_lossy().chars().take(2).collect::<String>()).unwrap_or_default();
+        return cleanup::prepare(&clean, &sel, mode, "Compactage WSL / Docker".into(), ("wsl", crate::timeline::volume_key(&letter)), &|p| p.to_owned());
+    }
+    if let AdvancedRequest::DockerPrune = request {
+        let sel = crate::dev::select_docker()?;
+        return cleanup::prepare(&clean, &sel, mode, "Images Docker sans étiquette".into(), ("docker", None), &|p| p.to_owned());
+    }
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
+    if let AdvancedRequest::Shaders = request {
+        let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
+        let mut sel = cleanup::select(applied, &entry.scan, &[crate::games::SHADERS_RULE.to_owned()])?;
+        sel.guard = Some(safety::guard::ProcessGuard::games(crate::games::game_dirs(&app.state::<crate::games::GamesState>())));
+        let volume_key = crate::timeline::volume_key(&entry.volume);
+        return cleanup::prepare(&clean, &sel, mode, "Caches de shaders".into(), ("shaders", volume_key), &|p| applied.display(p));
+    }
+    if let AdvancedRequest::Artifacts { ids } = &request {
+        let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
+        let sel = crate::dev::select_artifacts(applied, &entry.scan, ids)?;
+        let volume_key = crate::timeline::volume_key(&entry.volume);
+        return cleanup::prepare(&clean, &sel, mode, "Artefacts de projets".into(), ("artifacts", volume_key), &|p| applied.display(p));
+    }
     let display = display_of(&entry);
     let inner = state.lock()?;
     let for_scan = |slot: &Option<(u32, HashSet<NodeId>)>| slot.as_ref().filter(|(id, _)| *id == scan_id).map(|(_, s)| s.clone()).unwrap_or_default();
@@ -671,7 +704,9 @@ pub fn advanced_plan(
             let found = inner.duplicates.as_ref().filter(|(id, _)| *id == scan_id).map(|(_, f)| f.clone()).ok_or(LumenError::UnknownNode)?;
             (select_duplicates(&entry.scan, &found, ids)?, "Doublons", "duplicates")
         }
-        AdvancedRequest::System { .. } => return Err(LumenError::Plan("requête inattendue".into())),
+        AdvancedRequest::System { .. } | AdvancedRequest::Shaders | AdvancedRequest::Artifacts { .. } | AdvancedRequest::DockerPrune | AdvancedRequest::WslCompact { .. } => {
+            return Err(LumenError::Plan("requête inattendue".into()))
+        }
     };
     drop(inner);
     if sel.targets.is_empty() {

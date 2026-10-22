@@ -58,6 +58,8 @@ pub struct Plan {
     commands: Vec<PlannedCommand>,
     /// Commandes « administrateur » autorisées (gouffres système) : lancées élevées.
     elevated: bool,
+    /// Programmes qui ne doivent pas tourner au moment de l'action (jeux, launchers).
+    guard: Option<crate::guard::ProcessGuard>,
     skipped: Vec<(WinPath, SkipReason)>,
     refused: Vec<(String, Refusal)>,
     fingerprint: [u8; 32],
@@ -92,7 +94,7 @@ impl Plan {
             }
         }
         let items = protect_duplicates(checker.allow, items, &mut refused);
-        let mut plan = Plan { mode, items, commands: Vec::new(), elevated: false, skipped, refused, fingerprint: [0; 32] };
+        let mut plan = Plan { mode, items, commands: Vec::new(), elevated: false, guard: None, skipped, refused, fingerprint: [0; 32] };
         plan.fingerprint = fingerprint(&plan);
         plan
     }
@@ -122,10 +124,22 @@ impl Plan {
         self.elevated
     }
 
+    /// Refuse toute l'action si l'un de ces programmes tourne au moment de l'exécution (vérifié
+    /// avant la première commande et le premier élément). L'empreinte la couvre.
+    pub fn with_process_guard(mut self, guard: crate::guard::ProcessGuard) -> Plan {
+        self.guard = Some(guard);
+        self.fingerprint = fingerprint(&self);
+        self
+    }
+
+    pub fn guard(&self) -> Option<&crate::guard::ProcessGuard> {
+        self.guard.as_ref()
+    }
+
     /// Actions système sans point de restauration obligatoire avant elles.
     pub fn without_restore_point(&self) -> bool {
         self.elevated
-            && self.commands.iter().any(|c| c.command.needs_elevation())
+            && self.commands.iter().any(|c| c.command.wants_restore_point())
             && !self.commands.iter().any(|c| c.required && c.command == crate::commands::OfficialCommand::RestorePointCreate)
     }
 
@@ -258,6 +272,22 @@ fn fingerprint(plan: &Plan) -> [u8; 32] {
         }
     }
     h.update(&[u8::from(plan.elevated)]);
+    match &plan.guard {
+        Some(g) => {
+            h.update(&[1]);
+            h.update(&(g.names().len() as u64).to_le_bytes());
+            for n in g.names() {
+                hash_str(&mut h, n);
+            }
+            h.update(&(g.dirs().len() as u64).to_le_bytes());
+            for d in g.dirs() {
+                hash_str(&mut h, &d.verbatim());
+            }
+        }
+        None => {
+            h.update(&[0]);
+        }
+    }
     h.update(&(plan.commands.len() as u64).to_le_bytes());
     for c in &plan.commands {
         hash_str(&mut h, c.command.program().binary());

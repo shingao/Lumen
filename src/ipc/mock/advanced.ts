@@ -15,6 +15,7 @@ import type {
   SystemAction,
   SystemSinks,
 } from "../types";
+import { mockDevGamesPlan } from "./devgames";
 
 const MIB = 1024 ** 2;
 const DAY = 86_400_000;
@@ -204,7 +205,10 @@ const SYSTEM: Record<SystemAction, { line: string; fr: string; en: string; size:
 };
 
 /** Éléments et commandes d'un plan du nettoyage avancé (identifiants → lignes affichées). */
-export function mockAdvancedPlan(request: Exclude<CleanRequest, { kind: "recos" }>, en: boolean): { items: PlanItem[]; commands: PlanCommand[] } {
+export function mockAdvancedPlan(request: Exclude<CleanRequest, { kind: "recos" }>, en: boolean, now: number): { items: PlanItem[]; commands: PlanCommand[] } {
+  if (request.kind === "shaders" || request.kind === "artifacts" || request.kind === "dockerPrune" || request.kind === "wslCompact") {
+    return mockDevGamesPlan(request, en, now);
+  }
   if (request.kind === "system") {
     const sinks = mockSinks();
     const commands: PlanCommand[] = [];

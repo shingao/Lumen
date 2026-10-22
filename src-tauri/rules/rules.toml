@@ -267,6 +267,55 @@ targets = [
   '%PROGRAMFILES%\EA Games',
 ]
 
+# Données des jeux hors de leur dossier d'installation (configurations, caches, sauvegardes) :
+# catégorie Jeux, « À garder » (aucune règle ne les propose). Les sauvegardes elles-mêmes
+# (Saves, Savegames, PlayerProfiles, Saved Games, *.sav / *.save / *.lsv) sont en plus dans la
+# denylist de `safety` : jamais proposées, jamais supprimables, où qu'elles soient.
+[[area]]
+id = "donnees-de-jeux"
+category = "games"
+targets = [
+  '%DOCUMENTS%\My Games',
+  '%USERPROFILE%\Saved Games',
+  '%USERPROFILE%\AppData\LocalLow\*',
+  '%USERPROFILE%\curseforge',
+  '%APPDATA%\.minecraft',
+  '%LOCALAPPDATA%\Larian Studios',
+  '%LOCALAPPDATA%\CD Projekt Red',
+  '%LOCALAPPDATA%\Rockstar Games',
+  '%LOCALAPPDATA%\FortniteGame',
+  '%LOCALAPPDATA%\Riot Games',
+  '%LOCALAPPDATA%\VALORANT',
+  '%LOCALAPPDATA%\Pal',
+  '%LOCALAPPDATA%\Remedy',
+  '%LOCALAPPDATA%\Hogwarts Legacy',
+  '%LOCALAPPDATA%\EpicGamesLauncher',
+  '%LOCALAPPDATA%\Battle.net',
+  '%LOCALAPPDATA%\Blizzard Entertainment',
+  '%LOCALAPPDATA%\Ubisoft Game Launcher',
+  '%LOCALAPPDATA%\Packages\Microsoft.GamingApp_8wekyb3d8bbwe',
+  '%APPDATA%\EldenRing',
+  '%APPDATA%\DarkSoulsIII',
+  '%APPDATA%\StardewValley',
+  '%APPDATA%\Factorio',
+  '%APPDATA%\Balatro',
+]
+
+# LocalLow ne contient pas que des jeux : ces dossiers-là restent « Outils & autres ».
+[[area]]
+id = "locallow-hors-jeux"
+category = "tools"
+targets = [
+  '%USERPROFILE%\AppData\LocalLow\Microsoft',
+  '%USERPROFILE%\AppData\LocalLow\Sun',
+  '%USERPROFILE%\AppData\LocalLow\Oracle',
+  '%USERPROFILE%\AppData\LocalLow\Adobe',
+  '%USERPROFILE%\AppData\LocalLow\Intel',
+  '%USERPROFILE%\AppData\LocalLow\Mozilla',
+  '%USERPROFILE%\AppData\LocalLow\Google',
+  '%USERPROFILE%\AppData\LocalLow\Temp',
+]
+
 [[area]]
 id = "documents-medias"
 category = "media"

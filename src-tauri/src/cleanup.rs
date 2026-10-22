@@ -40,6 +40,10 @@ pub struct Selection {
     /// Commandes « administrateur » autorisées (gouffres système, une demande UAC chacune).
     #[cfg_attr(not(windows), allow(dead_code))]
     pub elevated: bool,
+    /// Programmes qui ne doivent pas tourner au moment de l'action (caches de shaders : jeux et
+    /// launchers fermés).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub guard: Option<safety::guard::ProcessGuard>,
 }
 
 pub(crate) fn expected(scan: &Scan, n: NodeId) -> Option<Expected> {
@@ -59,7 +63,7 @@ pub(crate) fn bytes_of(scan: &Scan, n: NodeId) -> u64 {
 
 /// Contenu d'un dossier tel que l'analyse l'a vu (liens et fichiers cloud compris : ils seront
 /// laissés au moment de l'action).
-fn tree(scan: &Scan, n: NodeId) -> Vec<ExpectedNode> {
+pub(crate) fn tree(scan: &Scan, n: NodeId) -> Vec<ExpectedNode> {
     scan.children(n)
         .filter_map(|c| {
             let expected = expected(scan, c)?;
@@ -71,7 +75,7 @@ fn tree(scan: &Scan, n: NodeId) -> Vec<ExpectedNode> {
 
 /// Cible de la règle qui couvre `n` : le premier dossier (lui-même ou un parent) que la règle
 /// vise, avec la portée de la règle. C'est cette autorisation que `safety` revérifie.
-fn grant_for(applied: &Applied, scan: &Scan, rule: &Rule, n: NodeId) -> Option<RuleGrant> {
+pub(crate) fn grant_for(applied: &Applied, scan: &Scan, rule: &Rule, n: NodeId) -> Option<RuleGrant> {
     let mut cur = n;
     loop {
         let path = WinPath::parse(&scan.path(cur)).ok()?;
@@ -100,7 +104,7 @@ fn grant_for(applied: &Applied, scan: &Scan, rule: &Rule, n: NodeId) -> Option<R
 /// Cibles, autorisations et commandes des recommandations cochées.
 pub fn select(applied: &Applied, scan: &Scan, ids: &[String]) -> Result<Selection, LumenError> {
     let set = applied.set().ok_or_else(|| LumenError::UnknownReco(ids.join(", ")))?;
-    let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new(), elevated: false };
+    let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new(), elevated: false, guard: None };
     for id in ids {
         let reco = applied.analysis.recos.iter().find(|r| &set.rules[r.rule].id == id).ok_or_else(|| LumenError::UnknownReco(id.clone()))?;
         let rule = &set.rules[reco.rule];
@@ -193,6 +197,8 @@ pub struct PlanDto {
     pub elevated: bool,
     /// Actions système sans point de restauration préalable : confirmation explicite exigée.
     pub without_restore_point: bool,
+    /// Refusé au moment de l'action si un jeu ou un launcher tourne (caches de shaders).
+    pub process_guard: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -400,7 +406,10 @@ mod platform {
         let layout = safety::win::system_layout().map_err(|e| LumenError::Plan(e.to_string()))?;
         let deny = safety::denylist::DenyList::new(&layout);
         let checker = safety::check::Checker { probe: &safety::win::WinProbe, deny: &deny, allow: &sel.allow, now: now_filetime() };
-        let plan = Plan::build(&checker, &sel.targets, mode).with_commands(sel.commands.clone());
+        let mut plan = Plan::build(&checker, &sel.targets, mode).with_commands(sel.commands.clone());
+        if let Some(guard) = &sel.guard {
+            plan = plan.with_process_guard(guard.clone());
+        }
         Ok(if sel.elevated { plan.with_elevation() } else { plan })
     }
 
@@ -526,6 +535,17 @@ fn plan_dto(id: u32, p: &Prepared, sel: &Selection, display: &dyn Fn(&str) -> St
         skipped_locked: plan.skipped().len(),
         elevated: plan.elevated(),
         without_restore_point: plan.without_restore_point(),
+        process_guard: plan.guard().is_some(),
+    }
+}
+
+/// Les règles de l'onglet Jeux (caches de shaders) ne se nettoient que depuis lui, avec la garde
+/// « aucun jeu ni launcher ouvert » : jamais par les recommandations de l'écran Analyse.
+pub(crate) fn refuse_games_rules(applied: &Applied, ids: &[String]) -> Result<(), LumenError> {
+    let games = |id: &String| applied.set().and_then(|s| s.rules.iter().find(|r| &r.id == id)).is_some_and(|r| r.screen == rules::schema::Screen::Games);
+    match ids.iter().find(|id| games(id)) {
+        Some(id) => Err(LumenError::Plan(format!("« {id} » se nettoie depuis l'onglet Jeux"))),
+        None => Ok(()),
     }
 }
 
@@ -540,6 +560,7 @@ pub fn plan_create(
 ) -> Result<PlanDto, LumenError> {
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
     let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
+    refuse_games_rules(applied, &recos)?;
     let sel = select(applied, &entry.scan, &recos)?;
     let mode = delete_mode(mode);
     let names: Vec<&str> = recos.iter().filter_map(|r| sel.rule_names.get(r)).map(|(fr, _)| fr.as_str()).collect();
@@ -742,6 +763,9 @@ mod tests {
         assert_eq!(cmds[1].2, 0, "le gain n'est compté qu'une fois");
         assert_eq!(sel.commands[0].measured.as_ref().unwrap().display_string(), "C:\\Users\\Arthur\\AppData\\Local\\npm-cache");
         assert!(matches!(select(&a, &scan, &["inconnue".into()]), Err(LumenError::UnknownReco(_))));
+        // Depuis l'écran Analyse, les caches de shaders sont refusés (onglet Jeux seulement).
+        assert!(refuse_games_rules(&a, &["cache-npm".into()]).is_ok());
+        assert!(matches!(refuse_games_rules(&a, &["cache-npm".into(), "caches-shaders".into()]), Err(LumenError::Plan(m)) if m.contains("onglet Jeux")));
     }
 
     #[test]

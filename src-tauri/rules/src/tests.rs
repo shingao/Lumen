@@ -547,3 +547,43 @@ fn rien_dans_les_telechargements() {
         }
     }
 }
+
+#[test]
+fn donnees_de_jeux_a_garder_jamais_proposees() {
+    // Données des jeux hors de leur dossier d'installation : catégorie Jeux, « À garder » ;
+    // sauvegardes jamais couvertes par une règle, même vieilles ou dans un dossier de cache.
+    let set = builtin().unwrap();
+    let mut t = Tree::default();
+    t.file("Documents\\My Games\\Skyrim Special Edition\\Saves\\Save 12.ess", 30 << 20, 400)
+        .file("Documents\\My Games\\Skyrim Special Edition\\Logs\\x.log", 1 << 20, 400)
+        .file("Documents\\rapport.docx", 1 << 20, 400)
+        .file("Saved Games\\CD Projekt Red\\Cyberpunk 2077\\ManualSave-3\\sav.dat", 20 << 20, 400)
+        .file("AppData\\Local\\Larian Studios\\Baldur's Gate 3\\PlayerProfiles\\Public\\Savegames\\Story\\x.lsv", 40 << 20, 400)
+        .file("AppData\\Local\\Larian Studios\\Baldur's Gate 3\\LevelCache\\c.bin", 10 << 20, 400)
+        .file("AppData\\LocalLow\\Team Cherry\\Hollow Knight\\user1.dat", 1 << 20, 400)
+        .file("AppData\\LocalLow\\Microsoft\\CryptnetUrlCache\\x", 1 << 20, 400)
+        .file("AppData\\Local\\Temp\\installeur\\partie.sav", 5 << 20, 400)
+        .file("AppData\\Local\\Temp\\installeur\\vieux.tmp", 5 << 20, 400);
+    let scan = t.build("C:\\Users\\Arthur");
+    let (a, deny) = run(&set, &scan, "C:\\Users\\Arthur", "C:\\Users\\Arthur\\AppData\\Local\\Temp");
+    let id = |rel: &str| scan.find(rel).unwrap_or_else(|| panic!("{rel}")) as usize;
+    let cat = |rel: &str| Category::ALL[a.category[id(rel)] as usize];
+    for rel in [
+        "Documents\\My Games",
+        "Documents\\My Games\\Skyrim Special Edition\\Saves\\Save 12.ess",
+        "Saved Games\\CD Projekt Red",
+        "AppData\\Local\\Larian Studios\\Baldur's Gate 3\\PlayerProfiles",
+        "AppData\\Local\\Larian Studios\\Baldur's Gate 3\\LevelCache",
+        "AppData\\LocalLow\\Team Cherry\\Hollow Knight",
+    ] {
+        assert_eq!(cat(rel), Category::Games, "{rel}");
+        assert_eq!(a.status[id(rel)], STATUS_KEEP, "{rel}");
+    }
+    assert_eq!(cat("Documents\\rapport.docx"), Category::Media);
+    assert_eq!(cat("AppData\\LocalLow\\Microsoft"), Category::Tools);
+    // Le dossier temporaire part, pas la sauvegarde qu'il contient.
+    let covered: Vec<String> = a.recos.iter().flat_map(|r| r.covered.iter().map(|&n| scan.path(n))).collect();
+    assert!(covered.iter().any(|p| p.ends_with("vieux.tmp")), "{covered:?}");
+    assert!(!covered.iter().any(|p| p.ends_with("partie.sav") || p.ends_with("\\installeur")), "{covered:?}");
+    assert_never_denied(&a, &scan, &set, &deny);
+}

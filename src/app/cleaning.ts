@@ -4,6 +4,7 @@
 
 import { backend } from "../ipc/client";
 import type { CleanMode, CleanRequest } from "../ipc/types";
+import { resetDevGames } from "./devgames";
 import { CLEAN_CLOSED, useStore } from "./store";
 
 let subscribed = false;
@@ -20,6 +21,8 @@ function subscribe(): void {
       if (!ours(e.report.planId)) return;
       setClean({ step: "report", report: e.report, progress: null, cancelling: false });
       bumpJournal();
+      // Docker et WSL relus : leur état ne dépend d'aucune analyse.
+      if (clean.request?.kind === "dockerPrune" || clean.request?.kind === "wslCompact") resetDevGames();
     } else if (ours(e.planId)) {
       setClean({ step: "error", message: e.message, progress: null, cancelling: false });
     }
@@ -29,7 +32,7 @@ function subscribe(): void {
 async function plan(request: CleanRequest, mode: CleanMode): Promise<void> {
   const { scan, setClean } = useStore.getState();
   // Les gouffres système ne dépendent d'aucune analyse.
-  const scanId = scan.summary?.scanId ?? (request.kind === "system" ? 0 : undefined);
+  const scanId = scan.summary?.scanId ?? (["system", "dockerPrune", "wslCompact"].includes(request.kind) ? 0 : undefined);
   if (scanId === undefined) return;
   setClean({ step: "loading", request, mode, plan: null, report: null, message: null, waiveRestorePoint: false });
   try {

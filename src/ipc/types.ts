@@ -193,6 +193,8 @@ export interface Settings {
   logsFolder: string;
   /** Onglet Gouffres système (commandes administrateur) : désactivé tant qu'il n'est pas vérifié en VM. */
   experimentalSystem: boolean;
+  /** Compactage des disques WSL / Docker (jalon 8), désactivé tant qu'il n'est pas vérifié en VM. */
+  experimentalWsl: boolean;
 }
 
 // --- Nettoyage (jalon 5) -------------------------------------------------------------------
@@ -237,6 +239,8 @@ export interface CleanPlan {
   elevated: boolean;
   /** Actions système sans point de restauration préalable : « Continuer sans point de restauration » exigé. */
   withoutRestorePoint: boolean;
+  /** Refusé au moment de l'action si un jeu ou un launcher tourne (caches de shaders). */
+  processGuard: boolean;
 }
 
 export interface CleanProgress {
@@ -348,7 +352,7 @@ export interface JournalDetail {
 
 // --- Nettoyage avancé (jalon 6) ------------------------------------------------------------
 
-export type CleanKind = "recos" | "dormant" | "largest" | "duplicates" | "system";
+export type CleanKind = "recos" | "dormant" | "largest" | "duplicates" | "system" | "shaders" | "artifacts" | "docker" | "wsl";
 
 export type FileKind = "video" | "image" | "audio" | "archive" | "disk" | "installer" | "document" | "other";
 export const FILE_KINDS: readonly FileKind[] = ["video", "image", "audio", "archive", "disk", "installer", "document", "other"];
@@ -468,7 +472,11 @@ export type CleanRequest =
   | { kind: "dormant"; ids: number[] }
   | { kind: "largest"; ids: number[] }
   | { kind: "duplicates"; ids: number[] }
-  | { kind: "system"; actions: SystemAction[]; restorePoint: boolean };
+  | { kind: "system"; actions: SystemAction[]; restorePoint: boolean }
+  | { kind: "shaders" }
+  | { kind: "artifacts"; ids: number[] }
+  | { kind: "dockerPrune" }
+  | { kind: "wslCompact"; ids: number[] };
 
 // --- Timeline (jalon 7) ---------------------------------------------------------------------
 
@@ -582,4 +590,103 @@ export interface DatabaseInfo {
   bytes: number;
   snapshots: number;
   series: number;
+}
+
+// --- Jeux et Dev (jalon 8) ------------------------------------------------------------------
+
+export type LauncherId = "steam" | "epic" | "gog" | "battlenet" | "ea" | "ubisoft" | "riot" | "curseforge" | "minecraft" | "xbox";
+
+export interface Game {
+  /** `launcher:clé`, seul identifiant renvoyé au backend. */
+  id: string;
+  launcher: LauncherId;
+  name: string;
+  installDir: string | null;
+  size: number | null;
+  /** `launcher` : taille annoncée ; `measured` : mesurée sur le disque. */
+  sizeSource: "launcher" | "measured" | "unknown";
+  drive: string | null;
+  /** Dernière partie (ms), seulement si le launcher la connaît : jamais une date inventée. */
+  lastPlayed: number | null;
+  status: "keep" | "review";
+  cover: boolean;
+  /** Ce que Lumen peut ouvrir : adresse Steam ou appli du Store, le launcher, ou rien. */
+  open: "uri" | "app" | "none";
+  /** Le launcher sait-il déplacer un jeu ? (Riot Client, CurseForge : non.) */
+  canMove: boolean;
+  /** Données et sauvegardes hors du dossier du jeu, protégées (jamais proposées). */
+  data: { size: number; paths: string[] } | null;
+}
+
+export interface GamesResult {
+  games: Game[];
+  /** Fichiers ou clés de launchers ignorés (absents, illisibles, mal formés) : comptés. */
+  ignored: { launcher: LauncherId; file: string; reason: "missing" | "unreadable" | "tooLarge" | "malformed" | "incomplete" }[];
+  launchers: LauncherId[];
+  steamShaderCaches: { path: string; size: number }[];
+}
+
+export interface ShaderCaches {
+  /** L'analyse affichée couvre-t-elle les caches de shaders ? */
+  analysed: boolean;
+  caches: { path: string; size: number; files: number }[];
+  total: number;
+}
+
+export interface ProjectArtifact {
+  id: NodeId;
+  path: string;
+  size: number;
+  status: "safe" | "review";
+}
+
+export interface DevProject {
+  id: NodeId;
+  name: string;
+  path: string;
+  language: string | null;
+  lastActivity: number | null;
+  activitySource: "git" | "files";
+  git: boolean;
+  lockfile: boolean;
+  sourceSize: number;
+  gitSize: number;
+  artifactsSize: number;
+  artifacts: ProjectArtifact[];
+}
+
+export interface DevCache {
+  id: string;
+  status: RecoStatus;
+  name: string;
+  path: string;
+  size: number;
+  /** Nettoyé par la commande officielle de l'outil (sinon : contenu à la Corbeille). */
+  command: boolean;
+}
+
+export interface DevOverview {
+  projects: DevProject[];
+  caches: DevCache[];
+}
+
+export interface DockerImages {
+  running: boolean;
+  reason: "notInstalled" | "notRunning" | null;
+  images: { id: string; repository: string; tag: string; size: number; created: string }[];
+  total: number;
+}
+
+export interface WslDisks {
+  disks: { id: number; name: string; kind: "wsl" | "docker"; path: string; size: number }[];
+  /** Module Hyper-V présent : Optimize-VHD ; sinon diskpart en lecture seule. */
+  hyperv: boolean;
+}
+
+/** Analyses gardées en mémoire pendant la session (une par disque), bornées. */
+export interface ScanCacheInfo {
+  /** Du plus récemment utilisé au moins récent ; `target` : `userProfile` ou la lettre du disque. */
+  entries: { scanId: number; target: string; bytes: number; lastUsed: number }[];
+  total: number;
+  limit: number;
 }

@@ -5,3 +5,6 @@ pub mod duplicates;
 pub mod files;
 pub mod largest;
 pub mod ipc;
+
+#[cfg(test)]
+mod saves_tests;

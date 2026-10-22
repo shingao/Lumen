@@ -17,6 +17,11 @@ use scan::{Kind, NodeId, Progress, Scan, ScanError, SliceNode};
 const TOP_N: usize = 30;
 /// Niveaux de la treemap sous le dossier affiché, au plus.
 const MAX_LEVELS: u8 = 4;
+/// Analyses gardées en mémoire pendant la session : la dernière de chaque cible visitée (retour
+/// instantané par « Précédent »), les plus anciennes oubliées au-delà.
+/// Mémoire au plus pour les analyses gardées pendant la session (une par disque) : au-delà, la
+/// moins récemment utilisée est oubliée ; celle qui sert en ce moment n'est jamais oubliée.
+pub const CACHE_LIMIT: u64 = 600 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -151,6 +156,7 @@ pub struct TreeSliceDto {
 }
 
 pub(crate) struct Entry {
+    pub(crate) target: ScanTarget,
     pub(crate) scan: Scan,
     pub(crate) volume: String,
     notice: Option<&'static str>,
@@ -158,11 +164,105 @@ pub(crate) struct Entry {
     pub(crate) applied: Option<Applied>,
 }
 
+impl Entry {
+    /// Mémoire occupée (octets, estimation) : arbre de l'analyse et résultats des règles.
+    pub(crate) fn memory_bytes(&self) -> u64 {
+        self.scan.memory_bytes() + self.applied.as_ref().map_or(0, |a| a.analysis.memory_bytes())
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     next_id: u32,
     running: Option<(u32, Arc<AtomicBool>)>,
     results: HashMap<u32, Arc<Entry>>,
+    /// Dernière utilisation de chaque analyse (horloge logique).
+    used: HashMap<u32, u64>,
+    clock: u64,
+    limit: u64,
+}
+
+impl Inner {
+    fn limit(&self) -> u64 {
+        if self.limit == 0 {
+            CACHE_LIMIT
+        } else {
+            self.limit
+        }
+    }
+
+    fn touch(&mut self, id: u32) {
+        if self.results.contains_key(&id) {
+            self.clock += 1;
+            self.used.insert(id, self.clock);
+        }
+    }
+
+    fn total(&self) -> u64 {
+        self.results.values().map(|e| e.memory_bytes()).sum()
+    }
+
+    /// Garde la nouvelle analyse d'une cible : remplace la précédente de la même cible, puis
+    /// oublie les moins récemment utilisées tant que le total dépasse la limite (jamais celle-ci).
+    fn keep(&mut self, id: u32, entry: Arc<Entry>) {
+        self.results.retain(|_, e| e.target != entry.target);
+        self.results.insert(id, entry);
+        self.used.retain(|k, _| self.results.contains_key(k));
+        self.touch(id);
+        while self.total() > self.limit() && self.results.len() > 1 {
+            let Some(lru) = self.results.keys().filter(|k| **k != id).min_by_key(|k| self.used.get(k).copied().unwrap_or(0)).copied() else { break };
+            self.results.remove(&lru);
+            self.used.remove(&lru);
+        }
+    }
+
+    fn cached(&self, target: &ScanTarget) -> Option<(u32, Arc<Entry>)> {
+        self.results.iter().filter(|(_, e)| &e.target == target).max_by_key(|(id, _)| **id).map(|(id, e)| (*id, e.clone()))
+    }
+
+    fn info(&self) -> CacheInfoDto {
+        let mut entries: Vec<CachedScanDto> = self
+            .results
+            .iter()
+            .map(|(id, e)| CachedScanDto {
+                scan_id: *id,
+                target: match &e.target {
+                    ScanTarget::UserProfile => "userProfile".into(),
+                    ScanTarget::Volume { letter } => letter.clone(),
+                },
+                bytes: e.memory_bytes(),
+                last_used: self.used.get(id).copied().unwrap_or(0),
+            })
+            .collect();
+        entries.sort_by_key(|e| std::cmp::Reverse(e.last_used));
+        CacheInfoDto { total: entries.iter().map(|e| e.bytes).sum(), limit: self.limit(), entries }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedScanDto {
+    pub scan_id: u32,
+    /// `userProfile` ou la lettre du disque.
+    pub target: String,
+    pub bytes: u64,
+    /// Ordre d'utilisation (plus grand = plus récent).
+    pub last_used: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheInfoDto {
+    /// Du plus récemment utilisé au moins récent.
+    pub entries: Vec<CachedScanDto>,
+    pub total: u64,
+    pub limit: u64,
+}
+
+/// Mémoire des analyses gardées pendant la session (Paramètres).
+#[tauri::command]
+pub fn scan_cache_info(state: State<'_, ScanState>) -> Result<CacheInfoDto, LumenError> {
+    state.0.lock().map(|i| i.info()).map_err(|_| LumenError::UnknownScan)
 }
 
 #[derive(Default)]
@@ -426,11 +526,9 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
                         Ok(i) => i,
                         Err(_) => return,
                     };
-                    let entry = Arc::new(Entry { scan, volume, notice, applied });
+                    let entry = Arc::new(Entry { target, scan, volume, notice, applied });
                     let dto = summary(id, &entry);
-                    // Une seule analyse gardée en mémoire : la dernière.
-                    inner.results.clear();
-                    inner.results.insert(id, entry.clone());
+                    inner.keep(id, entry.clone());
                     drop(inner);
                     let _ = app.emit("scan:done", dto);
                     // Snapshot de la Timeline (tailles agrégées par dossier) ; un échec n'empêche
@@ -445,6 +543,19 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
         })
         .map_err(|e| LumenError::Startup(e.to_string()))?;
     Ok(id)
+}
+
+/// Dernière analyse d'une cible gardée pendant la session (retour par « Précédent » sans
+/// réanalyser), ou rien.
+#[tauri::command]
+pub fn scan_cached(state: State<'_, ScanState>, target: ScanTarget) -> Option<SummaryDto> {
+    let mut inner = state.0.lock().ok()?;
+    if inner.running.is_some() {
+        return None;
+    }
+    let (id, e) = inner.cached(&target)?;
+    inner.touch(id);
+    Some(summary(id, &e))
 }
 
 #[tauri::command]
@@ -468,7 +579,10 @@ pub(crate) fn is_running(state: &ScanState) -> bool {
 }
 
 pub(crate) fn entry_of(state: &ScanState, scan_id: u32) -> Result<Arc<Entry>, LumenError> {
-    state.0.lock().ok().and_then(|i| i.results.get(&scan_id).cloned()).ok_or(LumenError::UnknownScan)
+    let mut inner = state.0.lock().map_err(|_| LumenError::UnknownScan)?;
+    let entry = inner.results.get(&scan_id).cloned().ok_or(LumenError::UnknownScan)?;
+    inner.touch(scan_id);
+    Ok(entry)
 }
 
 #[tauri::command]
@@ -619,5 +733,66 @@ mod tests {
         assert_eq!(t, ScanTarget::UserProfile);
         // Aucun chemin libre accepté.
         assert!(serde_json::from_str::<ScanTarget>(r#"{"kind":"path","path":"C:\\Windows"}"#).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn entry(target: ScanTarget) -> Arc<Entry> {
+        let root = scan::RawEntry { name: "C:".into(), kind: Kind::Dir, attributes: 0, file_id: 5, logical: 0, allocated: 0, modified: 0, accessed: 0 };
+        let scan = scan::model::Builder::new(&root).finish("C:\\".into(), 1, scan::Method::Walk, false, scan::Stats::default());
+        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None })
+    }
+
+    /// Analyse d'environ `mib` Mio (nœuds réservés, jamais remplis).
+    fn sized(target: ScanTarget, mib: usize) -> Arc<Entry> {
+        let root = scan::RawEntry { name: "C:".into(), kind: Kind::Dir, attributes: 0, file_id: 5, logical: 0, allocated: 0, modified: 0, accessed: 0 };
+        let mut scan = scan::model::Builder::new(&root).finish("C:\\".into(), 1, scan::Method::Walk, false, scan::Stats::default());
+        scan.nodes.reserve_exact(mib * 1024 * 1024 / std::mem::size_of::<scan::model::Node>());
+        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None })
+    }
+
+    #[test]
+    fn memoire_bornee_moins_recemment_utilisee_oubliee() {
+        let vol = |l: &str| ScanTarget::Volume { letter: l.into() };
+        let mut inner = Inner { limit: 600 << 20, ..Inner::default() };
+        inner.keep(1, sized(ScanTarget::UserProfile, 200));
+        inner.keep(2, sized(vol("D:"), 250));
+        // Retour sur le profil : il devient le plus récemment utilisé.
+        inner.touch(1);
+        inner.keep(3, sized(vol("E:"), 200));
+        // 650 Mio > 600 : D: (le moins récemment utilisé) est oublié, pas le profil.
+        assert!(inner.cached(&vol("D:")).is_none());
+        assert!(inner.cached(&ScanTarget::UserProfile).is_some() && inner.cached(&vol("E:")).is_some());
+        let info = inner.info();
+        assert!(info.total <= info.limit, "{} > {}", info.total, info.limit);
+        assert_eq!(info.entries.iter().map(|e| e.target.as_str()).collect::<Vec<_>>(), ["E:", "userProfile"]);
+        assert!(info.entries[0].bytes >= 200 << 20);
+        // Une seule analyse plus grosse que la limite : gardée (c'est celle affichée), seule.
+        inner.keep(4, sized(vol("F:"), 700));
+        assert_eq!(inner.results.keys().copied().collect::<Vec<_>>(), [4]);
+        assert_eq!(Inner::default().limit(), CACHE_LIMIT);
+    }
+
+    #[test]
+    fn derniere_analyse_de_chaque_disque_gardee() {
+        let vol = |l: &str| ScanTarget::Volume { letter: l.into() };
+        let mut inner = Inner::default();
+        inner.keep(1, entry(ScanTarget::UserProfile));
+        inner.keep(2, entry(vol("D:")));
+        // Nouvelle analyse du profil : remplace l'ancienne, D: reste là.
+        inner.keep(3, entry(ScanTarget::UserProfile));
+        assert_eq!(inner.cached(&ScanTarget::UserProfile).map(|(id, _)| id), Some(3));
+        assert_eq!(inner.cached(&vol("D:")).map(|(id, _)| id), Some(2));
+        assert!(!inner.results.contains_key(&1));
+        // Petites analyses : toutes gardées tant que la mémoire le permet.
+        for (id, l) in [(4, "E:"), (5, "F:"), (6, "G:")] {
+            inner.keep(id, entry(vol(l)));
+        }
+        assert_eq!(inner.results.len(), 5);
+        assert_eq!(inner.cached(&vol("G:")).map(|(id, _)| id), Some(6));
+        assert!(inner.cached(&vol("Z:")).is_none());
     }
 }

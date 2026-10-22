@@ -122,7 +122,7 @@ function ActionRow({ action, open, onToggle }: { action: JournalAction; open: bo
           <span className={styles.hint}>
             {t(`journal.kind.${action.kind}`)}
             {" · "}
-            {action.kind === "system" ? t("clean.method.command") : t(action.method === "trash" ? "clean.method.trash" : "clean.method.permanent")}
+            {["system", "docker", "wsl"].includes(action.kind) ? t("clean.method.command") : t(action.method === "trash" ? "clean.method.trash" : "clean.method.permanent")}
             {" · "}
             {t.plural("journal.done", action.itemsDone + action.itemsPartial, { n: formatCount(action.itemsDone + action.itemsPartial, t.locale) })}
             {left > 0 ? ` · ${t.plural("journal.left", left, { n: formatCount(left, t.locale) })}` : ""}

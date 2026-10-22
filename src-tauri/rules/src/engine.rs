@@ -92,6 +92,19 @@ pub struct Analysis {
     pub disabled: Vec<Disabled>,
 }
 
+impl Analysis {
+    /// Mémoire occupée (octets, estimation) : tableaux par nœud et recommandations.
+    pub fn memory_bytes(&self) -> u64 {
+        let per_node = self.status.capacity() + self.category.capacity() + 8 * (self.gain_safe.capacity() + self.gain_review.capacity()) + 2 * self.reco_of.capacity();
+        let recos: usize = self
+            .recos
+            .iter()
+            .map(|r| std::mem::size_of::<Reco>() + r.covered.capacity() * std::mem::size_of::<NodeId>() + r.projects.capacity() * std::mem::size_of::<Project>())
+            .sum();
+        (per_node + recos + self.disabled.len() * std::mem::size_of::<Disabled>()) as u64
+    }
+}
+
 pub const STATUS_KEEP: u8 = 0;
 pub const STATUS_SAFE: u8 = 1;
 pub const STATUS_REVIEW: u8 = 2;

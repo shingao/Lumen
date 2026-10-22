@@ -34,6 +34,8 @@ pub enum LumenError {
     Restore(String),
     #[error("Timeline : {0}")]
     Timeline(String),
+    #[error("Jeux : {0}")]
+    Games(String),
 }
 
 /// Les commandes IPC renvoient le message lisible, jamais la structure interne.
