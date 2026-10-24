@@ -430,6 +430,22 @@ pub(crate) fn game_dirs(state: &GamesState) -> Vec<safety::path::WinPath> {
         .unwrap_or_default()
 }
 
+/// Dossiers des jeux, détectés au besoin (sans mesurer les tailles) : un dossier de jeu ne se
+/// déplace jamais, même si l'onglet Jeux n'a pas encore été ouvert.
+pub(crate) fn game_dirs_now(state: &GamesState) -> Vec<safety::path::WinPath> {
+    if state.found().is_none() {
+        let (env, _) = platform::env();
+        let detection = platform::detect(&env);
+        let apps = launcher_apps(&platform::program_files());
+        if let Ok(mut g) = state.0.lock() {
+            if g.is_none() {
+                *g = Some(Arc::new(Found { detection, apps }));
+            }
+        }
+    }
+    game_dirs(state)
+}
+
 /// Jeux et launchers ouverts maintenant (avertissement avant de préparer le nettoyage ; le
 /// refus définitif est vérifié par `safety` au moment de l'action).
 #[tauri::command]

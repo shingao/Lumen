@@ -27,6 +27,7 @@ pub mod open;
 pub mod path;
 pub mod plan;
 pub mod probe;
+pub mod relocate;
 pub mod script;
 
 #[cfg(windows)]

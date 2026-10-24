@@ -13,6 +13,7 @@ mod dev;
 mod error;
 mod games;
 mod journal;
+mod moves;
 mod persist;
 mod scanning;
 mod timeline;
@@ -42,7 +43,13 @@ pub fn run() {
         .manage(timeline::DailyState::default())
         .manage(games::GamesState::default())
         .manage(dev::DevState::default())
+        .manage(moves::MoveState::default())
         .invoke_handler(tauri::generate_handler![
+            moves::move_check,
+            moves::move_start,
+            moves::move_confirm,
+            moves::moves_list,
+            moves::move_undo,
             scanning::app_info,
             scanning::volumes_list,
             scanning::scan_start,

@@ -41,7 +41,7 @@ fn reg_dword(root: HKEY, subkey: &str, value: &str) -> Option<u32> {
 }
 
 /// Valeur texte, variables d'environnement développées (REG_EXPAND_SZ → REG_SZ).
-fn reg_string(root: HKEY, subkey: &str, value: &str) -> Option<String> {
+pub(super) fn reg_string(root: HKEY, subkey: &str, value: &str) -> Option<String> {
     let mut size: u32 = 0;
     let key = HSTRING::from(subkey);
     let name = HSTRING::from(value);

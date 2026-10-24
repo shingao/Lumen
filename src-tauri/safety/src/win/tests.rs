@@ -461,13 +461,13 @@ fn fixture_volume_fixe_avec_corbeille() {
 }
 
 /// Lecteur SUBST temporaire (session courante), retiré à la fin du test.
-struct Subst {
-    drive: char,
+pub(super) struct Subst {
+    pub(super) drive: char,
     target: String,
 }
 
 impl Subst {
-    fn new(target: &Path) -> Subst {
+    pub(super) fn new(target: &Path) -> Subst {
         // SAFETY : appel sans paramètre.
         let used = unsafe { GetLogicalDrives() };
         let drive = ('H'..='Y').rev().find(|d| used & (1 << (*d as u32 - 'A' as u32)) == 0).unwrap();

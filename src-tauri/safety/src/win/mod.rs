@@ -8,8 +8,11 @@ mod effects;
 mod elevated;
 pub mod process;
 mod recycle;
+pub mod relocate;
 mod restore;
 pub mod sinks;
+#[cfg(test)]
+mod relocate_tests;
 #[cfg(test)]
 mod tests;
 mod volume;
