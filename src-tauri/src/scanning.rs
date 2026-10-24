@@ -46,6 +46,8 @@ pub struct AppInfo {
     /// « Scan rapide (admin) » proposé : Lumen installé dans Program Files, non modifiable.
     pub fast_scan_available: bool,
     pub version: &'static str,
+    /// Dossier utilisateur (anonymisation des rapports : il devient `%USERPROFILE%`).
+    pub profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -476,7 +478,7 @@ pub(crate) mod platform {
 
 #[tauri::command]
 pub fn app_info() -> AppInfo {
-    AppInfo { elevated: platform::elevated(), fast_scan_available: platform::fast_scan_available(), version: env!("CARGO_PKG_VERSION") }
+    AppInfo { elevated: platform::elevated(), fast_scan_available: platform::fast_scan_available(), version: env!("CARGO_PKG_VERSION"), profile: platform::user_profile() }
 }
 
 #[tauri::command]

@@ -5,6 +5,8 @@ import { useT } from "../i18n";
 import { Palette } from "../features/palette/Palette";
 import { AnalyseScreen } from "../features/screens/AnalyseScreen";
 import { CleanDialog } from "../features/cleanup/CleanDialog";
+import { ExportDialog } from "../features/export/ExportDialog";
+import { MoveDialog } from "../features/move/MoveDialog";
 import { JournalScreen } from "../features/journal/JournalScreen";
 import { CleanupScreen } from "../features/advanced/CleanupScreen";
 import { DevScreen } from "../features/dev/DevScreen";
@@ -110,6 +112,8 @@ export function App() {
       </div>
       {paletteOpen && <Palette />}
       <CleanDialog />
+      <MoveDialog />
+      <ExportDialog />
       <Toast />
     </div>
   );

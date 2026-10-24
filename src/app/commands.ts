@@ -7,6 +7,8 @@ import { currentT, type Translator } from "../i18n";
 import { SCREENS, type Screen, useStore } from "./store";
 import { updateSettings } from "./theme";
 import { startScan } from "./scanning";
+import { openMove } from "./moves";
+import { openExport } from "./report";
 
 export interface Command {
   id: string;
@@ -42,6 +44,19 @@ export function commandList(): Command[] {
       run: () => store.go(screen),
     })),
     { id: "settings", label: t("cmd.settings"), run: () => store.setSettingsOpen(true) },
+    ...(store.scan.summary ? [{ id: "export", label: t("cmd.export"), run: openExport }] : []),
+    ...(store.scan.summary && store.node !== null
+      ? [
+          {
+            id: "move",
+            label: t("cmd.move"),
+            run: () => {
+              const { scan, node } = useStore.getState();
+              if (scan.summary && node !== null) openMove(scan.summary.scanId, node);
+            },
+          },
+        ]
+      : []),
     {
       id: "clean",
       label: t("cmd.clean"),

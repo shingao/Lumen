@@ -23,6 +23,13 @@ import type {
   JournalAction,
   JournalDetail,
   Kpis,
+  MoveCheck,
+  MoveFinish,
+  MoveProgress,
+  MoveRow,
+  MoveRun,
+  MoveUndo,
+  SavedReport,
   NodeKind,
   Recommendation,
   RecommendationDetail,
@@ -375,6 +382,18 @@ export function createTauriBackend(): Backend {
     // Recherche dans l'index du scan : jalon 9.
     search: (query, limit) => invoke<SearchHit[]>("scan_search", { query, limit }),
     openItem: (scanId, id, action) => invoke<"open" | "reveal">("item_open", { scanId, id, action }),
+
+    moveCheck: (scanId, nodeId, drive) => invoke<MoveCheck>("move_check", { scanId, nodeId, drive }),
+    moveStart: (planId, fingerprint) => invoke<MoveRun>("move_start", { planId, fingerprint }),
+    moveConfirm: (moveId, deleteOriginal) => invoke<MoveFinish>("move_confirm", { moveId, delete: deleteOriginal }),
+    moves: () => invoke<MoveRow[]>("moves_list"),
+    moveUndo: (moveId) => invoke<MoveUndo>("move_undo", { moveId }),
+    onMoveProgress(listener) {
+      const off = listen<MoveProgress>("move:progress", (e) => listener(e.payload));
+      return () => void off.then((f) => f());
+    },
+    saveReport: (format, stamp, content) => invoke<SavedReport>("report_save", { format, stamp, content }),
+    revealReport: () => invoke("report_reveal"),
 
     settings: () => Promise.resolve({ ...settings }),
 

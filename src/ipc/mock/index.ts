@@ -29,6 +29,7 @@ import type {
 import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
 import { createMockTimeline } from "./timeline";
+import { createMoves } from "./moves";
 import { DEV_EXTRA_CACHES, mockCover, mockDevCaches, mockDocker, mockGames, mockProjects, mockRunning, mockShaders, mockWsl } from "./devgames";
 import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockNoProtection, mockProgram, mockRestorePoints, mockSinks } from "./advanced";
 
@@ -287,7 +288,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     appInfo() {
-      return resolved({ elevated: false, fastScanAvailable: true, version: "0.1.0" });
+      return resolved({ elevated: false, fastScanAvailable: true, version: "0.1.0", profile: "C:\\Users\\Arthur" });
     },
 
     volumes() {
@@ -757,6 +758,34 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       const name = [...Object.values(TREES)].map((t) => t.nodes.get(id)?.tile).find(Boolean);
       const runnable = name ? /\.(exe|msi|bat|cmd|ps1|lnk|vbs|js)$/i.test(l(name.name)) : false;
       return resolved(action === "reveal" || runnable ? "reveal" : "open");
+    },
+
+    ...createMoves((id) => {
+      for (const tree of Object.values(TREES)) {
+        const n = tree.nodes.get(id);
+        if (n?.tile) return { name: l(n.tile.name), path: tree.base + l(n.tile.path), size: gb(n.tile.size), files: n.tile.files, dir: n.children.length > 0 || n.tile.files > 1 };
+      }
+      return null;
+    }),
+
+    saveReport(format, stamp, content) {
+      // Navigateur : téléchargement du fichier.
+      const name = `Lumen-rapport-${stamp}.${format}`;
+      try {
+        const url = URL.createObjectURL(new Blob([content], { type: format === "html" ? "text/html" : "text/csv" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        // jsdom : pas de téléchargement.
+      }
+      return resolved({ path: `C:\\Users\\Arthur\\Downloads\\${name}`, name });
+    },
+
+    revealReport() {
+      return resolved(undefined);
     },
 
     settings() {

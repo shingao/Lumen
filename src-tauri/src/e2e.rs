@@ -357,8 +357,8 @@ fn deplacement_reel_d_un_dossier_du_faux_profil() {
     let scan = scan::walk(&scan::win::WinSource::new(&real), &real, &AtomicBool::new(false), &|_: &scan::Progress| {}).unwrap();
     // Le front n'envoie qu'un id de nœud : le chemin vient de l'analyse.
     let node = |name: &str| WinPath::parse(&scan.path(scan.find(name).unwrap())).unwrap();
-    let rushes = node("Rushes");
-    let archives = node("Archives");
+    let rushes = node("Vidéos\\Rushes");
+    let archives = node("Vidéos\\Archives");
     let src_drive = match rushes.prefix() {
         safety::path::Prefix::Drive(d) => *d,
         safety::path::Prefix::Unc { .. } => unreachable!(),

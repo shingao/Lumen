@@ -8,6 +8,8 @@ import { Button } from "../../components/Button";
 import { ArrowLeftIcon, ArrowRightIcon, ChevronDownIcon } from "../../components/icons";
 import { Menu, type MenuItem } from "../../components/Menu";
 import { Segmented } from "../../components/Segmented";
+import { openMove } from "../../app/moves";
+import { openExport } from "../../app/report";
 import { formatBytes } from "../../core/format";
 import { currentT, useT } from "../../i18n";
 import type { Category, TreeNode } from "../../ipc/types";
@@ -157,6 +159,16 @@ export function Explorer() {
         <div className={styles.crumbEnd}>
           {!running && (
             <>
+              {node !== null && scanId !== null && tree?.root.kind === "dir" && (
+                <Button variant="link" className={styles.scanLink} title={t("move.openLabel")} aria-haspopup="dialog" onClick={() => openMove(scanId, node)}>
+                  {t("move.open")}
+                </Button>
+              )}
+              {scan.summary && (
+                <Button variant="link" className={styles.scanLink} aria-haspopup="dialog" onClick={openExport}>
+                  {t("export.open")}
+                </Button>
+              )}
               <Button variant="link" className={styles.scanLink} onClick={() => void startScan(target)}>
                 {t("explorer.rescan")}
               </Button>
