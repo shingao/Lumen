@@ -5,8 +5,8 @@
 //! - contenu : liste par handle, sans jamais suivre un lien ; programmes qui tiennent des
 //!   fichiers : Restart Manager (`RmGetList`), avec leur nom (« Discord ») ;
 //! - copie fidèle : `CopyFileExW` (contenu, attributs, flux alternatifs ; jamais par-dessus un
-//!   fichier), puis dates (création, accès, écriture), ACL et propriétaire ; dossiers créés
-//!   d'après leur modèle (`CreateDirectoryExW`), flux alternatifs des dossiers recopiés ;
+//!   fichier), puis dates (création, accès, écriture), ACL et propriétaire ; dossiers : attributs,
+//!   dates, flux alternatifs et ACL recopiés une fois leur contenu copié ;
 //! - vérification : BLAKE3 du flux principal **et de chaque flux nommé**, date de dernier accès
 //!   gelée pendant la lecture ;
 //! - jonction : point de montage `\??\D:\…` posé par `FSCTL_SET_REPARSE_POINT`, relu par
@@ -24,7 +24,7 @@ use windows::Win32::Security::{
     PSID, SE_DACL_PROTECTED, UNPROTECTED_DACL_SECURITY_INFORMATION,
 };
 use windows::Win32::Storage::FileSystem::{
-    CopyFileExW, CreateDirectoryExW, CreateDirectoryW, CreateFileW, FindClose, FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard,
+    CopyFileExW, CreateDirectoryW, CreateFileW, FindClose, FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard,
     GetDiskFreeSpaceExW, GetFileAttributesW, GetFileTime, GetVolumeInformationW, MoveFileExW, ReadFile, SetFileAttributesW, SetFileTime,
     WriteFile, COPY_FILE_FAIL_IF_EXISTS, CREATE_NEW, DELETE, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
     FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_NO_RECALL,
@@ -401,14 +401,9 @@ impl MoveProbe for WinMover {
 }
 
 impl MoveEffects for WinMover {
-    fn create_dir(&self, path: &WinPath, template: &WinPath) -> Result<(), MoveIoError> {
-        // La racine d'un volume n'est jamais un modèle (attributs cachés et système).
-        if !template.is_volume_root() {
-            // SAFETY : chaînes possédées.
-            if unsafe { CreateDirectoryExW(&wide(template), &wide(path), None) }.is_ok() {
-                return Ok(());
-            }
-        }
+    fn create_dir(&self, path: &WinPath, _template: &WinPath) -> Result<(), MoveIoError> {
+        // Dossier neuf, sans modèle : `CreateDirectoryExW` crée le dossier puis peut échouer en
+        // recopiant les flux du modèle. Attributs, dates, flux et ACL suivent par `copy_dir_meta`.
         // SAFETY : chaîne possédée.
         unsafe { CreateDirectoryW(&wide(path), None) }.map_err(|e| io(&e))
     }
