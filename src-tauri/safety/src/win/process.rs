@@ -126,3 +126,48 @@ pub fn open_launcher(target: &LauncherOpen) -> Result<(), OpenError> {
         Err(e) => Err(OpenError::Failed(e.message())),
     }
 }
+
+/// Ouvre un élément trouvé par la recherche, après la décision de [`crate::open::decide`] :
+/// avec l'appli par défaut (jamais un programme), ou montré dans l'Explorateur. L'élément doit
+/// exister ; aucun argument n'est passé.
+pub fn open_item(path: &WinPath, is_dir: bool, requested: crate::open::OpenAction) -> Result<crate::open::OpenAction, OpenError> {
+    use crate::open::{decide, OpenAction};
+    let probe = super::WinProbe;
+    match crate::probe::Probe::attributes(&probe, path) {
+        Ok(a) if a.directory == is_dir => {}
+        _ => return Err(OpenError::Missing),
+    }
+    let action = decide(path, is_dir, requested);
+    let file = HSTRING::from(path.display_string());
+    match action {
+        OpenAction::Open => {
+            let mut info = SHELLEXECUTEINFOW {
+                cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                fMask: SEE_MASK_NOASYNC,
+                lpVerb: w!("open"),
+                lpFile: PCWSTR(file.as_ptr()),
+                nShow: SW_SHOWNORMAL.0,
+                ..Default::default()
+            };
+            // SAFETY : structure et chaînes possédées pendant l'appel.
+            unsafe { ShellExecuteExW(&mut info) }.map_err(|e| OpenError::Failed(e.message()))?;
+        }
+        OpenAction::Reveal => {
+            use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+            use windows::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
+            // SAFETY : initialisation COM du fil (déjà faite : sans effet) ; liste d'identifiants
+            // créée puis libérée ici.
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                let pidl = ILCreateFromPathW(PCWSTR(file.as_ptr()));
+                if pidl.is_null() {
+                    return Err(OpenError::Missing);
+                }
+                let r = SHOpenFolderAndSelectItems(pidl, None, 0);
+                ILFree(Some(pidl));
+                r.map_err(|e| OpenError::Failed(e.message()))?;
+            }
+        }
+    }
+    Ok(action)
+}

@@ -6,6 +6,7 @@ import { backend } from "../ipc/client";
 import { currentT, type Translator } from "../i18n";
 import { SCREENS, type Screen, useStore } from "./store";
 import { updateSettings } from "./theme";
+import { startScan } from "./scanning";
 
 export interface Command {
   id: string;
@@ -30,9 +31,8 @@ export function screenLabel(screen: Screen, t: Translator = currentT()): string 
 export function commandList(): Command[] {
   const t = currentT();
   const store = useStore.getState();
-  const later = (n: number) => () => store.showToast(t("preview.later", { n }));
   return [
-    { id: "scan", label: t("cmd.scan"), hint: t("screen.milestone", { n: 3 }), run: later(3) },
+    { id: "scan", label: t("cmd.scan"), run: () => void startScan(useStore.getState().target) },
     { id: "theme-dark", label: t("cmd.themeDark"), run: () => void updateSettings({ theme: "dark" }) },
     { id: "theme-light", label: t("cmd.themeLight"), run: () => void updateSettings({ theme: "light" }) },
     { id: "theme-system", label: t("cmd.themeSystem"), run: () => void updateSettings({ theme: "system" }) },

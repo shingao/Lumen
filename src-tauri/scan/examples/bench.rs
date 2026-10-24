@@ -5,7 +5,10 @@
 //! cargo run --release -p scan --example bench -- walk <dossier>
 //! cargo run --release -p scan --example bench -- mft <dossier>      (administrateur, Windows)
 //! cargo run --release -p scan --example bench -- compare <dossier>  (administrateur, Windows)
+//! cargo run --release -p scan --example bench -- search <nombre d'entrées>
 //! ```
+//! `search` construit une analyse synthétique en mémoire (noms réalistes), son index, puis mesure
+//! des requêtes typiques ; il échoue si l'une dépasse 50 ms.
 //! `compare` lance les deux méthodes dans le même processus et liste leurs différences.
 //! Chaque mesure affiche une ligne Markdown : méthode, fichiers, taille allouée, durée, mémoire.
 
@@ -170,6 +173,62 @@ fn run_mft(_dir: &str) -> Result<(), String> {
     Err("la MFT ne se lit que sous Windows".into())
 }
 
+/// Analyse synthétique de `count` entrées : dossiers de 200 éléments, noms variés.
+fn synthetic(count: usize) -> Scan {
+    use scan::model::Builder;
+    use scan::{Kind, Method, RawEntry, Stats};
+    let words = ["rapport", "vacances", "été", "facture", "photo", "montage", "projet", "données", "sauvegarde", "mariage", "lumen", "cache", "image", "export", "réunion", "budget"];
+    let exts = ["mp4", "jpg", "pdf", "docx", "txt", "zip", "png", "mkv", "xlsx", "rs", "js", "json"];
+    let e = |name: String, kind: Kind, size: u64| RawEntry { name, kind, attributes: 0, file_id: 0, logical: size, allocated: size, modified: 0, accessed: 0 };
+    let mut b = Builder::new(&e("C:".into(), Kind::Dir, 0));
+    let dirs = count / 200 + 1;
+    let top = b.add_children(0, &(0..dirs).map(|d| e(format!("{} {d}", words[d % words.len()]), Kind::Dir, 0)).collect::<Vec<_>>());
+    let mut made = dirs;
+    for d in 0..dirs {
+        if made >= count {
+            break;
+        }
+        let n = 200.min(count - made);
+        let files: Vec<RawEntry> = (0..n)
+            .map(|i| {
+                let k = d * 200 + i;
+                let name = format!("{} {} {}_{k}.{}", words[k % words.len()], words[(k / 7) % words.len()], 2000 + k % 27, exts[k % exts.len()]);
+                e(name, Kind::File, ((k * 7919) % (64 << 20)) as u64)
+            })
+            .collect();
+        b.add_children(top.start + d as u32, &files);
+        made += n;
+    }
+    b.finish("C:\\".into(), 1, Method::Walk, true, Stats::default())
+}
+
+fn run_search(count: usize) -> Result<(), String> {
+    use scan::search::{parse, search, Index};
+    let started = Instant::now();
+    let scan = synthetic(count);
+    let built = Instant::now();
+    let idx = Index::build(&scan);
+    println!("| index | {} entrées | {} | {} ms (analyse synthétique : {} ms) |", scan.len(), mib(idx.memory_bytes()), built.elapsed().as_millis(), (built - started).as_millis());
+    let mut worst = 0u128;
+    for q in ["rapport", "vacances ete", "mrgjl", "ext:mp4 >1go", "type:video montage", ">40mo", "sauvegarde 2019", "zzzz"] {
+        let query = parse(q);
+        // Meilleure de 5 mesures (la première réchauffe les caches).
+        let mut best = u128::MAX;
+        let mut n = 0;
+        for _ in 0..5 {
+            let t = Instant::now();
+            n = search(&scan, &idx, &query, 50).len();
+            best = best.min(t.elapsed().as_micros());
+        }
+        worst = worst.max(best);
+        println!("| `{q}` | {n} résultats | {:.1} ms |", best as f64 / 1000.0);
+    }
+    if worst > 50_000 {
+        return Err(format!("recherche trop lente : {:.1} ms (objectif 50 ms)", worst as f64 / 1000.0));
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let result = match args.get(1).map(String::as_str) {
@@ -180,7 +239,8 @@ fn main() {
         Some("walk") if args.len() == 3 => run_walk(&args[2]),
         Some("mft") if args.len() == 3 => run_mft(&args[2]),
         Some("compare") if args.len() == 3 => run_compare(&args[2]),
-        _ => Err("usage : bench generate <dossier> <n> | walk <dossier> | mft <dossier> | compare <dossier>".into()),
+        Some("search") if args.len() == 3 => run_search(args[2].parse().unwrap_or(1_000_000)),
+        _ => Err("usage : bench generate <dossier> <n> | walk <dossier> | mft <dossier> | compare <dossier> | search <n>".into()),
     };
     if let Err(e) = result {
         eprintln!("{e}");

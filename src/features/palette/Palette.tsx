@@ -6,12 +6,26 @@ import { SearchIcon } from "../../components/icons";
 import pop from "../../components/Popover.module.css";
 import { formatBytes, formatRelative } from "../../core/format";
 import { fuzzyFilter } from "../../core/fuzzy";
-import { currentT, useT } from "../../i18n";
+import { parseQuery, type SearchQuery } from "../../core/searchQuery";
+import { runHit, type HitAction } from "../../app/search";
+import { useT, type Translator } from "../../i18n";
 import { backend } from "../../ipc/client";
 import type { SearchHit } from "../../ipc/types";
 import styles from "./Palette.module.css";
 
 type Entry = { kind: "command"; command: Command } | { kind: "hit"; hit: SearchHit };
+
+/** Filtres reconnus, affichés sous le champ. */
+function chips(q: SearchQuery, t: Translator): string[] {
+  const out: string[] = [];
+  for (const e of q.exts) out.push(`.${e}`);
+  for (const ty of q.types) out.push(t(`palette.type.${ty}`));
+  if (q.dirsOnly) out.push(t("palette.type.dir"));
+  if (q.minSize !== null) out.push(`> ${formatBytes(q.minSize, t.locale)}`);
+  if (q.maxSize !== null) out.push(`< ${formatBytes(q.maxSize, t.locale)}`);
+  for (const d of q.drives) out.push(t("palette.drive", { d }));
+  return out;
+}
 
 /** Palette Ctrl K : commandes et recherche dans l'index du dernier scan. */
 export function Palette() {
@@ -33,10 +47,12 @@ export function Palette() {
     };
   }, []);
 
+  const filters = useMemo(() => chips(parseQuery(query), t), [query, t]);
+
   useEffect(() => {
     let alive = true;
     const q = query.trim();
-    const pending = q.length === 0 ? Promise.resolve([]) : backend.search(q, 8);
+    const pending = q.length === 0 ? Promise.resolve([]) : backend.search(q, 12);
     void pending.then((h) => {
       if (alive) setHits(h);
     });
@@ -47,8 +63,10 @@ export function Palette() {
 
   const commands = useMemo(() => {
     const all = commandList();
+    // Une requête avec filtres cherche des fichiers, pas des commandes.
+    if (filters.length > 0) return [];
     return query.trim() ? fuzzyFilter(all, query, (c) => c.label, 6) : all.slice(0, 6);
-  }, [query]);
+  }, [query, filters.length]);
 
   const entries: Entry[] = [
     ...commands.map((command) => ({ kind: "command" as const, command })),
@@ -60,12 +78,12 @@ export function Palette() {
     listRef.current?.querySelector("[data-active]")?.scrollIntoView({ block: "nearest" });
   }, [current]);
 
-  // Entrée ouvre le fichier, Ctrl+Entrée le montre dans l'Explorateur : tous deux arrivent avec le scanner.
-  const run = (entry: Entry | undefined) => {
+  // Entrée ouvre l'élément, Ctrl+Entrée le montre dans l'Explorateur, Maj+Entrée zoome dans la treemap.
+  const run = (entry: Entry | undefined, action: HitAction = "open") => {
     if (!entry) return;
     close();
     if (entry.kind === "command") entry.command.run();
-    else useStore.getState().showToast(currentT()("preview.later", { n: 3 }));
+    else void runHit(entry.hit, action);
   };
 
   return createPortal(
@@ -92,13 +110,22 @@ export function Palette() {
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") setActive((current + 1) % Math.max(1, entries.length));
               else if (e.key === "ArrowUp") setActive((current - 1 + entries.length) % Math.max(1, entries.length));
-              else if (e.key === "Enter") run(entries[current]);
+              else if (e.key === "Enter") run(entries[current], e.ctrlKey || e.metaKey ? "reveal" : e.shiftKey ? "zoom" : "open");
               else if (e.key === "Escape") close();
               else return;
               e.preventDefault();
             }}
           />
         </div>
+        {filters.length > 0 && (
+          <div className={styles.chips} aria-label={t("palette.filters")}>
+            {filters.map((f) => (
+              <span key={f} className={styles.chip}>
+                {f}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div ref={listRef} id="palette-list" role="listbox" aria-label={t("palette.label")} className={styles.list}>
           {commands.length > 0 && <div className={styles.group}>{t("palette.commands")}</div>}
@@ -149,6 +176,9 @@ export function Palette() {
           </span>
           <span>
             <kbd className={styles.kbd}>{t("palette.keyCtrlEnter")}</kbd> {t("palette.hintReveal")}
+          </span>
+          <span>
+            <kbd className={styles.kbd}>{t("palette.keyShiftEnter")}</kbd> {t("palette.hintZoom")}
           </span>
         </div>
       </div>

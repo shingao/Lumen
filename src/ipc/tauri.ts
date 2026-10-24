@@ -39,6 +39,7 @@ import type {
   GamesResult,
   ShaderCaches,
   ScanCacheInfo,
+  SearchHit,
   WslDisks,
   DatabaseInfo,
   TimelineCompare,
@@ -372,7 +373,8 @@ export function createTauriBackend(): Backend {
     restore: (itemId) => invoke("journal_restore", { itemId }),
 
     // Recherche dans l'index du scan : jalon 9.
-    search: () => Promise.resolve([]),
+    search: (query, limit) => invoke<SearchHit[]>("scan_search", { query, limit }),
+    openItem: (scanId, id, action) => invoke<"open" | "reveal">("item_open", { scanId, id, action }),
 
     settings: () => Promise.resolve({ ...settings }),
 

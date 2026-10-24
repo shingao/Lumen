@@ -90,7 +90,11 @@ export interface Backend {
   journalScript(actionId: number): Promise<string>;
   /** « Restaurer depuis la Corbeille » d'un élément du journal. */
   restore(itemId: number): Promise<void>;
+  /** Recherche dans les noms des dernières analyses (filtres `ext:`, `>1go`, `type:`, `disque:`). */
   search(query: string, limit: number): Promise<SearchHit[]>;
+  /** Ouvre un résultat (`open` : appli par défaut, jamais un programme ; `reveal` : Explorateur).
+   * Renvoie ce qui a été fait. */
+  openItem(scanId: number, id: NodeId, action: "open" | "reveal"): Promise<"open" | "reveal">;
   /** Jeux installés, détectés en lecture seule chez leurs launchers. */
   games(): Promise<GamesResult>;
   /** Jaquette du cache local du launcher (data URL), ou null. */

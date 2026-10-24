@@ -141,3 +141,20 @@
   padding: 1px 5px;
   background: var(--bg-app);
 }
+
+/* Filtres reconnus (ext:, >1go, type:, disque:) : pastilles sous le champ. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 14px 8px;
+}
+
+.chip {
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}

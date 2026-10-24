@@ -52,6 +52,8 @@ pub fn run() {
             scanning::scan_find,
             scanning::scan_cached,
             scanning::scan_restore,
+            scanning::scan_search,
+            scanning::item_open,
             scanning::scan_cache_info,
             scanning::recommendations,
             scanning::recommendation_detail,

@@ -168,6 +168,8 @@ pub(crate) struct Entry {
     pub(crate) applied: Option<Applied>,
     pub(crate) finished_at: i64,
     pub(crate) restored: bool,
+    /// Index de la recherche (noms pliés), construit à la première recherche.
+    pub(crate) index: std::sync::OnceLock<scan::search::Index>,
 }
 
 /// Clé d'enregistrement d'une cible : `userProfile` ou la lettre du disque.
@@ -181,7 +183,7 @@ pub(crate) fn target_key(t: &ScanTarget) -> String {
 impl Entry {
     /// Mémoire occupée (octets, estimation) : arbre de l'analyse et résultats des règles.
     pub(crate) fn memory_bytes(&self) -> u64 {
-        self.scan.memory_bytes() + self.applied.as_ref().map_or(0, |a| a.analysis.memory_bytes())
+        self.scan.memory_bytes() + self.applied.as_ref().map_or(0, |a| a.analysis.memory_bytes()) + self.index.get().map_or(0, |i| i.memory_bytes())
     }
 }
 
@@ -374,6 +376,16 @@ pub(crate) mod platform {
     use super::*;
 
     #[cfg(windows)]
+    pub fn open_item(path: &safety::path::WinPath, is_dir: bool, requested: safety::open::OpenAction) -> Result<safety::open::OpenAction, LumenError> {
+        safety::win::open_item(path, is_dir, requested).map_err(|e| LumenError::Plan(e.to_string()))
+    }
+
+    #[cfg(not(windows))]
+    pub fn open_item(_: &safety::path::WinPath, _: bool, _: safety::open::OpenAction) -> Result<safety::open::OpenAction, LumenError> {
+        Err(LumenError::Plan("disponible sous Windows uniquement".into()))
+    }
+
+    #[cfg(windows)]
     pub fn volumes() -> Vec<VolumeDto> {
         scan::win::volumes()
             .into_iter()
@@ -545,7 +557,7 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
                         Err(_) => return,
                     };
                     let finished_at = crate::cleanup::unix_ms();
-                    let entry = Arc::new(Entry { target, scan, volume, notice, applied, finished_at, restored: false });
+                    let entry = Arc::new(Entry { target, scan, volume, notice, applied, finished_at, restored: false, index: Default::default() });
                     let dto = summary(id, &entry);
                     inner.keep(id, entry.clone());
                     drop(inner);
@@ -602,7 +614,7 @@ fn restore(app: &AppHandle) -> Result<Vec<SummaryDto>, LumenError> {
             (ScanTarget::Volume { letter: v.letter.clone() }, v.letter.clone())
         };
         let applied = analysis::apply(&s.scan);
-        let entry = Arc::new(Entry { target, scan: s.scan, volume, notice: None, applied, finished_at: s.finished_at, restored: true });
+        let entry = Arc::new(Entry { target, scan: s.scan, volume, notice: None, applied, finished_at: s.finished_at, restored: true, index: Default::default() });
         let mut inner = state.0.lock().map_err(|_| LumenError::UnknownScan)?;
         // Une analyse de cette session pour la même cible l'emporte.
         if inner.results.values().any(|e| e.target == entry.target) {
@@ -617,6 +629,84 @@ fn restore(app: &AppHandle) -> Result<Vec<SummaryDto>, LumenError> {
         inner.restored = true;
     }
     Ok(out)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHitDto {
+    pub scan_id: u32,
+    pub id: u32,
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub modified: i64,
+    pub kind: &'static str,
+    /// Lettre du disque (`C:`).
+    pub drive: String,
+    /// `userProfile` ou la lettre du disque analysé.
+    pub target: String,
+}
+
+/// Recherche dans les noms des analyses en mémoire (une par disque, dont celles relues au
+/// lancement) : jamais le contenu des fichiers. `disque:D` limite aux analyses de ce disque.
+#[tauri::command]
+pub async fn scan_search(app: AppHandle, query: String, limit: u32) -> Result<Vec<SearchHitDto>, LumenError> {
+    let worker = app.clone();
+    tauri::async_runtime::spawn_blocking(move || search_all(&tauri::Manager::state::<ScanState>(&worker), &query, limit.clamp(1, 200) as usize))
+        .await
+        .map_err(|e| LumenError::Startup(e.to_string()))
+}
+
+pub(crate) fn search_all(state: &ScanState, query: &str, limit: usize) -> Vec<SearchHitDto> {
+    let q = scan::search::parse(query);
+    let entries: Vec<(u32, Arc<Entry>)> = match state.0.lock() {
+        Ok(i) => i.results.iter().map(|(id, e)| (*id, e.clone())).collect(),
+        Err(_) => return Vec::new(),
+    };
+    let mut hits: Vec<(i64, u64, SearchHitDto)> = Vec::new();
+    for (scan_id, e) in entries {
+        let drive = e.volume.to_ascii_uppercase();
+        if !q.drives.is_empty() && !q.drives.iter().any(|d| drive.starts_with(*d)) {
+            continue;
+        }
+        let idx = e.index.get_or_init(|| scan::search::Index::build(&e.scan));
+        for h in scan::search::search(&e.scan, idx, &q, limit) {
+            let Some(n) = e.scan.node(h.id) else { continue };
+            hits.push((
+                h.score,
+                n.allocated,
+                SearchHitDto {
+                    scan_id,
+                    id: h.id,
+                    name: e.scan.name(h.id).to_owned(),
+                    path: e.scan.path(h.id),
+                    size: n.allocated,
+                    modified: epoch_ms(n.modified),
+                    kind: if matches!(n.kind, Kind::Dir | Kind::CloudDir) { "dir" } else { "file" },
+                    drive: drive.clone(),
+                    target: target_key(&e.target),
+                },
+            ));
+        }
+    }
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    hits.into_iter().take(limit).map(|(_, _, h)| h).collect()
+}
+
+/// Ouvre un résultat de la recherche (`open` : appli par défaut, jamais un programme ;
+/// `reveal` : montré dans l'Explorateur) ; renvoie ce qui a été fait. Le chemin vient de
+/// l'analyse, jamais du front.
+#[tauri::command]
+pub fn item_open(state: State<'_, ScanState>, scan_id: u32, id: u32, action: String) -> Result<&'static str, LumenError> {
+    let e = entry_of(&state, scan_id)?;
+    let n = e.scan.node(id).ok_or(LumenError::UnknownNode)?;
+    let path = safety::path::WinPath::parse(&e.scan.path(id)).map_err(|err| LumenError::Plan(err.to_string()))?;
+    let requested = if action == "reveal" { safety::open::OpenAction::Reveal } else { safety::open::OpenAction::Open };
+    let done = platform::open_item(&path, matches!(n.kind, Kind::Dir | Kind::CloudDir), requested)?;
+    Ok(match done {
+        safety::open::OpenAction::Open => "open",
+        safety::open::OpenAction::Reveal => "reveal",
+    })
 }
 
 /// Dernière analyse d'une cible gardée pendant la session (retour par « Précédent » sans
@@ -811,13 +901,35 @@ mod tests {
 }
 
 #[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn recherche_sur_toutes_les_analyses_en_memoire() {
+        let (_, profile) = crate::analysis::tests::applied();
+        let state = ScanState::default();
+        {
+            let mut inner = state.0.lock().unwrap();
+            inner.keep(1, Arc::new(Entry { target: ScanTarget::UserProfile, scan: profile, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false, index: Default::default() }));
+        }
+        let hits = search_all(&state, "npm", 10);
+        assert!(hits.iter().any(|h| h.name == "npm-cache" && h.path.ends_with("AppData\\Local\\npm-cache") && h.kind == "dir" && h.drive == "C:"), "{hits:?}");
+        assert!(search_all(&state, "npm disque:D", 10).is_empty(), "filtre de disque");
+        assert!(!search_all(&state, "npm disque:C", 10).is_empty());
+        // L'index est gardé avec l'analyse (et compté dans sa mémoire).
+        let inner = state.0.lock().unwrap();
+        assert!(inner.results[&1].index.get().is_some());
+    }
+}
+
+#[cfg(test)]
 mod cache_tests {
     use super::*;
 
     fn entry(target: ScanTarget) -> Arc<Entry> {
         let root = scan::RawEntry { name: "C:".into(), kind: Kind::Dir, attributes: 0, file_id: 5, logical: 0, allocated: 0, modified: 0, accessed: 0 };
         let scan = scan::model::Builder::new(&root).finish("C:\\".into(), 1, scan::Method::Walk, false, scan::Stats::default());
-        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false })
+        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false, index: Default::default() })
     }
 
     /// Analyse d'environ `mib` Mio (nœuds réservés, jamais remplis).
@@ -825,7 +937,7 @@ mod cache_tests {
         let root = scan::RawEntry { name: "C:".into(), kind: Kind::Dir, attributes: 0, file_id: 5, logical: 0, allocated: 0, modified: 0, accessed: 0 };
         let mut scan = scan::model::Builder::new(&root).finish("C:\\".into(), 1, scan::Method::Walk, false, scan::Stats::default());
         scan.nodes.reserve_exact(mib * 1024 * 1024 / std::mem::size_of::<scan::model::Node>());
-        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false })
+        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false, index: Default::default() })
     }
 
     #[test]

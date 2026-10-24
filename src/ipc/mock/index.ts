@@ -4,6 +4,7 @@ import { targetKey, type Backend } from "../backend";
 import type { Locale } from "../../core/format";
 import { GIB } from "../../core/format";
 import { fuzzyFilter } from "../../core/fuzzy";
+import { matchesFilters, parseQuery } from "../../core/searchQuery";
 import type {
   CleanEvent,
   CleanPlan,
@@ -725,21 +726,37 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     search(query, limit) {
+      const q = parseQuery(query);
       const hits: SearchHit[] = [];
-      for (const tree of Object.values(TREES)) {
+      for (const [key, tree] of Object.entries(TREES)) {
+        const drive = key === "D:" ? "D:" : "C:";
+        const scanId = [...finished].reverse().find((id) => scanVolume(id) === drive) ?? 0;
         for (const [id, n] of tree.nodes) {
           if (!n.tile) continue;
-          hits.push({
+          const hit: SearchHit = {
+            scanId,
             id,
             name: l(n.tile.name),
             path: tree.base + l(n.tile.path),
             size: gb(n.tile.size),
             modified: resolveWhen(n.tile.last, now()),
             kind: n.tile.files > 1 ? "dir" : "file",
-          });
+            drive,
+            target: drive === "C:" ? "userProfile" : drive,
+          };
+          if (matchesFilters(q, hit)) hits.push(hit);
         }
       }
-      return resolved(fuzzyFilter(hits, query, (h) => `${h.name} ${h.path}`, limit));
+      const words = q.words.join(" ");
+      const out = words ? fuzzyFilter(hits, words, (h) => h.name, limit) : [...hits].sort((a, b) => b.size - a.size).slice(0, limit);
+      return resolved(out);
+    },
+
+    openItem(_scanId, id, action) {
+      // Comme safety::open : un programme n'est jamais lancé, il est montré dans l'Explorateur.
+      const name = [...Object.values(TREES)].map((t) => t.nodes.get(id)?.tile).find(Boolean);
+      const runnable = name ? /\.(exe|msi|bat|cmd|ps1|lnk|vbs|js)$/i.test(l(name.name)) : false;
+      return resolved(action === "reveal" || runnable ? "reveal" : "open");
     },
 
     settings() {

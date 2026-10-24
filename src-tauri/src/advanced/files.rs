@@ -43,16 +43,16 @@ pub enum FileKind {
 
 impl FileKind {
     pub fn of(name: &str) -> FileKind {
-        let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
-        match ext.as_str() {
-            "mp4" | "mkv" | "mov" | "avi" | "wmv" | "m4v" | "webm" | "flv" | "mpg" | "mpeg" | "ts" | "m2ts" | "mts" => FileKind::Video,
-            "jpg" | "jpeg" | "png" | "gif" | "bmp" | "tif" | "tiff" | "heic" | "raw" | "cr2" | "cr3" | "nef" | "arw" | "dng" | "psd" | "webp" => FileKind::Image,
-            "mp3" | "flac" | "wav" | "aac" | "m4a" | "ogg" | "wma" | "opus" | "aiff" => FileKind::Audio,
-            "zip" | "rar" | "7z" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "zst" | "cab" => FileKind::Archive,
-            "iso" | "img" | "vhd" | "vhdx" | "vmdk" | "vdi" | "qcow2" | "wim" | "esd" | "dmg" => FileKind::Disk,
-            "exe" | "msi" | "msix" | "msixbundle" | "appx" | "appxbundle" => FileKind::Installer,
-            "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "odt" | "ods" | "odp" | "txt" | "csv" | "epub" => FileKind::Document,
-            _ => FileKind::Other,
+        use scan::kinds::FileType;
+        match FileType::of(name) {
+            FileType::Video => FileKind::Video,
+            FileType::Image => FileKind::Image,
+            FileType::Audio => FileKind::Audio,
+            FileType::Archive => FileKind::Archive,
+            FileType::Disk => FileKind::Disk,
+            FileType::Installer => FileKind::Installer,
+            FileType::Document => FileKind::Document,
+            FileType::Other => FileKind::Other,
         }
     }
 

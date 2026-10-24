@@ -171,12 +171,18 @@ export interface RecommendationDetail extends Recommendation {
 }
 
 export interface SearchHit {
+  /** Analyse d'où vient le résultat (une par disque) et nœud dans celle-ci. */
+  scanId: number;
   id: NodeId;
   name: string;
   path: string;
   size: number;
   modified: number;
   kind: "file" | "dir";
+  /** Lettre du disque (`C:`). */
+  drive: string;
+  /** `userProfile` ou la lettre du disque analysé. */
+  target: string;
 }
 
 export type ThemePref = "system" | "light" | "dark";

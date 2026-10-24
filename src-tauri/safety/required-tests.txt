@@ -70,6 +70,7 @@ all exec::tests::verrouille_laisse_et_signale
 all guard::tests::launcher_ou_jeu_ouvert_bloque
 all launch::tests::launchers_de_l_utilisateur_et_applis_du_store
 all launch::tests::liste_fermee_des_launchers
+all open::tests::jamais_un_programme_lance
 all path::tests::chaine_des_parents
 all path::tests::chemins_de_peripherique_refuses
 all path::tests::chemins_longs_espaces_unicode
