@@ -20,6 +20,8 @@ let switchTimer: number | undefined;
 function applyTheme(dark: boolean, animate: boolean): void {
   const root = document.documentElement;
   const next = dark ? "dark" : "light";
+  // theme-boot.js a pu poser le thème avant le premier rendu : l'état suit quand même.
+  useStore.setState({ dark });
   if (root.dataset.theme === next) return;
   if (animate) {
     root.classList.add("theme-switching");
@@ -28,7 +30,6 @@ function applyTheme(dark: boolean, animate: boolean): void {
     switchTimer = window.setTimeout(() => root.classList.remove("theme-switching"), 300);
   }
   root.dataset.theme = next;
-  useStore.setState({ dark });
 }
 
 function applyLocale(settings: Settings): void {

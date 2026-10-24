@@ -42,7 +42,7 @@ export function MovesList() {
               <span className={styles.badge} data-tone={tone(r)}>
                 {r.state === "done" && r.health ? t(`move.health.${r.health}`) : t(`move.state.${r.state}`)}
               </span>
-              {r.state === "done" && (
+              {r.state === "done" && r.health === "ok" && (
                 <Button variant="link" disabled={undoing !== null} onClick={() => void undoMove(r.id)}>
                   {undoing === r.id ? t("move.undoing") : t("move.undo")}
                 </Button>

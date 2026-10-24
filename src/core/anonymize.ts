@@ -53,8 +53,16 @@ function startsWithFolded(path: string, prefix: string): boolean {
   return path.length >= prefix.length && path.slice(0, prefix.length).toUpperCase() === prefix.toUpperCase() && (path.length === prefix.length || path[prefix.length] === "\\");
 }
 
-/** Chemin anonymisé. Accepte les chemins complets, `~\…` (forme affichée) et `%USERPROFILE%\…`. */
+/** Chemin anonymisé. Accepte les chemins complets, `~\…` (forme affichée) et `%USERPROFILE%\…`,
+ * et une liste de chemins séparés par `, ` (une recommandation peut en couvrir plusieurs). */
 export function anonymizePath(path: string, ctx: AnonContext): string {
+  const parts = path.split(", ");
+  // Seulement si chaque morceau est un chemin : un nom de fichier « a, b.pdf » reste un seul chemin.
+  if (parts.length > 1 && parts.every((p) => /^(~(\\|$)|%[A-Z_]+%|[A-Za-z]:\\)/.test(p))) return parts.map((p) => anonymizeOne(p, ctx)).join(", ");
+  return anonymizeOne(path, ctx);
+}
+
+function anonymizeOne(path: string, ctx: AnonContext): string {
   const file = ctx.file ?? false;
   const profile = ctx.profile?.replace(/\\+$/, "") ?? null;
   let rest: string[] | null = null;

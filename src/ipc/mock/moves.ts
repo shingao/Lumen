@@ -66,10 +66,8 @@ export function createMoves(find: (id: NodeId) => MockNode | null): MovesBackend
     moveCheck(_scanId, nodeId, drive) {
       const n = find(nodeId);
       if (!n) return Promise.reject(new Error("élément inconnu dans cette analyse"));
-      const drives = [
-        { letter: "D:", label: "Données", free: 412 * GB },
-        { letter: "E:", label: "Archives", free: 0.4 * GB },
-      ];
+      // Comme les volumes de la maquette : D: est le seul autre disque fixe NTFS.
+      const drives = [{ letter: "D:", label: "Données", free: 44 * GB }];
       const chosen = drive ?? "D:";
       const free = drives.find((d) => d.letter === chosen)?.free ?? 0;
       const needed = Math.ceil(n.size * 1.1);
