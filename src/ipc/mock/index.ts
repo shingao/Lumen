@@ -225,8 +225,13 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       lastAccessReliable: false,
       notice: null,
       volume: scanVolume(scanId),
+      finishedAt: restoredAt.get(scanId) ?? finishedAt.get(scanId) ?? Date.now(),
+      restored: restoredAt.has(scanId),
     };
   };
+  /** Analyses « enregistrées » (coffre factice : `localStorage` `lumen-dev-restored` = `1`). */
+  const restoredAt = new Map<number, number>();
+  const finishedAt = new Map<number, number>();
 
   function toReco(r: MockReco): Recommendation {
     const tree = TREES["C:"] as VolumeTree;
@@ -323,7 +328,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       });
       setTimeout(() => {
         finished.add(id);
-        emit({ type: "done", summary: total });
+        finishedAt.set(id, Date.now());
+        emit({ type: "done", summary: { ...total, finishedAt: Date.now() } });
       }, 400);
       return resolved(id);
     },
@@ -333,6 +339,21 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       const ids = [...finished].filter((id) => scans.get(id) === key);
       const last = ids.length > 0 ? Math.max(...ids) : null;
       return resolved(last === null ? null : summaryOf(last));
+    },
+
+    restoreScans() {
+      let on: boolean;
+      try {
+        on = globalThis.localStorage.getItem("lumen-dev-restored") === "1";
+      } catch {
+        on = false;
+      }
+      if (!on || restoredAt.size > 0) return resolved([...restoredAt.keys()].map(summaryOf));
+      const id = ++nextScan;
+      scans.set(id, "user");
+      finished.add(id);
+      restoredAt.set(id, now() - 3 * 3_600_000);
+      return resolved([summaryOf(id)]);
     },
 
     scanCacheInfo() {

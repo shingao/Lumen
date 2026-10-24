@@ -116,6 +116,10 @@ export interface ScanSummary {
   lastAccessReliable: boolean;
   volume: string;
   notice: ScanNotice | null;
+  /** Fin de l'analyse (ms) : « analysé il y a… ». */
+  finishedAt: number;
+  /** Relue depuis la base au démarrage (analyse d'un lancement précédent). */
+  restored: boolean;
 }
 
 export type ScanEvent =
@@ -590,6 +594,9 @@ export interface DatabaseInfo {
   bytes: number;
   snapshots: number;
   series: number;
+  /** Analyses enregistrées (une par cible) et leur taille compressée. */
+  savedScans: number;
+  savedBytes: number;
 }
 
 // --- Jeux et Dev (jalon 8) ------------------------------------------------------------------

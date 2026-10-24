@@ -13,6 +13,7 @@ mod dev;
 mod error;
 mod games;
 mod journal;
+mod persist;
 mod scanning;
 mod timeline;
 
@@ -50,6 +51,7 @@ pub fn run() {
             scanning::scan_tree,
             scanning::scan_find,
             scanning::scan_cached,
+            scanning::scan_restore,
             scanning::scan_cache_info,
             scanning::recommendations,
             scanning::recommendation_detail,

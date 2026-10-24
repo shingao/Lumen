@@ -54,6 +54,7 @@ function DatabaseRow() {
         size: formatBytes(info.bytes, t.locale),
         snapshots: t.plural("timeline.snapshots", info.snapshots, { n: formatCount(info.snapshots, t.locale) }),
         series: t.plural("settings.database.series", info.series, { n: info.series }),
+        saved: t.plural("settings.database.saved", info.savedScans, { n: info.savedScans, size: formatBytes(info.savedBytes, t.locale) }),
       })
     : "";
   return (
@@ -74,7 +75,7 @@ function DatabaseRow() {
             </Button>
           </span>
         ) : (
-          <Button variant="link" disabled={!info || info.snapshots === 0} onClick={() => setConfirming(true)}>
+          <Button variant="link" disabled={!info || (info.snapshots === 0 && info.savedScans === 0)} onClick={() => setConfirming(true)}>
             {t("settings.databasePurge")}
           </Button>
         )}

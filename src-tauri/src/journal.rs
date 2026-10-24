@@ -15,7 +15,7 @@ use safety::plan::{CommandRole, DeleteMode};
 
 use crate::advanced::duplicates::{CacheEntry, CacheKey};
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 /// Empreinte de doublon oubliée si elle n'a pas servi depuis (ms).
 const HASH_CACHE_TTL_MS: i64 = 180 * 86_400 * 1000;
 
@@ -122,8 +122,38 @@ CREATE INDEX IF NOT EXISTS snapshot_sizes_by_path ON snapshot_sizes(path_id);
 ALTER TABLE actions ADD COLUMN volume_key TEXT;
 ";
 
+/// v5 (jalon 9) : dernière analyse de chaque cible, compressée (ouverture instantanée,
+/// recherche), et journal des déplacements intelligents (jonctions suivies).
+const SCHEMA_V5: &str = "
+CREATE TABLE IF NOT EXISTS saved_scans (
+  target TEXT PRIMARY KEY,
+  volume_key TEXT,
+  root TEXT NOT NULL,
+  method TEXT NOT NULL CHECK (method IN ('walk', 'mft')),
+  finished_at INTEGER NOT NULL,
+  raw_bytes INTEGER NOT NULL,
+  data BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS moves (
+  id INTEGER PRIMARY KEY,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  source TEXT NOT NULL,
+  target TEXT NOT NULL,
+  source_volume_key TEXT,
+  target_volume_key TEXT,
+  bytes INTEGER NOT NULL,
+  files INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('running', 'done', 'rolledBack', 'failed', 'undone')),
+  step TEXT,
+  message TEXT,
+  undone_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS moves_by_state ON moves(state);
+";
+
 /// Migrations, dans l'ordre : (version atteinte, SQL). La base vide est d'abord créée en v1.
-const MIGRATIONS: [(i64, &str); 3] = [(2, SCHEMA_V2), (3, SCHEMA_V3), (4, SCHEMA_V4)];
+const MIGRATIONS: [(i64, &str); 4] = [(2, SCHEMA_V2), (3, SCHEMA_V3), (4, SCHEMA_V4), (5, SCHEMA_V5)];
 
 /// Fin d'un fichier de sortie (journal de DISM) pour l'affichage : 64 Kio au plus, 80 lignes.
 pub fn log_tail(path: &str) -> Option<String> {
@@ -853,7 +883,7 @@ mod v4_tests {
         assert_eq!(version(j.conn()), SCHEMA_VERSION.to_string());
         assert_eq!(
             tables(j.conn()),
-            ["action_commands", "action_items", "actions", "hash_cache", "meta", "snapshot_paths", "snapshot_sizes", "snapshots", "volumes"]
+            ["action_commands", "action_items", "actions", "hash_cache", "meta", "moves", "saved_scans", "snapshot_paths", "snapshot_sizes", "snapshots", "volumes"]
         );
         // Les colonnes ajoutées par les migrations sont là.
         j.conn().execute("UPDATE actions SET volume_key = NULL, without_restore_point = 0, kind = 'recos', aborted = NULL", []).unwrap();
@@ -885,7 +915,7 @@ mod v4_tests {
             assert!(!tables(&conn).contains(&"snapshots".to_owned()));
         }
         let j = Journal::open(&path).unwrap();
-        assert_eq!(version(j.conn()), "4");
+        assert_eq!(version(j.conn()), SCHEMA_VERSION.to_string());
         let a = j.actions(10).unwrap();
         assert_eq!((a.len(), a[0].title.as_str(), a[0].kind.as_str()), (1, "Jalon 6", "duplicates"));
         let key: Option<String> = j.conn().query_row("SELECT volume_key FROM actions", [], |r| r.get(0)).unwrap();
@@ -893,8 +923,43 @@ mod v4_tests {
         assert_eq!(j.hash_cache(1).unwrap().len(), 1);
         assert!(tables(j.conn()).contains(&"snapshots".to_owned()));
         drop(j);
-        // Réouverture : déjà en v4, aucune migration rejouée (un ALTER rejoué échouerait).
+        // Réouverture : déjà à jour, aucune migration rejouée (un ALTER rejoué échouerait).
         let j = Journal::open(&path).unwrap();
-        assert_eq!(version(j.conn()), "4");
+        assert_eq!(version(j.conn()), SCHEMA_VERSION.to_string());
+    }
+
+    #[test]
+    fn v5_depuis_la_version_precedente() {
+        let dir = std::env::temp_dir().join(format!("lumen-journal-v5-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v4.db");
+        let _ = std::fs::File::create(&path);
+        {
+            // Base du jalon 7-8 (v4) avec un nettoyage et un snapshot.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')", []).unwrap();
+            for sql in [SCHEMA_V2, SCHEMA_V3, SCHEMA_V4] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'", []).unwrap();
+            conn.execute(
+                "INSERT INTO actions (started_at, finished_at, title, method, plan_hash, status, bytes_planned, bytes_freed,
+                   items_done, items_partial, items_skipped, items_refused, items_failed, items_cancelled, script, kind, without_restore_point, volume_key)
+                 VALUES (1, 2, 'Jalon 8', 'trash', 'ab', 'ok', 10, 10, 1, 0, 0, 0, 0, 0, '', 'artifacts', 0, 'guid:C')",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO volumes (key, serial, fs, label, letter, seen_at) VALUES ('guid:C', 1, 'NTFS', 'Système', 'C:', 1)", []).unwrap();
+            assert!(!tables(&conn).contains(&"saved_scans".to_owned()));
+        }
+        let j = Journal::open(&path).unwrap();
+        assert_eq!(version(j.conn()), "5");
+        assert_eq!(j.actions(10).unwrap()[0].title, "Jalon 8");
+        let tables = tables(j.conn());
+        assert!(tables.contains(&"saved_scans".to_owned()) && tables.contains(&"moves".to_owned()));
+        drop(j);
+        let j = Journal::open(&path).unwrap();
+        assert_eq!(version(j.conn()), "5");
     }
 }

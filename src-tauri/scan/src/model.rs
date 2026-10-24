@@ -48,8 +48,8 @@ pub struct Node {
     pub parent: NodeId,
     pub first_child: NodeId,
     pub child_count: u32,
-    name_off: u32,
-    name_len: u16,
+    pub(crate) name_off: u32,
+    pub(crate) name_len: u16,
     pub kind: Kind,
     pub flags: u8,
     pub attributes: u32,
@@ -107,8 +107,8 @@ pub struct Scan {
     pub method: Method,
     pub last_access_reliable: bool,
     pub nodes: Vec<Node>,
-    names: String,
-    id_high: HashMap<NodeId, u64>,
+    pub(crate) names: String,
+    pub(crate) id_high: HashMap<NodeId, u64>,
     pub stats: Stats,
 }
 

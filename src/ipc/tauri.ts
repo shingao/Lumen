@@ -252,6 +252,7 @@ export function createTauriBackend(): Backend {
 
     findNode: (scanId, path) => invoke<number | null>("scan_find", { scanId, path }),
     cachedScan: (target) => invoke<ScanSummary | null>("scan_cached", { target }),
+    restoreScans: () => invoke<ScanSummary[]>("scan_restore"),
     scanCacheInfo: () => invoke<ScanCacheInfo>("scan_cache_info"),
     async kpis(target, summary) {
       const list = volumes.length > 0 ? volumes : await loadVolumes();

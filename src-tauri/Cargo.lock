@@ -1867,6 +1867,7 @@ name = "lumen"
 version = "0.1.0"
 dependencies = [
  "launchers",
+ "lz4_flex",
  "rules",
  "rusqlite",
  "safety",
@@ -1878,6 +1879,12 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "lz4_flex"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
 
 [[package]]
 name = "markup5ever"

@@ -9,6 +9,7 @@
 //!   (droits administrateur), volumes, élévation.
 
 pub mod classify;
+pub mod codec;
 pub mod model;
 pub mod walk;
 

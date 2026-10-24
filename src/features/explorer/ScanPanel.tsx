@@ -1,9 +1,9 @@
 import { useMemo } from "react";
-import { cancelScan } from "../../app/scanning";
+import { cancelScan, startScan } from "../../app/scanning";
 import { useStore } from "../../app/store";
 import { Button } from "../../components/Button";
 import pop from "../../components/Popover.module.css";
-import { formatBytes, formatCount } from "../../core/format";
+import { formatBytes, formatCount, formatRelative } from "../../core/format";
 import { type MessageKey, useT } from "../../i18n";
 import type { TopProgress, TreeNode } from "../../ipc/types";
 import { Treemap } from "./Treemap";
@@ -97,11 +97,20 @@ export function ScanStats() {
     summary.links > 0 ? t.plural("scan.links", summary.links, { n: n(summary.links) }) : null,
     errors > 0 ? t.plural("scan.errors", errors, { n: n(errors) }) : null,
     t(summary.method === "mft" ? "scan.method.mft" : "scan.method.walk", { s: seconds(summary.elapsedMs, t.locale) }),
+    t("scan.analysedAgo", { when: formatRelative(summary.finishedAt, t.locale) }),
   ].filter(Boolean);
   return (
     <>
       <p className={styles.stats}>{parts.join(" · ")}</p>
       {summary.notice && <p className={styles.notice}>{t(`scan.notice.${summary.notice}`)}</p>}
+      {summary.restored && (
+        <p className={styles.notice}>
+          {t("scan.restored")}{" "}
+          <Button variant="link" onClick={() => void startScan(useStore.getState().target)}>
+            {t("scan.rescan")}
+          </Button>
+        </p>
+      )}
     </>
   );
 }

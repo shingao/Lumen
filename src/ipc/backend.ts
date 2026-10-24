@@ -56,6 +56,8 @@ export interface Backend {
   findNode(scanId: number, path: string): Promise<NodeId | null>;
   /** Dernière analyse d'une cible gardée pendant la session (retour instantané), ou null. */
   cachedScan(target: ScanTarget): Promise<ScanSummary | null>;
+  /** Analyses enregistrées au lancement précédent, remises en mémoire (une par cible). */
+  restoreScans(): Promise<ScanSummary[]>;
   /** Mémoire des analyses gardées pendant la session (Paramètres). */
   scanCacheInfo(): Promise<ScanCacheInfo>;
   kpis(target: ScanTarget, summary: ScanSummary | null): Promise<Kpis>;
