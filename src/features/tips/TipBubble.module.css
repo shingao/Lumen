@@ -1,0 +1,70 @@
+/* Astuce contextuelle : surface des infobulles de la treemap, sous l'onglet de l'écran. */
+.anchor {
+  position: relative;
+}
+
+.bubble {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 10px);
+  width: 300px;
+  padding: 11px 12px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  animation: show var(--dur-tile) var(--ease) backwards;
+}
+
+/* Pointe vers l'onglet. */
+.bubble::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: var(--tip-arrow);
+  width: 8px;
+  height: 8px;
+  background: var(--bg-container);
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+.text {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-1);
+}
+
+.label {
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--text-label);
+}
+
+.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--r-ghost);
+  background: transparent;
+  color: var(--text-3);
+}
+
+.close:hover {
+  background: var(--bg-sunken);
+}
+
+@keyframes show {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}

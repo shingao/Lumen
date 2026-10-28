@@ -53,6 +53,8 @@ export const DEFAULT_SETTINGS: Settings = {
   experimentalSystem: false,
   experimentalWsl: false,
   experimentalMove: false,
+  onboardingDone: false,
+  tipsSeen: [],
 };
 
 const gb = (n: number) => Math.round(n * GIB);

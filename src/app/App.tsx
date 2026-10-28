@@ -14,6 +14,9 @@ import { GamesScreen } from "../features/games/GamesScreen";
 import { TimelineScreen } from "../features/timeline/TimelineScreen";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { TitleBar } from "../features/titlebar/TitleBar";
+import { Onboarding } from "../features/onboarding/Onboarding";
+import { TipAnchor } from "../features/tips/TipBubble";
+import { useOnboarding } from "./onboarding";
 import { screenLabel } from "./commands";
 import { backend } from "../ipc/client";
 import { goBack, goForward } from "./navigation";
@@ -42,6 +45,7 @@ export function App() {
   const settingsOpen = useStore((s) => s.settingsOpen);
   const paletteOpen = useStore((s) => s.paletteOpen);
   const go = useStore((s) => s.go);
+  const onboarding = useOnboarding((s) => s.open);
 
   useEffect(() => {
     // Précédent / suivant : seulement sur l'écran Analyse, sans fenêtre ouverte par-dessus.
@@ -59,6 +63,8 @@ export function App() {
       if (navigate(navigationButton(e))) e.preventDefault();
     };
     const onKey = (e: KeyboardEvent) => {
+      // Tutoriel ouvert : il gère seul son clavier (flèches, Échap, Tab).
+      if (useOnboarding.getState().open) return;
       const s = useStore.getState();
       if (navigate(navigationKey(e))) {
         e.preventDefault();
@@ -101,14 +107,20 @@ export function App() {
     <div className={styles.app}>
       <TitleBar />
       <div className={styles.scroll}>
-        <main className={styles.main}>
-          {!settingsOpen && (
-            <div className={styles.nav}>
-              <Segmented as="nav" label={t("nav.label")} options={navOptions} value={screen} onChange={go} />
-            </div>
-          )}
-          {settingsOpen ? <SettingsScreen /> : <View />}
-        </main>
+        {onboarding ? (
+          <Onboarding />
+        ) : (
+          <main className={styles.main}>
+            {!settingsOpen && (
+              <div className={styles.nav}>
+                <TipAnchor>
+                  <Segmented as="nav" label={t("nav.label")} options={navOptions} value={screen} onChange={go} />
+                </TipAnchor>
+              </div>
+            )}
+            {settingsOpen ? <SettingsScreen /> : <View />}
+          </main>
+        )}
       </div>
       {paletteOpen && <Palette />}
       <CleanDialog />

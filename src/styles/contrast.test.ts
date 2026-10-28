@@ -69,6 +69,14 @@ describe.each(Object.entries(themes))("contraste AA, thème %s", (_name, tokens)
     }
   });
 
+  it("tutoriel : noms et tailles sur les tuiles mises au second plan (voile de 60 %)", () => {
+    // Onboarding.module.css : `.tile::after` (--bg-container à 60 %) sous le texte.
+    for (const bg of [...CATS, "--st-keep"]) {
+      const dimmed = over({ ...container, a: 0.6 }, solid(bg));
+      for (const fg of ["--text-1", "--text-2"]) check(fg, dimmed, `${bg} au second plan`);
+    }
+  });
+
   it("textes de l'interface sur les surfaces", () => {
     for (const bg of ["--bg-container", "--bg-app"]) {
       for (const fg of ["--text-1", "--text-2", "--text-3", "--text-4", "--text-label", "--delta-safe", "--delta-review"]) {

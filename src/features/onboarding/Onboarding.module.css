@@ -1,0 +1,214 @@
+/* Tutoriel de bienvenue : fond de l'appli, un conteneur centré, une mini-treemap, une phrase. */
+.screen {
+  flex: 1 1 auto;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 28px;
+  background: var(--bg-app);
+}
+
+.card {
+  width: min(600px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px 24px 20px;
+  background: var(--bg-container);
+  border: 1px solid var(--border);
+  border-radius: var(--r-container);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+/* Mini-treemap : mêmes tuiles que l'Explorer (rayon 6, espacement 3 px). */
+.map {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 1;
+}
+
+.tile {
+  position: absolute;
+  overflow: hidden;
+  border-radius: var(--r-tile);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: var(--fs-11);
+  color: var(--text-1);
+  animation: grow var(--dur-onboard) var(--ease) backwards;
+  transition:
+    opacity var(--dur-onboard) var(--ease),
+    filter var(--dur-onboard) var(--ease);
+}
+
+.tile span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.size {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+/* Hachures des tuiles sans risque : elles apparaissent à partir du 2e écran. */
+.hatch {
+  position: absolute;
+  inset: 0;
+  background: var(--hatch);
+  opacity: 0;
+  transition: opacity var(--dur-onboard) var(--ease);
+  pointer-events: none;
+}
+
+.map[data-step="1"] .hatch,
+.map[data-step="2"] .hatch,
+.map[data-step="3"] .hatch {
+  opacity: 1;
+}
+
+/* À partir du 2e écran, ce qui n'est pas sans risque passe au second plan : un voile sur la
+   couleur, sous le texte (qui garde son contraste). */
+.tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bg-container);
+  opacity: 0;
+  transition: opacity var(--dur-onboard) var(--ease);
+  pointer-events: none;
+}
+
+.map:not([data-step="0"]) .tile:not([data-safe])::after {
+  opacity: 0.6;
+}
+
+.tile > span {
+  position: relative;
+  z-index: 1;
+}
+
+.check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  background: var(--bg-container);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity var(--dur-onboard) var(--ease),
+    transform var(--dur-onboard) var(--ease);
+}
+
+.map[data-step="2"] .check,
+.map[data-step="3"] .check {
+  opacity: 1;
+  transform: none;
+}
+
+/* 4e écran : ce qui part va à la Corbeille, en pointillés. */
+.map[data-step="3"] .tile[data-safe] {
+  outline: 1px dashed var(--text-3);
+  outline-offset: -1px;
+}
+
+.chip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background-color: var(--st-safe);
+  background-image: var(--hatch);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+
+.chip[data-hidden] {
+  visibility: hidden;
+}
+
+.chip b {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-medium);
+}
+
+.phrase {
+  min-height: 2.9em;
+  font-size: var(--fs-18);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-title);
+  line-height: 1.35;
+  color: var(--text-1);
+}
+
+.status {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-label);
+}
+
+.bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--border);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.dot[data-on] {
+  background: var(--text-1);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+@keyframes grow {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}

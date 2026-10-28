@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
+import { openOnboarding, resetTips } from "../../app/onboarding";
 import { useStore } from "../../app/store";
 import { updateSettings } from "../../app/theme";
 import { dailyTick } from "../../app/timeline";
@@ -253,8 +254,13 @@ export function SettingsScreen() {
 
           <Group title={t("settings.help")}>
             <Row label={t("settings.tutorial")} hint={t("settings.tutorialHint")}>
-              <Button variant="link" onClick={later(10)}>
+              <Button variant="link" onClick={openOnboarding}>
                 {t("settings.tutorialRun")}
+              </Button>
+            </Row>
+            <Row label={t("settings.tips")} hint={t("settings.tipsHint")}>
+              <Button variant="link" onClick={() => void resetTips()}>
+                {t("settings.tipsReset")}
               </Button>
             </Row>
             <Row label={t("settings.logs")} hint={settings.logsFolder} mono>

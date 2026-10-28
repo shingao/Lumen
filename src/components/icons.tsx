@@ -164,3 +164,11 @@ export function ExpandIcon() {
     </Svg>
   );
 }
+
+export function CheckIcon({ size = 10 }: { size?: number }) {
+  return (
+    <Svg size={size} viewBox="0 0 10 10">
+      <path d="M1.5 5.2 4 7.6 8.6 2.6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}

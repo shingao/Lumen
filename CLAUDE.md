@@ -35,6 +35,7 @@ Tout nouvel écran prolonge exactement la DA de la maquette : mêmes conteneurs,
 - Recherche (Ctrl K) : `scan/src/search.rs` (index des **noms seulement**, flou, filtres `ext:` `>1go` `type:` `disque:`), miroir front `src/core/searchQuery.ts`, IPC `scan_search` / `item_open` (`safety::open` : un programme n'est jamais lancé, il est montré). Banc `bench -- search 1000000` (< 50 ms) dans le job `bench`.
 - Déplacement intelligent : logique `safety/src/relocate.rs` (traits `MoveProbe` / `MoveEffects`, refus, plan + empreinte, étapes avec retour en arrière, `finish` après confirmation explicite, `undo`, `recover`, `health`) ; Win32 `safety/src/win/relocate.rs` (`WinMover`) ; IPC et journal `moves` : `src-tauri/src/moves.rs` ; front `src/app/moves.ts`, `src/features/move/`. Cible toujours calculée par `safety` (`<X>:\Lumen\Déplacés\<lettre>\…`), le front n'envoie qu'un id de nœud et une lettre.
 - Export de rapport : `src/core/report.ts` (HTML autonome : tokens, polices en data URL, aucun script ni ressource externe ; CSV sans formule), `src/core/anonymize.ts` (**anonymisation cochée par défaut**), `src/app/report.ts` ; écriture par `src-tauri/src/report.rs` dans Téléchargements, nom neuf, jamais d'écrasement.
+- Tutoriel et astuces (jalon 10) : `src/app/onboarding.ts` (4 écrans, `settings.onboardingDone`, astuces `settings.tipsSeen` mémorisées dès l'affichage, `resetTips`) ; `src/features/onboarding/` (affiché à la place de l'écran, mini-treemap d'exemple, clavier, Échap, focus gardé ; la première analyse tourne pendant ce temps) ; `src/features/tips/TipBubble.tsx` (bulle sous l'onglet de l'écran). Toute animation garde son état final sans `prefers-reduced-motion`. Les captures marquent tutoriel et astuces comme vus (`welcomed` de `scripts/captures.mjs`), sauf `fresh`.
 - Architecture par plateforme : code Windows derrière des traits (`Probe`, `Effects`, `MoveProbe`/`MoveEffects`, `scan::Source`, `launchers::Registry`) ou un module `platform` par domaine ; les endroits qui mélangent encore Win32 et logique commune sont listés dans `PROGRESS.md` (jalon 9) — tout nouveau code Windows suit ce modèle.
 
 ## Tokens (résumé — détail dans `src/styles/tokens.css`)
@@ -99,7 +100,7 @@ docs/PLAN.md       architecture validée
 src/
   app/             App, store (zustand), thème/langue, raccourcis, commandes palette, accès données
   components/      Segmented, Button, Toggle, Menu, Toast, StatusDot, icônes, style des popovers
-  features/        titlebar, kpi, explorer (treemap, légende), recommendations, detail, cleanup (confirmation, progression, bilan), advanced, timeline, games, dev, journal, screens, settings, palette
+  features/        titlebar, kpi, explorer (treemap, légende), recommendations, detail, cleanup (confirmation, progression, bilan), advanced, timeline, games, dev, journal, screens, settings, palette, move, export, onboarding, tips
   core/            logique pure testée : format, squarify, fuzzy, contrast
   ipc/             backend.ts (contrat), client.ts + tauri.ts (seuls contacts Tauri), mock/ (données de la maquette, analyse simulée), types.ts
   i18n/            fr.ts, en.ts

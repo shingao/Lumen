@@ -209,6 +209,10 @@ export interface Settings {
   experimentalWsl: boolean;
   /** Déplacement intelligent (jalon 9), désactivé tant qu'il n'est pas vérifié en VM avec un second disque. */
   experimentalMove: boolean;
+  /** Tutoriel de bienvenue (jalon 10) terminé ou passé. */
+  onboardingDone: boolean;
+  /** Écrans dont l'astuce contextuelle a déjà été montrée (une seule fois chacun). */
+  tipsSeen: string[];
 }
 
 // --- Nettoyage (jalon 5) -------------------------------------------------------------------
