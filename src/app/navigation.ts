@@ -7,7 +7,7 @@
 import { create } from "zustand";
 import { backend } from "../ipc/client";
 import type { NodeId, ScanTarget } from "../ipc/types";
-import { showCachedScan, startScan } from "./scanning";
+import { cancelScan, showCachedScan, startScan } from "./scanning";
 import { useStore } from "./store";
 
 export interface Place {
@@ -130,6 +130,67 @@ export async function openPath(target: ScanTarget, path: string): Promise<boolea
   }
   goToTarget(target);
   useNav.setState({ pending: path });
+  return true;
+}
+
+/** Attend la fin d'une analyse en cours (annulée), au plus `ms`. */
+function idle(ms: number): Promise<void> {
+  return new Promise((done) => {
+    if (useStore.getState().scan.status !== "running") return done();
+    const timer = setTimeout(() => {
+      off();
+      done();
+    }, ms);
+    const off = useStore.subscribe((s) => {
+      if (s.scan.status === "running") return;
+      clearTimeout(timer);
+      off();
+      done();
+    });
+  });
+}
+
+/** « Analyser avec Lumen » (Explorateur) ou une notification : l'Explorer sur ce dossier, dans
+ * l'analyse de son disque — affichée, gardée de la session ou enregistrée, sinon nouvelle.
+ * `path` vient de Rust (canonisé, lecteur connu) ; il ne sert qu'à retrouver le nœud. Renvoie
+ * faux si le dossier n'est pas dans l'analyse affichée. */
+export async function openFolder(letter: string, path: string): Promise<boolean> {
+  const s = useStore.getState();
+  s.setSettingsOpen(false);
+  s.go("analyse");
+  const target: ScanTarget = { kind: "volume", letter };
+  const folder = path.replace(/\\+$/, "").length > 2 ? path : null;
+  if (sameTarget(s.target, target) && s.scan.status !== "failed") {
+    if (s.scan.status === "running") {
+      useNav.setState({ pending: folder });
+      return true;
+    }
+    const scanId = s.scan.summary?.scanId ?? null;
+    if (folder === null) {
+      goTo(null);
+      return true;
+    }
+    const node = await resolve(scanId, folder);
+    if (node === null) return false;
+    goTo(node);
+    return true;
+  }
+  // Une autre analyse tourne (celle du démarrage) : celle demandée passe avant.
+  if (s.scan.status === "running") {
+    cancelScan();
+    await idle(5_000);
+  }
+  const { here, back } = useNav.getState();
+  useNav.setState({ back: here ? push(back, here) : back, forward: [], pending: null });
+  const cached = await showCachedScan(target);
+  if (cached !== null) {
+    if (folder === null) return true;
+    const node = await resolve(cached, folder);
+    if (node !== null) useStore.getState().zoom(node);
+    return node !== null;
+  }
+  useNav.setState({ pending: folder });
+  await startScan(target);
   return true;
 }
 

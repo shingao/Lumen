@@ -53,6 +53,8 @@ pub struct AppInfo {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VolumeDto {
+    /// Identité stable (GUID, à défaut numéro de série) : jamais la lettre, qui peut changer.
+    pub key: String,
     pub letter: String,
     pub label: String,
     pub file_system: String,
@@ -392,6 +394,7 @@ pub(crate) mod platform {
         scan::win::volumes()
             .into_iter()
             .map(|v| VolumeDto {
+                key: crate::timeline::store::VolumeIdentity::new(v.guid.as_deref(), v.serial, &v.file_system, &v.label, &format!("{}:", v.letter)).key,
                 letter: format!("{}:", v.letter),
                 mft_capable: v.mft_capable(),
                 label: v.label,

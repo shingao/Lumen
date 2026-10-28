@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.9.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +13,8 @@
     "check": "npm run typecheck && npm run lint && npm run test",
     "captures": "node scripts/captures.mjs",
     "icon": "node scripts/make-icon.mjs && tauri icon design/app-icon-1024.png -o src-tauri/icons",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "notices": "node scripts/notices.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

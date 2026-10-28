@@ -13,8 +13,100 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 7 | Snapshots et Timeline | **fait — validé** (testé sur PC ; PR #5) |
 | 8 | Dev et Jeux | **fait — validé en lecture seule** (jeux et projets détectés sur PC ; PR #6) ; purge des artefacts, shaders, Docker **non vérifiés en réel** (Sandbox), compactage WSL **non vérifié en réel** (VM) et désactivé par défaut |
 | 9 | Persistance des analyses, recherche instantanée, déplacement intelligent, export de rapport | **fait — validé** pour la persistance, la recherche et l'export (testés sur PC, anonymisation vérifiée ; PR #7) ; déplacement intelligent **non vérifié en réel** (VM avec un second disque) et **désactivé par défaut** (réglage Expérimental) |
-| 10 | Onboarding et astuces contextuelles | **fait — en attente de validation** |
-| 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | à faire |
+| 10 | Onboarding et astuces contextuelles | **fait — validé** (testé sur PC : tutoriel, analyse en fond, Passer / Échap / flèches, astuces une seule fois, relance depuis les Paramètres ; tutoriel à la place de l'écran validé ; PR #8) |
+| 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | **fait — en attente de validation** ; builds en **0.9.x** jusqu'aux tests de la checklist de release |
+
+---
+
+## Jalon 11 — intégration Windows et installeur
+
+### Livré
+
+**« Analyser avec Lumen » dans l'Explorateur** (`src-tauri/src/integration/`, `src/app/integration.ts`)
+- Entrée **classique** du menu contextuel sur les **dossiers**, les **lecteurs** et le **fond d'un dossier** : `HKCU\Software\Classes\{Directory, Directory\Background, Drive}\shell\Lumen`, commande `"…\lumen.exe" --lumen-open "%V"`, icône de Lumen. Sous Windows 11, elle est dans « Afficher plus d'options » (accepté pour la v1 ; le menu moderne est décrit plus bas).
+- **Proposée à l'installation (cochée)**, désactivable dans **Paramètres › Windows** : le registre de l'utilisateur est la seule source (lu et écrit par `integration_state` / `integration_set_menu`), l'installeur écrit exactement les mêmes clés. Le libellé suit la langue de l'interface (réécrit au démarrage et quand la langue change).
+- **Le chemin reçu est une entrée comme une autre** (`integration/launch.rs`, tests) : seules deux formes d'arguments sont comprises (`--lumen-open <dossier>`, `--lumen-background`), le reste est ignoré ; le chemin est **canonisé** par `safety::path` (`..`, `\\?\`, `/`, flux, noms réservés, caractères interdits refusés), son lecteur doit être dans la liste des volumes (fixe ou amovible ; **réseau refusé**), et il doit être un dossier. **Il n'est jamais exécuté ni passé à un shell** : il ne fait qu'ouvrir l'Explorer de Lumen sur ce dossier (`openFolder` : l'analyse de son disque affichée, gardée de la session ou enregistrée, sinon une nouvelle ; l'analyse du démarrage lui cède la place). Refus expliqué par un toast (« les partages réseau ne sont pas analysés »…).
+- **Une seule instance** (`tauri-plugin-single-instance`, premier plugin) : un second lancement transmet ses arguments à l'instance ouverte (qui se montre et ouvre le dossier) puis s'arrête.
+
+**Zone de notification et démarrage** — **désactivés par défaut**
+- **Icône** (Paramètres › Arrière-plan) : infobulle « Lumen — 73,8 Go libres sur 476 Go (C:) » (disque principal, relue toutes les 10 min), clic gauche : ouvrir ; menu **Ouvrir Lumen / Analyser C: / Quitter**. Tant qu'elle est active, **fermer la fenêtre la cache** : Lumen continue, **snapshot quotidien compris** ; « Quitter » ferme vraiment.
+- **« Lancer au démarrage de Windows »** : **entrée Run de HKCU** (`Lumen` = `"…\lumen.exe" --lumen-background`), **jamais un service ni une tâche planifiée**. Au démarrage : caché dans la zone de notification si l'icône est active, sinon fenêtre réduite (jamais invisible sans icône : la fenêtre se montre au bout de 20 s si l'interface ne répond pas).
+
+**Notifications d'espace libre** — **désactivées par défaut** (`src/core/alerts.ts`, tests)
+- Quand l'espace libre d'un disque local passe **sous le seuil (10 % par défaut ; 5, 10, 15 ou 20 %)**, notification Windows (toast) « Espace disque faible sur D: — Plus que 44,0 Go libres (5 %). » **Au plus une fois par jour et par disque**, le disque étant retenu par sa **clé stable (GUID)**, jamais par sa lettre (`settings.alertsSent`, jours passés oubliés). **Un clic ouvre l'Analyse du disque concerné.** Vérifié toutes les 10 min tant que Lumen tourne.
+
+**Installeur NSIS** (`src-tauri/installer/installer.nsi` + `hooks.nsh`)
+- **Pour tous les utilisateurs, dans Program Files** (requis par l'assistant MFT, qui refuse un exécutable modifiable sans droits d'administrateur).
+- **Page « Options »** après le choix du dossier : ☑ « Analyser avec Lumen » dans l'Explorateur, ☑ raccourci Bureau, ☐ lancer au démarrage de Windows. Par-dessus une installation, les cases reprennent l'état en place. En silencieux : `/NOMENU`, `/NODESKTOP`, `/AUTOSTART`.
+- **Désinstallation propre** : retire les clés du menu contextuel (seulement celles qui lancent Lumen), l'entrée Run, les raccourcis (menu Démarrer, Bureau) et les fichiers. **Elle demande s'il faut garder les données** : case « Supprimer aussi les données de Lumen (historique, journal, réglages) », **décochée** ; cochée, elle supprime `%LOCALAPPDATA%\Lumen` et les réglages de l'interface — jamais à travers une jonction.
+- **Elle ne touche JAMAIS aux jonctions du déplacement intelligent** ni à leurs cibles : Lumen tient leur liste dans `%LOCALAPPDATA%\Lumen\jonctions.txt` (au démarrage et après chaque déplacement, confirmation ou annulation) ; s'il y en a, la désinstallation **les liste et prévient avant de continuer** (OK / Annuler, Annuler par défaut) et **garde les données de Lumen**, dont le journal sert à annuler ces déplacements.
+- **Mise à jour par-dessus** : fichiers remplacés, réglages (WebView2), base SQLite et choix d'intégration gardés ; les migrations SQLite passent au lancement suivant (chacune testée depuis une base vide et depuis la version précédente, `journal.rs`).
+- **Signature : placeholder documenté** (`docs/SIGNATURE.md`, `scripts/sign.ps1`) : avec les secrets `LUMEN_SIGN_CERT` / `LUMEN_SIGN_PASSWORD`, Tauri signe `lumen.exe`, le désinstalleur et l'installeur **avant** de les empaqueter ; sans eux, build non signé.
+- **Test réel en CI** (`scripts/ci/installer-test.ps1`, job `build`) : installation silencieuse, clés HKCU, raccourcis, lancement, **instance unique** (second lancement transmis puis arrêté, argument piégé jamais exécuté), **mise à jour par-dessus** (base et réglages gardés), **désinstallation** (tout retiré, **jonction et contenu intacts, données gardées**), puis installation sans options.
+
+**Finitions v1**
+- **Paramètres › À propos** : version (**pas de mise à jour automatique** : l'appli est sans réseau, la version est affichée et c'est tout), licence, lien du dépôt (affiché et copiable, jamais ouvert par Lumen), **licences des composants tiers** : `THIRD_PARTY_NOTICES.txt` **généré** par `npm run notices` (**cargo-about** pour les 227 crates de l'exécutable Windows, sans dépendances de dev ni de compilation ; fichiers de licence des 7 paquets npm embarqués, polices comprises), **embarqué** dans l'interface (chargé à l'ouverture) ; la CI échoue s'il n'est pas à jour.
+- **Journal de plantage local** dans `%LOCALAPPDATA%\Lumen\logs`, **jamais envoyé** : plantage Rust → `crash-<1..5>.log` (version, fil, emplacement, message, pile ; le plus ancien est réécrit, rien n'est supprimé) ; erreurs non rattrapées de l'interface → `interface.log` (remis à zéro au-delà de 256 Kio). Paramètres › Aide › « Ouvrir le dossier ».
+- Réglages Expérimentaux (gouffres système, compactage WSL, déplacement intelligent) **toujours désactivés par défaut**.
+- Version **0.9.0** (`package.json`, `Cargo.toml`, `tauri.conf.json`).
+
+### Décisions
+
+- **Menu contextuel et démarrage dans HKCU, même avec une installation pour tous les utilisateurs** : Lumen peut ainsi les activer et les retirer depuis les Paramètres sans droits d'administrateur, et l'installeur (élevé, le plus souvent sous le même compte) écrit les mêmes clés. La désinstallation retire celles du compte qui désinstalle ; celles d'un autre compte qui les aurait activées restent (inoffensives : la commande ne mène plus à rien) — à noter si plusieurs comptes utilisent Lumen.
+- **Le registre est la seule source** pour le menu et le démarrage (pas de copie dans les réglages) : ce qu'affichent les Paramètres est toujours ce que fait Windows, y compris après l'installeur.
+- **Démarrage indépendant de l'icône** : coché sans icône, Lumen démarre en fenêtre réduite ; avec l'icône, caché dans la zone de notification. Pas de couplage caché entre les deux réglages.
+- **Fenêtre créée invisible**, montrée par Rust au lancement ordinaire (`visible: false`) : un démarrage discret ne fait pas clignoter de fenêtre.
+- **Notifications construites par l'interface** (textes traduits, tailles en base 1024) et **affichées par Rust** (`tauri-winrt-notification`, identifiant `com.lumen.disk`, posé par l'installeur sur le raccourci du menu Démarrer : sans installation, pas de toast). La lettre transmise est revérifiée contre la liste des volumes.
+- **Modèle NSIS de Tauri copié** (`installer.nsi`, tauri-bundler 2.10.3, ajouts marqués « LUMEN ») : une page d'options ne peut pas s'ajouter par les seuls hooks. **À resynchroniser à chaque mise à jour de `@tauri-apps/cli`** (comparer avec `src/bundle/windows/nsis/installer.nsi` de la version de tauri-bundler utilisée). Compilé localement avec makensis 3.09 (0 avertissement).
+- **Raccourci Bureau** déplacé de la page de fin vers la page d'options ; la page de fin garde « Lancer Lumen ».
+- **Données gardées s'il reste des jonctions**, même si la case est cochée : sans le journal, un déplacement ne s'annule plus depuis Lumen.
+- **Licence de Lumen** : aucune n'est déclarée dans le dépôt ; À propos affiche « Tous droits réservés ». **À choisir avant la v1.0** (une ligne dans `AboutGroup.tsx`, `about.licenseValue`).
+- **Liste des jonctions en UTF-16 LE sans BOM** : lue par `FileReadUTF16LE` de NSIS, chemins accentués compris (`Déplacés`).
+
+### Menu contextuel moderne de Windows 11 (documenté, non implémenté)
+
+Le menu compact de Windows 11 n'accepte pas les verbes `shell\…` du registre. Il faudrait :
+1. un **gestionnaire COM `IExplorerCommand`** (DLL native, Rust `windows` ou C++), avec `GetTitle`, `GetIcon`, `GetState` (visible pour un dossier, un lecteur ou un fond de dossier) et `Invoke`, qui lancerait `lumen.exe --lumen-open "<dossier>"` exactement comme aujourd'hui (même validation à l'arrivée) ;
+2. un **package MSIX « sparse »** (identité de package pour une appli non empaquetée) : `AppxManifest.xml` déclarant l'extension `windows.fileExplorerContextMenus` (`desktop4`/`desktop5`, `ItemType` `Directory`, `Directory\Background`, `Drive`) et le `com:SurrogateServer` du gestionnaire ;
+3. ce package **signé** (le même certificat que l'installeur : sans signature, Windows refuse de l'enregistrer), enregistré à l'installation (`Add-AppxPackage -ExternalLocation <Program Files\Lumen>` ou `PackageManager.AddPackageByUriAsync`), retiré à la désinstallation ; l'exécutable porte alors l'identité dans son manifeste (`msix:identity`).
+Coût : une DLL COM, un manifeste, la signature obligatoire et un test sur Windows 11 réel. À reconsidérer quand Lumen sera signé.
+
+### Écarts avec la maquette
+
+- La maquette n'a pas d'écran À propos ni de page d'installeur : le groupe « À propos » reprend exactement les lignes des Paramètres (libellé, phrase grise, contrôle à droite) ; la liste des licences s'ouvre dans la fenêtre modale existante (texte brut mono sur `--bg-sunken`, défilant). Les groupes « Windows » et « Aide » passent dans la colonne de gauche pour équilibrer les deux colonnes.
+- L'icône de la zone de notification est celle de l'appli ; son menu est le menu natif de Windows (pas de style Lumen possible).
+
+### Checklist de release (v1.0)
+
+Tout ce qui est marqué **« non vérifié en réel »**, avec son environnement de test. **La v1.0 n'est étiquetée qu'après ces tests** ; d'ici là, les builds sont en **0.9.x** (non signés).
+
+| # | Fonction (jalon) | Environnement | Ce qu'il faut vérifier |
+|---|---|---|---|
+| 1 | Nettoyage réel des fichiers dormants, doublons, gros fichiers (6) | **Windows Sandbox** | Corbeille, restauration depuis le Journal, un exemplaire de chaque doublon gardé |
+| 2 | Gouffres système : DISM, hibernation, points de restauration, Windows.old (6) — *Expérimental* | **VM Hyper-V** avec checkpoint | une demande UAC par commande, point de restauration avant, le plus ancien gardé s'il en reste moins de 2 |
+| 3 | Purge des artefacts de projets, caches de shaders, `docker image prune` (8) | **Windows Sandbox** | source et `.git` intacts ; rien si Steam tourne ; images étiquetées gardées |
+| 4 | Compactage WSL / Docker (8) — *Expérimental* | **VM** (WSL installé) | `wsl --shutdown`, gain mesuré, `.vhdx` toujours là, distribution qui démarre |
+| 5 | Déplacement intelligent (9) — *Expérimental* | **VM avec un second disque NTFS** | copie vérifiée, jonction, suppression après confirmation, « Annuler le déplacement », reprise après coupure |
+| 6 | Installeur : page Options, mise à jour par-dessus une 0.9.x, désinstallation avec et sans « Supprimer les données » (11) | **Windows Sandbox** | cases appliquées, réglages gardés à la mise à jour, tout retiré à la désinstallation |
+| 7 | Désinstallation avec une jonction du déplacement intelligent (11) | **VM avec un second disque** (après le point 5) | liste affichée, Annuler arrête tout, OK : jonction, cible et données intactes |
+| 8 | Menu contextuel Windows 10 et Windows 11 (« Afficher plus d'options »), dossier / lecteur / fond (11) | **Windows Sandbox** (Windows 11) | Lumen s'ouvre sur le bon dossier, une seule instance ; partage réseau refusé |
+| 9 | Zone de notification, fermeture qui cache, Quitter, démarrage avec Windows (11) | **VM** (redémarrages) | infobulle juste, snapshot quotidien en fond, aucune fenêtre au démarrage avec l'icône |
+| 10 | Notifications d'espace libre et clic (11) | **VM** (petit disque virtuel presque plein) | une seule par jour et par disque, le clic ouvre l'Analyse de ce disque |
+| 11 | Signature Authenticode (11) | **CI + Windows Sandbox** | installeur, désinstalleur et `lumen.exe` signés ; SmartScreen sans « Éditeur inconnu » |
+
+Déjà vérifiés en CI Windows à chaque push (pas besoin de VM pour ceux-là) : suppression réelle sur faux profil (e2e), déplacement C: → D: sur disques virtuels, installation / instance unique / mise à jour / désinstallation silencieuses (`installer-test.ps1`).
+
+### Test manuel (jalon 11) — Windows Sandbox (1 à 7), VM pour 8 et 9
+
+1. Lance l'installeur (`lumen-installer` de la CI) : page **Options** avec trois cases (menu contextuel ☑, Bureau ☑, démarrage ☐) ; installe dans Program Files.
+2. Clic droit sur un dossier (Windows 11 : « Afficher plus d'options ») › **Analyser avec Lumen** : Lumen s'ouvre sur ce dossier, dans l'analyse de son disque. Recommence Lumen ouvert : **la même fenêtre** se montre et change de dossier. Clic droit sur le fond d'un dossier et sur un lecteur dans « Ce PC » : idem.
+3. Paramètres › Windows : décoche « Analyser avec Lumen » → l'entrée disparaît du menu ; recoche → elle revient. Passe l'interface en English : le libellé devient « Analyze with Lumen ».
+4. Paramètres › Arrière-plan : active l'**icône** → infobulle avec l'espace libre de C: ; ferme la fenêtre → Lumen reste dans la zone de notification ; menu › **Analyser C:**, puis **Quitter**.
+5. Active « Lancer au démarrage de Windows », déconnecte-toi et reconnecte-toi : Lumen est dans la zone de notification, sans fenêtre (sans l'icône : fenêtre réduite dans la barre des tâches).
+6. Paramètres › À propos : version 0.9.0, « pas de mise à jour automatique », lien du dépôt copié, **Afficher** les licences (texte complet, défilant). Aide › Journal de plantage › Ouvrir le dossier.
+7. Désinstalle (Paramètres de Windows › Applications) : case « Supprimer aussi les données de Lumen » décochée → `%LOCALAPPDATA%\Lumen` reste ; plus d'entrée de menu contextuel ni de démarrage ni de raccourci. Réinstalle par-dessus une installation en place : les cases reprennent l'état en place, les réglages sont gardés.
+8. *(VM avec un petit disque presque plein)* Active les **notifications** avec un seuil au-dessus de l'espace libre : une notification « Espace disque faible sur E: » ; clic → l'Analyse de E: ; pas de seconde notification le même jour.
+9. *(VM avec un second disque, après un déplacement intelligent)* Désinstalle : la liste des dossiers déplacés s'affiche et prévient ; Annuler → rien n'est désinstallé ; OK → la jonction, la cible et `%LOCALAPPDATA%\Lumen` sont intacts.
 
 ---
 
