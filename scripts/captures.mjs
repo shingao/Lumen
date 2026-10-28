@@ -432,5 +432,33 @@ await shot("62-parametres-aide", { act: async (p) => {
   await p.getByRole("button", { name: "Paramètres" }).click();
   await p.getByRole("button", { name: "Réinitialiser les astuces" }).scrollIntoViewIfNeeded();
 } });
+// Jalon 11 : intégration Windows (Paramètres, À propos, « Analyser avec Lumen »).
+const settingsAt = (label) => async (p) => {
+  await p.getByRole("button", { name: /^(Paramètres|Settings)$/ }).click();
+  await p.getByRole("region", { name: label }).scrollIntoViewIfNeeded();
+};
+await shot("63-parametres-windows", { act: settingsAt("À propos") });
+await shot("64-parametres-windows-sombre", { theme: "dark", act: settingsAt("À propos") });
+await shot("65-licences-tierces", { act: async (p) => {
+  await settingsAt("À propos")(p);
+  await p.getByRole("button", { name: "Afficher" }).click();
+  await p.getByRole("dialog").getByText("Lumen — composants tiers").waitFor();
+} });
+await shot("66-parametres-anglais", { locale: "en-US", act: settingsAt("About") });
+// Comme depuis l'Explorateur : `lumen.exe --lumen-open "<dossier>"` (coffre factice : lumen-dev-open).
+const opened = (path) => async (p) => {
+  await p.evaluate((v) => globalThis.localStorage.setItem("lumen-dev-open", v), path);
+  await p.reload();
+  await p.waitForSelector("#root > *");
+};
+await shot("67-analyser-avec-lumen", { act: async (p) => {
+  await opened("C:\\Users\\Arthur\\Vidéos")(p);
+  await p.locator("[data-level='2']").first().waitFor();
+  await p.waitForTimeout(600);
+} });
+await shot("68-analyser-avec-lumen-refus", { act: async (p) => {
+  await opened("\\\\NAS\\partage\\Films")(p);
+  await p.getByText("Impossible d'ouvrir ce dossier").waitFor();
+} });
 await browser.close();
 console.log(`captures dans ${out}`);

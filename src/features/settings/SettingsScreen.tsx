@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
+import { setAutostart, setExplorerMenu, useIntegration } from "../../app/integration";
 import { openOnboarding, resetTips } from "../../app/onboarding";
 import { useStore } from "../../app/store";
 import { updateSettings } from "../../app/theme";
@@ -12,6 +13,7 @@ import { formatBytes, formatCount, formatPercent } from "../../core/format";
 import { currentT, useT } from "../../i18n";
 import type { DatabaseInfo, LanguagePref, ScanCacheInfo, Settings, ThemePref } from "../../ipc/types";
 import pkg from "../../../package.json";
+import { AboutGroup } from "./AboutGroup";
 import styles from "./SettingsScreen.module.css";
 
 function Row({ label, hint, mono, children }: { label: string; hint?: string; mono?: boolean; children?: ReactNode }) {
@@ -129,8 +131,11 @@ export function SettingsScreen() {
   const settings = useStore((s) => s.settings);
   const close = useStore((s) => s.setSettingsOpen);
   const showToast = useStore((s) => s.showToast);
+  const integration = useIntegration((s) => s.info);
   if (!settings) return null;
   const set = (patch: Partial<Settings>) => void updateSettings(patch);
+  const windows = integration?.available ?? false;
+  const failed = (err: unknown) => showToast(String(err));
   const later = (n: number) => () => showToast(currentT()("preview.later", { n }));
 
   return (
@@ -206,6 +211,42 @@ export function SettingsScreen() {
               <Toggle label={t("settings.permanent")} checked={settings.permanentDelete} onChange={(permanentDelete) => set({ permanentDelete })} />
             </Row>
           </Group>
+
+          <Group title={t("settings.windows")}>
+            <Row label={t("settings.explorerMenu")} hint={windows ? t("settings.explorerMenuHint") : t("settings.unavailable")}>
+              <Toggle
+                label={t("settings.explorerMenu")}
+                checked={integration?.explorerMenu ?? false}
+                disabled={!windows}
+                onChange={(on) => void setExplorerMenu(on).catch(failed)}
+              />
+            </Row>
+          </Group>
+
+          <Group title={t("settings.help")}>
+            <Row label={t("settings.tutorial")} hint={t("settings.tutorialHint")}>
+              <Button variant="link" onClick={openOnboarding}>
+                {t("settings.tutorialRun")}
+              </Button>
+            </Row>
+            <Row label={t("settings.tips")} hint={t("settings.tipsHint")}>
+              <Button variant="link" onClick={() => void resetTips()}>
+                {t("settings.tipsReset")}
+              </Button>
+            </Row>
+            <div className={styles.row}>
+              <div className={styles.rowText}>
+                <span className={styles.rowLabel}>{t("settings.logs")}</span>
+                {integration?.logs && <span className={`${styles.rowHint} ${styles.mono}`}>{integration.logs}</span>}
+                <span className={styles.rowHint}>{t("settings.logsHint")}</span>
+              </div>
+              <div className={styles.rowControl}>
+                <Button variant="link" disabled={!windows} onClick={() => void backend.openLogs().catch(failed)}>
+                  {t("settings.logsOpen")}
+                </Button>
+              </div>
+            </div>
+          </Group>
         </div>
 
         <div className={styles.column}>
@@ -217,6 +258,14 @@ export function SettingsScreen() {
             <Row label={t("settings.tray")} hint={t("settings.trayHint")}>
               <Toggle label={t("settings.tray")} checked={settings.trayIcon} onChange={(trayIcon) => set({ trayIcon })} />
             </Row>
+            <Row label={t("settings.autostart")} hint={windows ? t("settings.autostartHint") : t("settings.unavailable")}>
+              <Toggle
+                label={t("settings.autostart")}
+                checked={integration?.autostart ?? false}
+                disabled={!windows}
+                onChange={(on) => void setAutostart(on).catch(failed)}
+              />
+            </Row>
             <Row label={t("settings.alert")} hint={t("settings.alertHint")}>
               <Toggle label={t("settings.alert")} checked={settings.lowSpaceAlert} onChange={(lowSpaceAlert) => set({ lowSpaceAlert })} />
             </Row>
@@ -227,12 +276,6 @@ export function SettingsScreen() {
                 onChange={(lowSpaceThreshold) => set({ lowSpaceThreshold })}
                 options={THRESHOLDS.map((n) => ({ value: n, label: formatPercent(n / 100, t.locale) }))}
               />
-            </Row>
-          </Group>
-
-          <Group title={t("settings.windows")}>
-            <Row label={t("settings.explorerMenu")} hint={t("settings.explorerMenuHint")}>
-              <Toggle label={t("settings.explorerMenu")} checked={settings.explorerMenu} onChange={(explorerMenu) => set({ explorerMenu })} />
             </Row>
           </Group>
 
@@ -252,23 +295,7 @@ export function SettingsScreen() {
             </Row>
           </Group>
 
-          <Group title={t("settings.help")}>
-            <Row label={t("settings.tutorial")} hint={t("settings.tutorialHint")}>
-              <Button variant="link" onClick={openOnboarding}>
-                {t("settings.tutorialRun")}
-              </Button>
-            </Row>
-            <Row label={t("settings.tips")} hint={t("settings.tipsHint")}>
-              <Button variant="link" onClick={() => void resetTips()}>
-                {t("settings.tipsReset")}
-              </Button>
-            </Row>
-            <Row label={t("settings.logs")} hint={settings.logsFolder} mono>
-              <Button variant="link" onClick={later(5)}>
-                {t("settings.logsOpen")}
-              </Button>
-            </Row>
-          </Group>
+          <AboutGroup />
         </div>
       </div>
     </section>

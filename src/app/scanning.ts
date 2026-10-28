@@ -1,7 +1,7 @@
 // Analyse : lancement, annulation, suivi des événements du backend.
 
 import { backend, isTauri } from "../ipc/client";
-import { onScanDone } from "./navigation";
+import { onScanDone, openFolder } from "./navigation";
 import type { ScanMethod, ScanSummary, ScanTarget } from "../ipc/types";
 import { useStore } from "./store";
 
@@ -74,12 +74,18 @@ export function cancelScan(): void {
   if (id !== null) void backend.cancelScan(id);
 }
 
-export async function initScanning(): Promise<void> {
+/** Démarrage. `open` : dossier demandé par « Analyser avec Lumen » (premier lancement depuis
+ * l'Explorateur), qui remplace l'analyse habituelle du démarrage. */
+export async function initScanning(open: { letter: string; path: string } | null = null): Promise<void> {
   subscribe();
   const info = await backend.appInfo().catch(() => null);
   useStore.setState({ appInfo: info });
   // Dernière analyse enregistrée de la cible : affichée tout de suite, réanalysée à la demande.
   await backend.restoreScans().catch(() => []);
+  if (open) {
+    await openFolder(open.letter, open.path);
+    return;
+  }
   const target = useStore.getState().target;
   if ((await showCachedScan(target)) !== null) return;
   await startScan(target);

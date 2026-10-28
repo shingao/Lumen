@@ -55,6 +55,8 @@ export type VolumeKind = "fixed" | "removable" | "network" | "other";
 
 export interface Volume {
   id: string;
+  /** Identité stable du volume (GUID, à défaut numéro de série), jamais la lettre. */
+  key: string;
   letter: string;
   label: string;
   kind: VolumeKind;
@@ -198,11 +200,13 @@ export interface Settings {
   duplicateMinMb: number;
   permanentDelete: boolean;
   dailySnapshot: boolean;
+  /** Icône de la zone de notification (jalon 11) : fermer la fenêtre la cache. */
   trayIcon: boolean;
+  /** Notification Windows quand l'espace libre passe sous le seuil (%), une fois par jour et par disque. */
   lowSpaceAlert: boolean;
   lowSpaceThreshold: number;
-  explorerMenu: boolean;
-  logsFolder: string;
+  /** Dernière alerte envoyée, par volume (clé stable) : jour local `AAAA-MM-JJ`. */
+  alertsSent: Record<string, string>;
   /** Onglet Gouffres système (commandes administrateur) : désactivé tant qu'il n'est pas vérifié en VM. */
   experimentalSystem: boolean;
   /** Compactage des disques WSL / Docker (jalon 8), désactivé tant qu'il n'est pas vérifié en VM. */
@@ -213,6 +217,40 @@ export interface Settings {
   onboardingDone: boolean;
   /** Écrans dont l'astuce contextuelle a déjà été montrée (une seule fois chacun). */
   tipsSeen: string[];
+}
+
+// --- Intégration Windows (jalon 11) ----------------------------------------------------------
+
+/** Lu dans le registre de l'utilisateur : le menu contextuel et le démarrage n'ont pas d'autre source. */
+export interface Integration {
+  explorerMenu: boolean;
+  autostart: boolean;
+  /** Disque principal (« C: ») : infobulle de l'icône, « Analyser ». */
+  systemDrive: string;
+  /** Dossier du journal de plantage. */
+  logs: string | null;
+  /** Faux hors de Windows. */
+  available: boolean;
+}
+
+export type OpenRefusal = "invalid" | "network" | "volume" | "notDirectory";
+
+/** « Analyser avec Lumen » : dossier validé par Rust (canonisé, lecteur connu), ou refus. */
+export type OpenRequest = { kind: "open"; letter: string; path: string } | { kind: "refused"; reason: OpenRefusal };
+
+export type IntegrationEvent =
+  /** Demande du menu contextuel en attente (`takeOpenRequest`). */
+  | { type: "open" }
+  /** « Analyser » dans le menu de l'icône. */
+  | { type: "scan"; letter: string }
+  /** Clic sur une notification d'espace libre. */
+  | { type: "alert"; letter: string };
+
+export interface ApplyIntegration {
+  tray: boolean;
+  tooltip: string;
+  labels: { open: string; scan: string; quit: string };
+  menuLabel: string;
 }
 
 // --- Nettoyage (jalon 5) -------------------------------------------------------------------
