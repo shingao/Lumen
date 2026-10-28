@@ -154,12 +154,16 @@ pub struct IntegrationDto {
 pub fn integration_state() -> IntegrationDto {
     let hive = platform::hive();
     IntegrationDto {
-        explorer_menu: hive.as_ref().is_some_and(|h| registry::menu_registered(h.as_ref())),
-        autostart: hive.as_ref().is_some_and(|h| registry::autostart_registered(h.as_ref())),
+        explorer_menu: hive.as_ref().is_some_and(|h| registry::menu_registered(h.as_ref(), &exe_exists)),
+        autostart: hive.as_ref().is_some_and(|h| registry::autostart_registered(h.as_ref(), &exe_exists)),
         system_drive: system_drive(),
         logs: logs_dir().and_then(|p| p.to_str().map(str::to_owned)),
         available: hive.is_some(),
     }
+}
+
+fn exe_exists(path: &str) -> bool {
+    std::path::Path::new(path).is_file()
 }
 
 fn system_drive() -> String {
@@ -233,7 +237,7 @@ pub fn integration_apply(app: AppHandle, state: State<'_, IntegrationState>, req
         }
     }
     if let Some(mut hive) = platform::hive() {
-        let _ = registry::relabel_menu(hive.as_mut(), request.menu_label.trim());
+        let _ = registry::relabel_menu(hive.as_mut(), request.menu_label.trim(), &exe_exists);
     }
     Ok(())
 }

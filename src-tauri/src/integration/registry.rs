@@ -45,9 +45,23 @@ fn command_key(key: &str) -> String {
     format!(r"{key}\command")
 }
 
-/// Le menu est en place si les trois entrées existent et lancent Lumen.
-pub fn menu_registered(h: &dyn Hive) -> bool {
-    MENU_KEYS.iter().all(|k| h.get(&command_key(k), "").is_some_and(|c| c.contains(OPEN_ARG)))
+/// Exécutable d'une commande du registre : `"C:\…\lumen.exe" --lumen-…` → `C:\…\lumen.exe`.
+pub fn command_exe(command: &str) -> Option<&str> {
+    let rest = command.trim_start().strip_prefix('"')?;
+    rest.split('"').next().filter(|exe| !exe.is_empty())
+}
+
+/// Une commande de Lumen dont l'exécutable existe encore. Une entrée laissée par une
+/// installation supprimée (autre compte, profil non chargé à la désinstallation) ne lance plus
+/// rien : Windows échoue sans rien exécuter. Lumen la voit comme absente et la réécrit si on
+/// réactive le réglage.
+fn live(command: Option<String>, arg: &str, exists: &dyn Fn(&str) -> bool) -> bool {
+    command.is_some_and(|c| c.contains(arg) && command_exe(&c).is_some_and(exists))
+}
+
+/// Le menu est en place si les trois entrées existent et lancent un Lumen présent.
+pub fn menu_registered(h: &dyn Hive, exists: &dyn Fn(&str) -> bool) -> bool {
+    MENU_KEYS.iter().all(|k| live(h.get(&command_key(k), ""), OPEN_ARG, exists))
 }
 
 pub fn register_menu(h: &mut dyn Hive, exe: &str, label: &str) -> io::Result<()> {
@@ -72,8 +86,8 @@ pub fn unregister_menu(h: &mut dyn Hive) -> io::Result<()> {
 }
 
 /// Langue de l'interface changée : libellé du menu mis à jour, commande inchangée.
-pub fn relabel_menu(h: &mut dyn Hive, label: &str) -> io::Result<()> {
-    if !menu_registered(h) {
+pub fn relabel_menu(h: &mut dyn Hive, label: &str, exists: &dyn Fn(&str) -> bool) -> io::Result<()> {
+    if !menu_registered(h, exists) {
         return Ok(());
     }
     for key in MENU_KEYS {
@@ -84,8 +98,8 @@ pub fn relabel_menu(h: &mut dyn Hive, label: &str) -> io::Result<()> {
     Ok(())
 }
 
-pub fn autostart_registered(h: &dyn Hive) -> bool {
-    h.get(RUN_KEY, RUN_VALUE).is_some_and(|c| c.contains(BACKGROUND_ARG))
+pub fn autostart_registered(h: &dyn Hive, exists: &dyn Fn(&str) -> bool) -> bool {
+    live(h.get(RUN_KEY, RUN_VALUE), BACKGROUND_ARG, exists)
 }
 
 pub fn set_autostart(h: &mut dyn Hive, exe: &str, on: bool) -> io::Result<()> {
@@ -160,23 +174,50 @@ mod tests {
 
     const EXE: &str = r"C:\Program Files\Lumen\lumen.exe";
 
+    fn present(exe: &str) -> bool {
+        exe == EXE
+    }
+
+    #[test]
+    fn entree_laissee_par_une_installation_supprimee() {
+        assert_eq!(command_exe(r#""C:\Program Files\Lumen\lumen.exe" --lumen-open "%V""#), Some(EXE));
+        assert_eq!(command_exe("lumen.exe --lumen-open"), None);
+        assert_eq!(command_exe(r#""" --lumen-open"#), None);
+        let mut h = MemHive::default();
+        let gone = r"D:\Ancien\Lumen\lumen.exe";
+        register_menu(&mut h, gone, "Analyser avec Lumen").unwrap();
+        set_autostart(&mut h, gone, true).unwrap();
+        // L'exécutable n'existe plus : vu comme absent, jamais relancé ni réétiqueté.
+        assert!(!menu_registered(&h, &present));
+        assert!(!autostart_registered(&h, &present));
+        relabel_menu(&mut h, "Analyze with Lumen", &present).unwrap();
+        assert_eq!(h.get(MENU_KEYS[0], "").as_deref(), Some("Analyser avec Lumen"));
+        // Réactivé : réécrit vers l'exécutable présent ; retiré : plus rien.
+        register_menu(&mut h, EXE, "Analyser avec Lumen").unwrap();
+        set_autostart(&mut h, EXE, true).unwrap();
+        assert!(menu_registered(&h, &present) && autostart_registered(&h, &present));
+        unregister_menu(&mut h).unwrap();
+        set_autostart(&mut h, EXE, false).unwrap();
+        assert!(h.values.is_empty());
+    }
+
     #[test]
     fn menu_contextuel_sur_les_dossiers_les_lecteurs_et_le_fond() {
         let mut h = MemHive::default();
-        assert!(!menu_registered(&h));
+        assert!(!menu_registered(&h, &present));
         register_menu(&mut h, EXE, "Analyser avec Lumen").unwrap();
-        assert!(menu_registered(&h));
+        assert!(menu_registered(&h, &present));
         for key in MENU_KEYS {
             assert_eq!(h.get(key, "").as_deref(), Some("Analyser avec Lumen"));
             assert_eq!(h.get(key, "Icon").as_deref(), Some(r#""C:\Program Files\Lumen\lumen.exe",0"#));
             assert_eq!(h.get(&format!(r"{key}\command"), "").as_deref(), Some(r#""C:\Program Files\Lumen\lumen.exe" --lumen-open "%V""#));
         }
-        relabel_menu(&mut h, "Analyze with Lumen").unwrap();
+        relabel_menu(&mut h, "Analyze with Lumen", &present).unwrap();
         assert_eq!(h.get(MENU_KEYS[2], "").as_deref(), Some("Analyze with Lumen"));
         unregister_menu(&mut h).unwrap();
         assert!(h.values.is_empty());
         // Retiré : le libellé ne le recrée pas.
-        relabel_menu(&mut h, "Analyser avec Lumen").unwrap();
+        relabel_menu(&mut h, "Analyser avec Lumen", &present).unwrap();
         assert!(h.values.is_empty());
     }
 
@@ -186,7 +227,7 @@ mod tests {
         h.set(r"Software\Classes\Drive\shell\Lumen\command", "", "autre.exe \"%1\"").unwrap();
         register_menu(&mut h, EXE, "Analyser avec Lumen").unwrap();
         h.set(r"Software\Classes\Drive\shell\Lumen\command", "", "autre.exe \"%1\"").unwrap();
-        assert!(!menu_registered(&h));
+        assert!(!menu_registered(&h, &present));
         unregister_menu(&mut h).unwrap();
         assert_eq!(h.values.len(), 3, "la clé étrangère reste entière : {:?}", h.values);
     }
@@ -194,12 +235,12 @@ mod tests {
     #[test]
     fn entree_run_de_l_utilisateur() {
         let mut h = MemHive::default();
-        assert!(!autostart_registered(&h));
+        assert!(!autostart_registered(&h, &present));
         set_autostart(&mut h, EXE, true).unwrap();
-        assert!(autostart_registered(&h));
+        assert!(autostart_registered(&h, &present));
         assert_eq!(h.get(RUN_KEY, "Lumen").as_deref(), Some(r#""C:\Program Files\Lumen\lumen.exe" --lumen-background"#));
         set_autostart(&mut h, EXE, false).unwrap();
-        assert!(!autostart_registered(&h));
+        assert!(!autostart_registered(&h, &present));
         set_autostart(&mut h, EXE, false).unwrap();
         assert!(h.values.is_empty());
     }

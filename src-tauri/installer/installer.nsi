@@ -405,6 +405,7 @@ FunctionEnd
 ; LUMEN : options (menu contextuel, raccourci Bureau, démarrage avec Windows)
 Page custom LumenOptionsPage LumenOptionsLeave
 !insertmacro LUMEN_PAGE_FUNCTIONS
+!insertmacro LUMEN_UN_FUNCTIONS
 
 ; 6. Start menu shortcut page
 Var AppStartMenuFolder

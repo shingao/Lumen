@@ -12,14 +12,21 @@
 ; La désinstallation ne touche JAMAIS aux jonctions du déplacement intelligent ni à leurs cibles :
 ; elle les liste (jonctions.txt, tenu à jour par Lumen) et prévient avant de continuer.
 
-!define LUMEN_MENU_DIR "Software\Classes\Directory\shell\Lumen"
-!define LUMEN_MENU_BACKGROUND "Software\Classes\Directory\Background\shell\Lumen"
-!define LUMEN_MENU_DRIVE "Software\Classes\Drive\shell\Lumen"
+; Clés du menu, relatives à la racine des classes de l'utilisateur.
+!define LUMEN_CLASS_DIR "Directory\shell\Lumen"
+!define LUMEN_CLASS_BACKGROUND "Directory\Background\shell\Lumen"
+!define LUMEN_CLASS_DRIVE "Drive\shell\Lumen"
+!define LUMEN_MENU_DIR "Software\Classes\${LUMEN_CLASS_DIR}"
+!define LUMEN_MENU_BACKGROUND "Software\Classes\${LUMEN_CLASS_BACKGROUND}"
+!define LUMEN_MENU_DRIVE "Software\Classes\${LUMEN_CLASS_DRIVE}"
+!define LUMEN_PROFILE_LIST "SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
 !define LUMEN_RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
 !define LUMEN_OPEN_ARG "--lumen-open"
 !define LUMEN_BACKGROUND_ARG "--lumen-background"
 ; Au plus, dans l'avertissement (limite de longueur des chaînes NSIS).
 !define LUMEN_JUNCTIONS_SHOWN 5
+; Au plus, lues dans chaque liste (fichier modifiable par l'utilisateur).
+!define LUMEN_JUNCTIONS_READ 500
 
 !include TextFunc.nsh
 
@@ -33,6 +40,8 @@ Var LumenDesktopBox
 Var LumenAutostartBox
 Var LumenJunctions
 Var LumenJunctionCount
+Var LumenReport
+Var LumenOwnLocal
 
 ; --- Registre ---------------------------------------------------------------------------------
 
@@ -173,34 +182,145 @@ Var LumenJunctionCount
 
 ; --- Désinstallation --------------------------------------------------------------------------
 
-; un.onInit : jonctions listées par Lumen dans %LOCALAPPDATA%\Lumen\jonctions.txt (UTF-16 LE,
-; une par ligne). Si elles existent, la liste est montrée et la désinstallation ne continue
-; qu'avec l'accord de l'utilisateur ; elles restent intactes dans tous les cas.
-!macro LUMEN_UN_INIT
-  StrCpy $LumenJunctions ""
-  StrCpy $LumenJunctionCount 0
-  SetShellVarContext current
+; Clé du menu dans une ruche de HKEY_USERS : seulement si elle lance Lumen.
+!macro LUMEN_DELETE_HKU_MENU KEY
+  ReadRegStr $R9 HKU "${KEY}\command" ""
+  ${UnStrLoc} $R4 $R9 "${LUMEN_OPEN_ARG}" ">"
+  ${If} $R4 != ""
+    DeleteRegKey HKU "${KEY}"
+  ${EndIf}
+!macroend
+
+; Fonctions du désinstalleur, insérées par installer.nsi après les définitions du modèle
+; (PRODUCTNAME…).
+!macro LUMEN_UN_FUNCTIONS
+; Le désinstalleur tourne en administrateur, parfois sous un autre compte que celui qui a activé
+; le menu ou le démarrage : toutes les ruches chargées de HKEY_USERS (<SID> et <SID>_Classes)
+; sont nettoyées, pas seulement HKCU. Les profils non chargés ne sont pas ouverts (pas de
+; reg load) : leurs entrées restent, inertes (voir PROGRESS.md, jalon 11).
+Function un.LumenCleanLoadedHives
+  StrCpy $R5 0
+  ${Do}
+    EnumRegKey $R6 HKU "" $R5
+    ${If} $R6 == ""
+    ${OrIf} $R5 >= 1024
+      ${ExitDo}
+    ${EndIf}
+    IntOp $R5 $R5 + 1
+    StrCpy $R7 $R6 "" -8
+    ${If} $R7 == "_Classes"
+      StrCpy $R8 "$R6"
+    ${Else}
+      StrCpy $R8 "$R6\Software\Classes"
+      ReadRegStr $R9 HKU "$R6\${LUMEN_RUN_KEY}" "${PRODUCTNAME}"
+      ${UnStrLoc} $R4 $R9 "${LUMEN_BACKGROUND_ARG}" ">"
+      ${If} $R4 != ""
+        DeleteRegValue HKU "$R6\${LUMEN_RUN_KEY}" "${PRODUCTNAME}"
+      ${EndIf}
+    ${EndIf}
+    !insertmacro LUMEN_DELETE_HKU_MENU "$R8\${LUMEN_CLASS_DIR}"
+    !insertmacro LUMEN_DELETE_HKU_MENU "$R8\${LUMEN_CLASS_BACKGROUND}"
+    !insertmacro LUMEN_DELETE_HKU_MENU "$R8\${LUMEN_CLASS_DRIVE}"
+  ${Loop}
+FunctionEnd
+
+; Lit une liste de jonctions (UTF-16 LE, une par ligne ; chemin sur la pile). Ce fichier est
+; modifiable par l'utilisateur : son contenu est seulement compté et affiché (et recopié dans
+; le rapport /JUNCTIONSREPORT=), jamais exécuté ni utilisé pour agir.
+Function un.LumenReadJunctions
+  Exch $R0
+  Push $R1
+  Push $R2
+  Push $R3
   ClearErrors
-  FileOpen $R0 "$LOCALAPPDATA\Lumen\jonctions.txt" r
+  FileOpen $R2 "$R0" r
   ${IfNot} ${Errors}
+    StrCpy $R3 0
     ${Do}
       ClearErrors
-      FileReadUTF16LE $R0 $R1
+      FileReadUTF16LE $R2 $R1
       ${If} ${Errors}
+      ${OrIf} $R3 >= ${LUMEN_JUNCTIONS_READ}
         ${ExitDo}
       ${EndIf}
+      IntOp $R3 $R3 + 1
       ${TrimNewLines} "$R1" $R1
       ${If} $R1 != ""
         IntOp $LumenJunctionCount $LumenJunctionCount + 1
+        ${If} $LumenReport != ""
+          FileWriteUTF16LE $LumenReport "$R1$\r$\n"
+        ${EndIf}
         ${If} $LumenJunctionCount <= ${LUMEN_JUNCTIONS_SHOWN}
           StrCpy $R1 $R1 140
           StrCpy $LumenJunctions "$LumenJunctions• $R1$\r$\n"
         ${EndIf}
       ${EndIf}
     ${Loop}
-    FileClose $R0
+    FileClose $R2
   ${EndIf}
+  Pop $R3
+  Pop $R2
+  Pop $R1
+  Pop $R0
+FunctionEnd
+
+; Listes de jonctions de CHAQUE profil de la machine (ProfileList, chargé ou non) : le compte qui
+; désinstalle d'abord (son %LOCALAPPDATA% peut être redirigé), puis <profil>\AppData\Local.
+Function un.LumenFindJunctions
+  SetShellVarContext current
+  StrCpy $LumenOwnLocal "$LOCALAPPDATA"
+  Push "$LOCALAPPDATA\Lumen\jonctions.txt"
+  Call un.LumenReadJunctions
   !insertmacro SetContext
+  ${If} ${RunningX64}
+    SetRegView 64
+  ${EndIf}
+  StrCpy $R5 0
+  ${Do}
+    EnumRegKey $R6 HKLM "${LUMEN_PROFILE_LIST}" $R5
+    ${If} $R6 == ""
+    ${OrIf} $R5 >= 1024
+      ${ExitDo}
+    ${EndIf}
+    IntOp $R5 $R5 + 1
+    ReadRegStr $R7 HKLM "${LUMEN_PROFILE_LIST}\$R6" "ProfileImagePath"
+    ${If} $R7 != ""
+      ExpandEnvStrings $R7 $R7
+      ${If} "$R7\AppData\Local" != $LumenOwnLocal
+        Push "$R7\AppData\Local\Lumen\jonctions.txt"
+        Call un.LumenReadJunctions
+      ${EndIf}
+    ${EndIf}
+  ${Loop}
+  ${If} ${RunningX64}
+    SetRegView lastused
+  ${EndIf}
+FunctionEnd
+
+; un.onInit : jonctions listées par Lumen dans %LOCALAPPDATA%\Lumen\jonctions.txt (UTF-16 LE,
+; une par ligne). Si elles existent, la liste est montrée et la désinstallation ne continue
+; qu'avec l'accord de l'utilisateur ; elles restent intactes dans tous les cas.
+!macroend
+
+!macro LUMEN_UN_INIT
+  StrCpy $LumenJunctions ""
+  StrCpy $LumenJunctionCount 0
+  StrCpy $LumenReport ""
+  ; Rapport de ce qui a été lu (tests de l'installeur, support) : le fichier donné, rien d'autre.
+  ${GetOptions} $CMDLINE "/JUNCTIONSREPORT=" $R0
+  ${IfNot} ${Errors}
+  ${AndIf} $R0 != ""
+    ClearErrors
+    FileOpen $LumenReport "$R0" w
+    ${If} ${Errors}
+      StrCpy $LumenReport ""
+    ${EndIf}
+  ${EndIf}
+  Call un.LumenFindJunctions
+  ${If} $LumenReport != ""
+    FileClose $LumenReport
+    StrCpy $LumenReport ""
+  ${EndIf}
 
   ${If} $LumenJunctionCount > 0
   ${AndIfNot} ${Silent}
@@ -208,8 +328,9 @@ Var LumenJunctionCount
   ${AndIf} $UpdateMode <> 1
     ${If} $LumenJunctionCount > ${LUMEN_JUNCTIONS_SHOWN}
       IntOp $R2 $LumenJunctionCount - ${LUMEN_JUNCTIONS_SHOWN}
-      StrCpy $LumenJunctions "$LumenJunctions$(lumenJunctionsMore)$\r$\n"
-      ${WordReplace} "$LumenJunctions" "{n}" "$R2" "+" $LumenJunctions
+      ; Le nombre remplace {n} dans notre phrase seulement, jamais dans les lignes lues.
+      ${WordReplace} "$(lumenJunctionsMore)" "{n}" "$R2" "+" $R3
+      StrCpy $LumenJunctions "$LumenJunctions$R3$\r$\n"
     ${EndIf}
     MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$(lumenJunctionsWarning)$\r$\n$\r$\n$LumenJunctions$\r$\n$(lumenJunctionsContinue)" /SD IDOK IDOK lumen_junctions_ok
     Quit
@@ -224,6 +345,7 @@ Var LumenJunctionCount
     !insertmacro LUMEN_DELETE_MENU "Un" "${LUMEN_MENU_BACKGROUND}"
     !insertmacro LUMEN_DELETE_MENU "Un" "${LUMEN_MENU_DRIVE}"
     !insertmacro LUMEN_DELETE_RUN "Un"
+    Call un.LumenCleanLoadedHives
   ${EndIf}
 !macroend
 
