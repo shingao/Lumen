@@ -135,6 +135,9 @@
   --dur-tile: 200ms;
   --dur-flash: 1600ms;
   --dur-sweep: 1200ms;
+  /* Onboarding : apparition d'une tuile, décalage entre deux tuiles. */
+  --dur-onboard: 450ms;
+  --dur-stagger: 60ms;
   --ease: ease;
 }
 

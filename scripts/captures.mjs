@@ -11,8 +11,25 @@ mkdirSync(out, { recursive: true });
 
 const browser = await chromium.launch({ executablePath });
 
-async function shot(name, { theme = "light", locale = "fr-FR", width = 1440, height = 1024, act } = {}) {
-  const page = await browser.newPage({ viewport: { width, height }, locale, colorScheme: theme });
+// Tutoriel et astuces (jalon 10) déjà vus, sauf pour les captures qui les montrent (`fresh`).
+const SCREENS = ["analyse", "timeline", "cleanup", "dev", "games", "journal"];
+async function welcomed(page, { onboarding = true, tips = SCREENS } = {}) {
+  await page.addInitScript(
+    ([done, seen]) => {
+      const key = "lumen-dev-settings";
+      const raw = globalThis.localStorage.getItem(key);
+      const s = raw ? JSON.parse(raw) : {};
+      if (s.onboardingDone === undefined) s.onboardingDone = done;
+      if (s.tipsSeen === undefined) s.tipsSeen = seen;
+      globalThis.localStorage.setItem(key, JSON.stringify(s));
+    },
+    [onboarding, tips],
+  );
+}
+
+async function shot(name, { theme = "light", locale = "fr-FR", width = 1440, height = 1024, act, fresh, reducedMotion = "no-preference" } = {}) {
+  const page = await browser.newPage({ viewport: { width, height }, locale, colorScheme: theme, reducedMotion });
+  await welcomed(page, fresh);
   await page.goto(url);
   await page.waitForSelector("#root > *");
   await page.evaluate(() => globalThis.document.fonts.ready);
@@ -368,6 +385,7 @@ await shot("54-export", { act: async (p) => {
 // Le rapport lui-même : téléchargé depuis le coffre factice puis ouvert seul, hors ligne.
 for (const [name, theme] of [["55-rapport-html", "light"], ["56-rapport-html-sombre", "dark"]]) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1024 }, locale: "fr-FR", colorScheme: theme });
+  await welcomed(page);
   await page.goto(url);
   await page.locator("[data-level='3']").first().waitFor();
   await page.getByRole("button", { name: "Exporter", exact: true }).click();
@@ -382,5 +400,37 @@ for (const [name, theme] of [["55-rapport-html", "light"], ["56-rapport-html-som
   await report.close();
   await page.close();
 }
+// Jalon 10 : tutoriel de bienvenue (4 écrans) et astuces contextuelles.
+const nextScreen = (p, n) => Array.from({ length: n }).reduce((acc) => acc.then(() => p.getByRole("button", { name: /^(Suivant|Next)$/ }).click()), Promise.resolve());
+for (const [i, theme] of [[1, "light"], [2, "light"], [3, "dark"], [4, "light"]]) {
+  await shot(`57-bienvenue-${i}${theme === "dark" ? "-sombre" : ""}`, { theme, fresh: { onboarding: false }, act: async (p) => {
+    await p.getByRole("dialog").waitFor();
+    await nextScreen(p, i - 1);
+    await p.waitForTimeout(700);
+  } });
+}
+// Mouvement réduit : pas d'animation, l'état final de chaque écran tout de suite.
+await shot("57-bienvenue-3-mouvement-reduit", { reducedMotion: "reduce", fresh: { onboarding: false }, act: async (p) => {
+  await p.getByRole("dialog").waitFor();
+  await nextScreen(p, 2);
+} });
+await shot("58-bienvenue-anglais", { locale: "en-US", fresh: { onboarding: false }, act: async (p) => {
+  await p.getByRole("dialog").waitFor();
+  await nextScreen(p, 1);
+  await p.waitForTimeout(700);
+} });
+await shot("59-astuce-analyse", { fresh: { tips: [] }, act: (p) => p.getByRole("note").waitFor() });
+await shot("60-astuce-timeline-sombre", { theme: "dark", fresh: { tips: ["analyse"] }, act: async (p) => {
+  await nav(p, "Timeline");
+  await p.getByRole("note").waitFor();
+} });
+await shot("61-astuce-journal", { fresh: { tips: ["analyse"] }, act: async (p) => {
+  await nav(p, "Journal");
+  await p.getByRole("note").waitFor();
+} });
+await shot("62-parametres-aide", { act: async (p) => {
+  await p.getByRole("button", { name: "Paramètres" }).click();
+  await p.getByRole("button", { name: "Réinitialiser les astuces" }).scrollIntoViewIfNeeded();
+} });
 await browser.close();
 console.log(`captures dans ${out}`);

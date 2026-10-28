@@ -13,8 +13,59 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 7 | Snapshots et Timeline | **fait — validé** (testé sur PC ; PR #5) |
 | 8 | Dev et Jeux | **fait — validé en lecture seule** (jeux et projets détectés sur PC ; PR #6) ; purge des artefacts, shaders, Docker **non vérifiés en réel** (Sandbox), compactage WSL **non vérifié en réel** (VM) et désactivé par défaut |
 | 9 | Persistance des analyses, recherche instantanée, déplacement intelligent, export de rapport | **fait — validé** pour la persistance, la recherche et l'export (testés sur PC, anonymisation vérifiée ; PR #7) ; déplacement intelligent **non vérifié en réel** (VM avec un second disque) et **désactivé par défaut** (réglage Expérimental) |
-| 10 | Onboarding et astuces contextuelles | à faire |
+| 10 | Onboarding et astuces contextuelles | **fait — en attente de validation** |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | à faire |
+
+---
+
+## Jalon 10 — onboarding et astuces contextuelles
+
+### Livré
+
+**Tutoriel de bienvenue** (`src/app/onboarding.ts`, `src/features/onboarding/`)
+- **Au premier lancement, 4 écrans dans la DA** : fond de l'appli, un conteneur centré (rayon 16, bordure fine), une **mini-treemap animée** (mêmes tuiles, couleurs de catégorie, rayon 6 et espacement 3 px que l'Explorer ; disque d'exemple, pas les données de l'utilisateur), une phrase, un bouton :
+  1. « Voici où passe ton espace disque. » — les tuiles apparaissent une à une ;
+  2. « Les zones hachurées peuvent partir sans risque. » — les hachures apparaissent sur les trois caches, le reste passe au second plan ;
+  3. « Coche ce que tu veux libérer, Lumen te montre exactement ce qu'il va faire. » — coches et pastille « 3 éléments cochés · 28,1 Go » ;
+  4. « Rien n'est supprimé sans ton accord, et tout passe par la Corbeille. » — les tuiles cochées passent en pointillés, « 3 éléments vers la Corbeille ».
+- **« Passer » toujours visible**, **Échap ferme**, **flèches ← →** pour naviguer, focus sur le bouton principal à chaque écran et gardé dans le tutoriel (Tab / Maj+Tab), `role="dialog"` modal, phrase annoncée (`aria-live`), « 2 / 4 » et points de progression. Pendant le tutoriel, les raccourcis globaux (Ctrl K, Paramètres…) sont inactifs.
+- **La première analyse démarre en arrière-plan** (comme avant, au démarrage) pendant le tutoriel ; en bas du conteneur : « Ton analyse tourne déjà en arrière-plan : 128 400 fichiers… » puis « Ton analyse est prête. ». « Voir mon analyse » mène à l'écran Analyse, déjà rempli ou presque.
+- Terminé, passé ou fermé : mémorisé (`settings.onboardingDone`), jamais rouvert seul. **Paramètres › Aide › « Relancer le tutoriel »**.
+
+**Astuces contextuelles** (`src/features/tips/TipBubble.tsx`)
+- À la **première visite de chaque écran** (Analyse, Timeline, Nettoyage, Dev, Jeux, Journal), une **bulle dans le style des infobulles de la treemap** (surface des popovers, pointe vers l'onglet de l'écran) avec une phrase utile ; **fermée en un clic** (sur la bulle ou ×), **jamais répétée** : mémorisée dès qu'elle s'affiche (`settings.tipsSeen`), même si l'écran est quitté sans la fermer. Jamais pendant le tutoriel ni dans les Paramètres.
+- **Paramètres › Aide › « Réinitialiser les astuces »** (toast de confirmation).
+
+**Accessibilité et DA**
+- **`prefers-reduced-motion`** : aucune animation ni transition (règle globale) ; chaque écran affiche directement son état final (capture `57-bienvenue-3-mouvement-reduit`).
+- **Contraste AA dans les deux thèmes** : nouvelle paire vérifiée par `contrast.test.ts` (noms et tailles sur les tuiles mises au second plan : un voile **sous** le texte plutôt qu'une opacité de la tuile entière) ; les autres paires (texte sur conteneur, pastille sans risque, couleurs de catégorie) étaient déjà couvertes.
+- Textes en français (référence) et en anglais, mêmes clés. Durées par jetons (`--dur-onboard`, `--dur-stagger`).
+
+**Tests** (vitest) : ouverture au premier lancement seulement ; **séquence complète** (4 écrans, Précédent, « Passer » visible à chaque écran, focus, fermeture mémorisée) ; **Passer** ; **clavier** (flèches, **Échap**) ; analyse en arrière-plan affichée ; **relance depuis les Paramètres** ; **astuce affichée une seule fois** (fermée en un clic, absente à la visite suivante), une par écran, retirée en changeant d'écran, jamais pendant le tutoriel, **Réinitialiser les astuces** (fonction et bouton).
+
+### Décisions
+
+- **Tutoriel affiché à la place de l'écran** (sous la barre de titre, qui garde ses boutons de fenêtre) plutôt qu'en fenêtre par-dessus : c'est « le fond de l'appli » demandé, et rien derrière ne peut prendre le focus.
+- **Mini-treemap sur un disque d'exemple** : la vraie analyse n'est pas encore prête au premier écran ; les tailles d'exemple restent plausibles (Vidéos, Projets, caches npm et Gradle…).
+- **Astuce mémorisée dès qu'elle s'affiche** (pas seulement à la fermeture) : « jamais répétée » même si l'utilisateur change d'écran sans la fermer.
+- Astuce **ancrée à l'onglet de l'écran** dans la navigation : même place partout, ne cache jamais un bouton d'action.
+- **Utilisateurs existants** : leurs réglages n'ont pas encore `onboardingDone`, ils voient donc le tutoriel une fois après la mise à jour (« Passer » le ferme pour de bon).
+
+### Écarts avec la maquette
+
+- La maquette n'a ni tutoriel ni astuces : ils reprennent sa DA (conteneur centré sur le fond de l'appli, tuiles et hachures de la treemap, pastille hachurée « sans risque », bouton primaire noir, liens soulignés, surface des infobulles). Captures : `design/captures/jalon-10/` (57 à 62).
+
+### Test manuel (jalon 10)
+
+1. Premier lancement (ou Paramètres › Aide › Relancer le tutoriel) : 4 écrans, la mini-treemap s'anime, les hachures apparaissent au 2e écran, les coches au 3e, les pointillés au 4e.
+2. Au clavier seulement : → / ← changent d'écran, Tab reste dans le tutoriel, Entrée sur « Suivant », Échap ferme.
+3. « Passer » est visible à chaque écran et ferme ; le tutoriel ne revient pas au lancement suivant.
+4. Pendant le tutoriel, le compteur de fichiers de la première analyse avance ; à la fin, l'Analyse est prête (ou presque).
+5. Windows › Accessibilité › Effets visuels › Effets d'animation désactivés : plus aucune animation, chaque écran s'affiche directement.
+6. Thème sombre et clair : textes lisibles partout (tuiles au second plan comprises).
+7. Première visite de chaque écran : une bulle sous son onglet ; un clic la ferme ; elle ne revient plus (même après relance de l'appli).
+8. Paramètres › Aide › Réinitialiser les astuces : les bulles réapparaissent à la prochaine visite de chaque écran.
+9. En anglais (Paramètres › Langue) : tutoriel et astuces traduits.
 
 ---
 
