@@ -9,7 +9,8 @@
 //   node scripts/notices.mjs --check   échoue s'ils ne sont pas à jour (CI)
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,12 +30,19 @@ const clean = (text) =>
     .trim();
 
 function rustLicenses() {
-  const out = execFileSync("cargo", ["about", "generate", "--format", "json", "--manifest-path", join(root, "src-tauri", "Cargo.toml")], {
-    cwd: join(root, "src-tauri"),
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "inherit"],
-  });
+  // Vers un fichier (`-o`) : sous PowerShell, cargo-about refuse d'écrire sur la sortie standard.
+  const dir = mkdtempSync(join(tmpdir(), "lumen-notices-"));
+  const file = join(dir, "about.json");
+  let out;
+  try {
+    execFileSync("cargo", ["about", "generate", "--format", "json", "-o", file, "--manifest-path", join(root, "src-tauri", "Cargo.toml")], {
+      cwd: join(root, "src-tauri"),
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    out = readFileSync(file, "utf8");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
   const data = JSON.parse(out);
   const crates = new Set();
   const groups = data.licenses.map((l) => {
