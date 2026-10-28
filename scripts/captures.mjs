@@ -314,5 +314,73 @@ await shot("46-parametres-memoire", { act: async (p) => {
   await p.getByRole("button", { name: "Paramètres" }).click();
   await p.getByText(/sur 600 Mo/).waitFor();
 } });
+// Jalon 9 : analyse enregistrée, recherche filtrée, déplacement intelligent, export.
+const zoomInto = async (p, name) => {
+  // Déplacement intelligent : derrière le réglage Expérimental tant qu'il n'est pas vérifié en VM.
+  await experimental(p, "experimentalMove");
+  await p.locator("[data-level='3']").first().waitFor();
+  const tile = await hoverTile(p, name);
+  await tile.locator(":scope > [data-expand]").click();
+  await p.getByRole("button", { name: "Déplacer…" }).waitFor();
+};
+await shot("47-analyse-enregistree", { act: async (p) => {
+  await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-restored", "1"));
+  await p.reload();
+  await p.getByText(/Dernière analyse enregistrée/).waitFor();
+} });
+await shot("48-palette-filtres", { act: async (p) => {
+  await p.locator("[data-level='3']").first().waitFor();
+  await p.keyboard.press("Control+K");
+  await p.keyboard.type("ext:mp4 >1go cap");
+} });
+await shot("49-deplacer-verification", { act: async (p) => {
+  await zoomInto(p, "Captures");
+  await p.getByRole("button", { name: "Déplacer…" }).click();
+  await p.getByRole("button", { name: "Copier et vérifier" }).waitFor();
+} });
+await shot("50-deplacer-refus-sombre", { theme: "dark", act: async (p) => {
+  await zoomInto(p, "Docker");
+  await p.getByRole("button", { name: "Déplacer…" }).click();
+  await p.getByText(/ne peut pas être déplacé/).waitFor();
+} });
+await shot("51-deplacer-confirmation", { act: async (p) => {
+  await zoomInto(p, "Captures");
+  await p.getByRole("button", { name: "Déplacer…" }).click();
+  await p.getByRole("button", { name: "Copier et vérifier" }).click();
+  await p.getByRole("button", { name: /Supprimer l'original/ }).waitFor({ timeout: 10_000 });
+  await p.getByLabel("Je confirme la suppression définitive de l'original").check();
+} });
+await shot("52-jonction-absente", { act: async (p) => {
+  await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-moved", "1"));
+  await p.reload();
+  await p.getByText("Un dossier déplacé par Lumen est inaccessible").waitFor();
+} });
+await shot("53-journal-deplacements-sombre", { theme: "dark", act: async (p) => {
+  await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-moved", "1"));
+  await p.reload();
+  await nav(p, "Journal");
+  await p.getByRole("heading", { name: "Déplacements" }).waitFor();
+} });
+await shot("54-export", { act: async (p) => {
+  await p.locator("[data-level='3']").first().waitFor();
+  await p.getByRole("button", { name: "Exporter", exact: true }).click();
+} });
+// Le rapport lui-même : téléchargé depuis le coffre factice puis ouvert seul, hors ligne.
+for (const [name, theme] of [["55-rapport-html", "light"], ["56-rapport-html-sombre", "dark"]]) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1024 }, locale: "fr-FR", colorScheme: theme });
+  await page.goto(url);
+  await page.locator("[data-level='3']").first().waitFor();
+  await page.getByRole("button", { name: "Exporter", exact: true }).click();
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("dialog").getByRole("button", { name: "Exporter", exact: true }).click()]);
+  const file = join(out, `${name}.html`);
+  await download.saveAs(file);
+  const report = await browser.newPage({ viewport: { width: 1200, height: 1600 }, offline: true });
+  await report.route("**/*", (r) => (r.request().url().startsWith("file:") ? r.continue() : r.abort()));
+  await report.goto(`file://${join(process.cwd(), file)}`);
+  await report.evaluate(() => globalThis.document.fonts.ready);
+  await report.screenshot({ path: join(out, `${name}.png`), fullPage: true });
+  await report.close();
+  await page.close();
+}
 await browser.close();
 console.log(`captures dans ${out}`);

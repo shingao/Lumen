@@ -74,6 +74,8 @@ export interface AppInfo {
   /** « Scan rapide (admin) » proposé : Lumen installé dans Program Files, non modifiable. */
   fastScanAvailable: boolean;
   version: string;
+  /** Dossier utilisateur : il devient `%USERPROFILE%` dans un rapport anonymisé. */
+  profile: string | null;
 }
 
 /** Information discrète sur une analyse (le parcours a pris le relais d'une MFT trop fragmentée). */
@@ -116,6 +118,10 @@ export interface ScanSummary {
   lastAccessReliable: boolean;
   volume: string;
   notice: ScanNotice | null;
+  /** Fin de l'analyse (ms) : « analysé il y a… ». */
+  finishedAt: number;
+  /** Relue depuis la base au démarrage (analyse d'un lancement précédent). */
+  restored: boolean;
 }
 
 export type ScanEvent =
@@ -167,12 +173,18 @@ export interface RecommendationDetail extends Recommendation {
 }
 
 export interface SearchHit {
+  /** Analyse d'où vient le résultat (une par disque) et nœud dans celle-ci. */
+  scanId: number;
   id: NodeId;
   name: string;
   path: string;
   size: number;
   modified: number;
   kind: "file" | "dir";
+  /** Lettre du disque (`C:`). */
+  drive: string;
+  /** `userProfile` ou la lettre du disque analysé. */
+  target: string;
 }
 
 export type ThemePref = "system" | "light" | "dark";
@@ -195,6 +207,8 @@ export interface Settings {
   experimentalSystem: boolean;
   /** Compactage des disques WSL / Docker (jalon 8), désactivé tant qu'il n'est pas vérifié en VM. */
   experimentalWsl: boolean;
+  /** Déplacement intelligent (jalon 9), désactivé tant qu'il n'est pas vérifié en VM avec un second disque. */
+  experimentalMove: boolean;
 }
 
 // --- Nettoyage (jalon 5) -------------------------------------------------------------------
@@ -590,6 +604,9 @@ export interface DatabaseInfo {
   bytes: number;
   snapshots: number;
   series: number;
+  /** Analyses enregistrées (une par cible) et leur taille compressée. */
+  savedScans: number;
+  savedBytes: number;
 }
 
 // --- Jeux et Dev (jalon 8) ------------------------------------------------------------------
@@ -689,4 +706,93 @@ export interface ScanCacheInfo {
   entries: { scanId: number; target: string; bytes: number; lastUsed: number }[];
   total: number;
   limit: number;
+}
+
+// Déplacement intelligent (jalon 9) : le front n'envoie qu'un id d'analyse, un id de nœud et une lettre.
+
+export interface MoveRefusal {
+  code: string;
+  message: string;
+  /** Programmes qui tiennent des fichiers du dossier. */
+  apps: string[];
+}
+
+export interface MoveDrive {
+  letter: string;
+  label: string;
+  free: number;
+}
+
+export interface MoveCheck {
+  /** Présent seulement si le déplacement est possible. */
+  planId: number | null;
+  fingerprint: string | null;
+  source: string;
+  target: string | null;
+  drive: string | null;
+  drives: MoveDrive[];
+  bytes: number;
+  files: number;
+  /** Taille plus 10 %. */
+  needed: number;
+  free: number;
+  /** Dossier d'appli dans AppData : « À vérifier ». */
+  review: boolean;
+  refusals: MoveRefusal[];
+}
+
+export type MoveStep = "recheck" | "copy" | "verify" | "setAside" | "junction" | "test" | "delete";
+
+export interface MoveProgress {
+  moveId: number;
+  step: MoveStep;
+  done: number;
+  total: number;
+}
+
+export interface MoveRun {
+  moveId: number;
+  /** ready : jonction testée, en attente de la confirmation de suppression de l'original. */
+  outcome: "ready" | "refused" | "rolledBack" | "failed";
+  step: MoveStep | null;
+  message: string | null;
+  refusals: MoveRefusal[];
+  source: string;
+  target: string;
+  bytes: number;
+  files: number;
+}
+
+export interface MoveFinish {
+  outcome: "done" | "rolledBack" | "deleteFailed" | "rollbackFailed";
+  message: string | null;
+  freed: number;
+}
+
+export type MoveHealth = "ok" | "targetVolumeAbsent" | "targetMissing" | "junctionMissing";
+
+export interface MoveRow {
+  id: number;
+  startedAt: number;
+  finishedAt: number | null;
+  undoneAt: number | null;
+  source: string;
+  target: string;
+  bytes: number;
+  files: number;
+  state: "running" | "done" | "rolledBack" | "failed" | "undone";
+  step: string | null;
+  message: string | null;
+  /** Déplacements faits seulement. */
+  health: MoveHealth | null;
+}
+
+export interface MoveUndo {
+  outcome: "done" | "refused" | "failed";
+  message: string | null;
+}
+
+export interface SavedReport {
+  path: string;
+  name: string;
 }

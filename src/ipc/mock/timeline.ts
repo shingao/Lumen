@@ -249,7 +249,7 @@ export function createMockTimeline(now: () => number) {
     },
     database(): DatabaseInfo {
       const snapshots = purged ? 0 : SERIES.reduce((a, s) => a + s.points.length, 0);
-      return { bytes: purged ? 98_304 : 2_621_440 + snapshots * 18_432, snapshots, series: purged ? 0 : SERIES.length };
+      return { bytes: purged ? 98_304 : 2_621_440 + snapshots * 18_432 + 41_943_040, snapshots, series: purged ? 0 : SERIES.length, savedScans: purged ? 0 : 2, savedBytes: purged ? 0 : 41_943_040 };
     },
     purge(): DatabaseInfo {
       purged = true;

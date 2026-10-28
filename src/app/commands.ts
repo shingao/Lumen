@@ -6,6 +6,9 @@ import { backend } from "../ipc/client";
 import { currentT, type Translator } from "../i18n";
 import { SCREENS, type Screen, useStore } from "./store";
 import { updateSettings } from "./theme";
+import { startScan } from "./scanning";
+import { openMove } from "./moves";
+import { openExport } from "./report";
 
 export interface Command {
   id: string;
@@ -30,9 +33,8 @@ export function screenLabel(screen: Screen, t: Translator = currentT()): string 
 export function commandList(): Command[] {
   const t = currentT();
   const store = useStore.getState();
-  const later = (n: number) => () => store.showToast(t("preview.later", { n }));
   return [
-    { id: "scan", label: t("cmd.scan"), hint: t("screen.milestone", { n: 3 }), run: later(3) },
+    { id: "scan", label: t("cmd.scan"), run: () => void startScan(useStore.getState().target) },
     { id: "theme-dark", label: t("cmd.themeDark"), run: () => void updateSettings({ theme: "dark" }) },
     { id: "theme-light", label: t("cmd.themeLight"), run: () => void updateSettings({ theme: "light" }) },
     { id: "theme-system", label: t("cmd.themeSystem"), run: () => void updateSettings({ theme: "system" }) },
@@ -42,6 +44,19 @@ export function commandList(): Command[] {
       run: () => store.go(screen),
     })),
     { id: "settings", label: t("cmd.settings"), run: () => store.setSettingsOpen(true) },
+    ...(store.scan.summary ? [{ id: "export", label: t("cmd.export"), run: openExport }] : []),
+    ...(store.scan.summary && store.node !== null && store.settings?.experimentalMove
+      ? [
+          {
+            id: "move",
+            label: t("cmd.move"),
+            run: () => {
+              const { scan, node } = useStore.getState();
+              if (scan.summary && node !== null) openMove(scan.summary.scanId, node);
+            },
+          },
+        ]
+      : []),
     {
       id: "clean",
       label: t("cmd.clean"),

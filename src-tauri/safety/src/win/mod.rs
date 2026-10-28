@@ -8,14 +8,17 @@ mod effects;
 mod elevated;
 pub mod process;
 mod recycle;
+pub mod relocate;
 mod restore;
 pub mod sinks;
+#[cfg(test)]
+mod relocate_tests;
 #[cfg(test)]
 mod tests;
 mod volume;
 
 pub use effects::{tool_dirs, WinEffects};
-pub use process::{open_launcher, running_processes, OpenError};
+pub use process::{open_item, open_launcher, running_processes, OpenError};
 
 /// Lit (en administrateur, une demande UAC) les clichés instantanés et points de restauration
 /// du lecteur dans `out` (JSON). Lecture seule : aucune suppression.

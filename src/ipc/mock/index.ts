@@ -4,6 +4,7 @@ import { targetKey, type Backend } from "../backend";
 import type { Locale } from "../../core/format";
 import { GIB } from "../../core/format";
 import { fuzzyFilter } from "../../core/fuzzy";
+import { matchesFilters, parseQuery } from "../../core/searchQuery";
 import type {
   CleanEvent,
   CleanPlan,
@@ -28,6 +29,7 @@ import type {
 import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
 import { createMockTimeline } from "./timeline";
+import { createMoves } from "./moves";
 import { DEV_EXTRA_CACHES, mockCover, mockDevCaches, mockDocker, mockGames, mockProjects, mockRunning, mockShaders, mockWsl } from "./devgames";
 import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockNoProtection, mockProgram, mockRestorePoints, mockSinks } from "./advanced";
 
@@ -50,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = {
   logsFolder: "%LOCALAPPDATA%\\Lumen\\logs",
   experimentalSystem: false,
   experimentalWsl: false,
+  experimentalMove: false,
 };
 
 const gb = (n: number) => Math.round(n * GIB);
@@ -225,8 +228,13 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       lastAccessReliable: false,
       notice: null,
       volume: scanVolume(scanId),
+      finishedAt: restoredAt.get(scanId) ?? finishedAt.get(scanId) ?? Date.now(),
+      restored: restoredAt.has(scanId),
     };
   };
+  /** Analyses « enregistrées » (coffre factice : `localStorage` `lumen-dev-restored` = `1`). */
+  const restoredAt = new Map<number, number>();
+  const finishedAt = new Map<number, number>();
 
   function toReco(r: MockReco): Recommendation {
     const tree = TREES["C:"] as VolumeTree;
@@ -281,7 +289,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     appInfo() {
-      return resolved({ elevated: false, fastScanAvailable: true, version: "0.1.0" });
+      return resolved({ elevated: false, fastScanAvailable: true, version: "0.1.0", profile: "C:\\Users\\Arthur" });
     },
 
     volumes() {
@@ -323,7 +331,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       });
       setTimeout(() => {
         finished.add(id);
-        emit({ type: "done", summary: total });
+        finishedAt.set(id, Date.now());
+        emit({ type: "done", summary: { ...total, finishedAt: Date.now() } });
       }, 400);
       return resolved(id);
     },
@@ -333,6 +342,21 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       const ids = [...finished].filter((id) => scans.get(id) === key);
       const last = ids.length > 0 ? Math.max(...ids) : null;
       return resolved(last === null ? null : summaryOf(last));
+    },
+
+    restoreScans() {
+      let on: boolean;
+      try {
+        on = globalThis.localStorage.getItem("lumen-dev-restored") === "1";
+      } catch {
+        on = false;
+      }
+      if (!on || restoredAt.size > 0) return resolved([...restoredAt.keys()].map(summaryOf));
+      const id = ++nextScan;
+      scans.set(id, "user");
+      finished.add(id);
+      restoredAt.set(id, now() - 3 * 3_600_000);
+      return resolved([summaryOf(id)]);
     },
 
     scanCacheInfo() {
@@ -704,21 +728,65 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     search(query, limit) {
+      const q = parseQuery(query);
       const hits: SearchHit[] = [];
-      for (const tree of Object.values(TREES)) {
+      for (const [key, tree] of Object.entries(TREES)) {
+        const drive = key === "D:" ? "D:" : "C:";
+        const scanId = [...finished].reverse().find((id) => scanVolume(id) === drive) ?? 0;
         for (const [id, n] of tree.nodes) {
           if (!n.tile) continue;
-          hits.push({
+          const hit: SearchHit = {
+            scanId,
             id,
             name: l(n.tile.name),
             path: tree.base + l(n.tile.path),
             size: gb(n.tile.size),
             modified: resolveWhen(n.tile.last, now()),
             kind: n.tile.files > 1 ? "dir" : "file",
-          });
+            drive,
+            target: drive === "C:" ? "userProfile" : drive,
+          };
+          if (matchesFilters(q, hit)) hits.push(hit);
         }
       }
-      return resolved(fuzzyFilter(hits, query, (h) => `${h.name} ${h.path}`, limit));
+      const words = q.words.join(" ");
+      const out = words ? fuzzyFilter(hits, words, (h) => h.name, limit) : [...hits].sort((a, b) => b.size - a.size).slice(0, limit);
+      return resolved(out);
+    },
+
+    openItem(_scanId, id, action) {
+      // Comme safety::open : un programme n'est jamais lancé, il est montré dans l'Explorateur.
+      const name = [...Object.values(TREES)].map((t) => t.nodes.get(id)?.tile).find(Boolean);
+      const runnable = name ? /\.(exe|msi|bat|cmd|ps1|lnk|vbs|js)$/i.test(l(name.name)) : false;
+      return resolved(action === "reveal" || runnable ? "reveal" : "open");
+    },
+
+    ...createMoves((id) => {
+      for (const tree of Object.values(TREES)) {
+        const n = tree.nodes.get(id);
+        if (n?.tile) return { name: l(n.tile.name), path: tree.base + l(n.tile.path), size: gb(n.tile.size), files: n.tile.files, dir: n.children.length > 0 || n.tile.files > 1 };
+      }
+      return null;
+    }),
+
+    saveReport(format, stamp, content) {
+      // Navigateur : téléchargement du fichier.
+      const name = `Lumen-rapport-${stamp}.${format}`;
+      try {
+        const url = URL.createObjectURL(new Blob([content], { type: format === "html" ? "text/html" : "text/csv" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        // jsdom : pas de téléchargement.
+      }
+      return resolved({ path: `C:\\Users\\Arthur\\Downloads\\${name}`, name });
+    },
+
+    revealReport() {
+      return resolved(undefined);
     },
 
     settings() {

@@ -9,7 +9,10 @@
 //!   (droits administrateur), volumes, élévation.
 
 pub mod classify;
+pub mod codec;
+pub mod kinds;
 pub mod model;
+pub mod search;
 pub mod walk;
 
 #[cfg(unix)]

@@ -46,6 +46,8 @@ pub struct AppInfo {
     /// « Scan rapide (admin) » proposé : Lumen installé dans Program Files, non modifiable.
     pub fast_scan_available: bool,
     pub version: &'static str,
+    /// Dossier utilisateur (anonymisation des rapports : il devient `%USERPROFILE%`).
+    pub profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,6 +107,10 @@ pub struct SummaryDto {
     pub volume: String,
     /// Information discrète pour l'interface (`mftFragmented` : le parcours a pris le relais).
     pub notice: Option<&'static str>,
+    /// Fin de l'analyse (ms) : « analysé il y a… ».
+    pub finished_at: i64,
+    /// Relue depuis la base au démarrage (pas une analyse de cette session).
+    pub restored: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,12 +168,24 @@ pub(crate) struct Entry {
     notice: Option<&'static str>,
     /// Règles appliquées (absent hors de Windows ou si les règles livrées sont invalides).
     pub(crate) applied: Option<Applied>,
+    pub(crate) finished_at: i64,
+    pub(crate) restored: bool,
+    /// Index de la recherche (noms pliés), construit à la première recherche.
+    pub(crate) index: std::sync::OnceLock<scan::search::Index>,
+}
+
+/// Clé d'enregistrement d'une cible : `userProfile` ou la lettre du disque.
+pub(crate) fn target_key(t: &ScanTarget) -> String {
+    match t {
+        ScanTarget::UserProfile => "userProfile".into(),
+        ScanTarget::Volume { letter } => letter.to_ascii_uppercase(),
+    }
 }
 
 impl Entry {
     /// Mémoire occupée (octets, estimation) : arbre de l'analyse et résultats des règles.
     pub(crate) fn memory_bytes(&self) -> u64 {
-        self.scan.memory_bytes() + self.applied.as_ref().map_or(0, |a| a.analysis.memory_bytes())
+        self.scan.memory_bytes() + self.applied.as_ref().map_or(0, |a| a.analysis.memory_bytes()) + self.index.get().map_or(0, |i| i.memory_bytes())
     }
 }
 
@@ -180,6 +198,8 @@ struct Inner {
     used: HashMap<u32, u64>,
     clock: u64,
     limit: u64,
+    /// Analyses enregistrées déjà remises en mémoire.
+    restored: bool,
 }
 
 impl Inner {
@@ -336,6 +356,8 @@ fn summary(id: u32, e: &Entry) -> SummaryDto {
         last_access_reliable: e.scan.last_access_reliable,
         volume: e.volume.clone(),
         notice: e.notice,
+        finished_at: e.finished_at,
+        restored: e.restored,
     }
 }
 
@@ -354,6 +376,16 @@ fn with_fallback(
 
 pub(crate) mod platform {
     use super::*;
+
+    #[cfg(windows)]
+    pub fn open_item(path: &safety::path::WinPath, is_dir: bool, requested: safety::open::OpenAction) -> Result<safety::open::OpenAction, LumenError> {
+        safety::win::open_item(path, is_dir, requested).map_err(|e| LumenError::Plan(e.to_string()))
+    }
+
+    #[cfg(not(windows))]
+    pub fn open_item(_: &safety::path::WinPath, _: bool, _: safety::open::OpenAction) -> Result<safety::open::OpenAction, LumenError> {
+        Err(LumenError::Plan("disponible sous Windows uniquement".into()))
+    }
 
     #[cfg(windows)]
     pub fn volumes() -> Vec<VolumeDto> {
@@ -446,7 +478,7 @@ pub(crate) mod platform {
 
 #[tauri::command]
 pub fn app_info() -> AppInfo {
-    AppInfo { elevated: platform::elevated(), fast_scan_available: platform::fast_scan_available(), version: env!("CARGO_PKG_VERSION") }
+    AppInfo { elevated: platform::elevated(), fast_scan_available: platform::fast_scan_available(), version: env!("CARGO_PKG_VERSION"), profile: platform::user_profile() }
 }
 
 #[tauri::command]
@@ -526,14 +558,18 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
                         Ok(i) => i,
                         Err(_) => return,
                     };
-                    let entry = Arc::new(Entry { target, scan, volume, notice, applied });
+                    let finished_at = crate::cleanup::unix_ms();
+                    let entry = Arc::new(Entry { target, scan, volume, notice, applied, finished_at, restored: false, index: Default::default() });
                     let dto = summary(id, &entry);
                     inner.keep(id, entry.clone());
                     drop(inner);
                     let _ = app.emit("scan:done", dto);
-                    // Snapshot de la Timeline (tailles agrégées par dossier) ; un échec n'empêche
-                    // jamais l'analyse d'être affichée.
+                    // Snapshot de la Timeline (tailles agrégées par dossier) et analyse enregistrée
+                    // pour le prochain lancement ; un échec n'empêche jamais l'analyse d'être affichée.
                     let _ = crate::timeline::record_scan(&app, &entry.scan, "scan");
+                    let key = target_key(&entry.target);
+                    let volume_key = crate::timeline::volume_key(&entry.volume);
+                    let _ = crate::cleanup::with_journal(&app, |j| crate::persist::save(j.conn(), &key, volume_key.as_deref(), finished_at, &entry.scan).map_err(Into::into));
                 }
                 Err(e) => {
                     drop(inner);
@@ -543,6 +579,136 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
         })
         .map_err(|e| LumenError::Startup(e.to_string()))?;
     Ok(id)
+}
+
+/// Analyses enregistrées au lancement précédent, remises en mémoire (une fois) : l'appli s'ouvre
+/// sur le dernier résultat de chaque cible. Un disque absent, ou une autre clé à la même lettre
+/// (un autre disque), ne reprend pas l'analyse enregistrée.
+#[tauri::command]
+pub async fn scan_restore(app: AppHandle) -> Result<Vec<SummaryDto>, LumenError> {
+    let worker = app.clone();
+    tauri::async_runtime::spawn_blocking(move || restore(&worker)).await.map_err(|e| LumenError::Startup(e.to_string()))?
+}
+
+fn restore(app: &AppHandle) -> Result<Vec<SummaryDto>, LumenError> {
+    let state = tauri::Manager::state::<ScanState>(app);
+    {
+        let inner = state.0.lock().map_err(|_| LumenError::UnknownScan)?;
+        if inner.restored {
+            return Ok(inner.results.iter().filter(|(_, e)| e.restored).map(|(id, e)| summary(*id, e)).collect());
+        }
+    }
+    let saved = crate::cleanup::with_journal(app, |j| crate::persist::load_all(j.conn()).map_err(Into::into))?;
+    let volumes = platform::volumes();
+    let profile = platform::user_profile();
+    let mut out = Vec::new();
+    for s in saved {
+        let (target, volume) = if s.target == "userProfile" {
+            match &profile {
+                Some(p) if p.eq_ignore_ascii_case(&s.scan.root_path) => (ScanTarget::UserProfile, p.chars().take(2).collect::<String>()),
+                _ => continue,
+            }
+        } else {
+            let Some(v) = volumes.iter().find(|v| v.letter.eq_ignore_ascii_case(&s.target)) else { continue };
+            if s.volume_key.is_some() && crate::timeline::volume_key(&v.letter) != s.volume_key {
+                continue;
+            }
+            (ScanTarget::Volume { letter: v.letter.clone() }, v.letter.clone())
+        };
+        let applied = analysis::apply(&s.scan);
+        let entry = Arc::new(Entry { target, scan: s.scan, volume, notice: None, applied, finished_at: s.finished_at, restored: true, index: Default::default() });
+        let mut inner = state.0.lock().map_err(|_| LumenError::UnknownScan)?;
+        // Une analyse de cette session pour la même cible l'emporte.
+        if inner.results.values().any(|e| e.target == entry.target) {
+            continue;
+        }
+        inner.next_id += 1;
+        let id = inner.next_id;
+        out.push(summary(id, &entry));
+        inner.keep(id, entry);
+    }
+    if let Ok(mut inner) = state.0.lock() {
+        inner.restored = true;
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHitDto {
+    pub scan_id: u32,
+    pub id: u32,
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub modified: i64,
+    pub kind: &'static str,
+    /// Lettre du disque (`C:`).
+    pub drive: String,
+    /// `userProfile` ou la lettre du disque analysé.
+    pub target: String,
+}
+
+/// Recherche dans les noms des analyses en mémoire (une par disque, dont celles relues au
+/// lancement) : jamais le contenu des fichiers. `disque:D` limite aux analyses de ce disque.
+#[tauri::command]
+pub async fn scan_search(app: AppHandle, query: String, limit: u32) -> Result<Vec<SearchHitDto>, LumenError> {
+    let worker = app.clone();
+    tauri::async_runtime::spawn_blocking(move || search_all(&tauri::Manager::state::<ScanState>(&worker), &query, limit.clamp(1, 200) as usize))
+        .await
+        .map_err(|e| LumenError::Startup(e.to_string()))
+}
+
+pub(crate) fn search_all(state: &ScanState, query: &str, limit: usize) -> Vec<SearchHitDto> {
+    let q = scan::search::parse(query);
+    let entries: Vec<(u32, Arc<Entry>)> = match state.0.lock() {
+        Ok(i) => i.results.iter().map(|(id, e)| (*id, e.clone())).collect(),
+        Err(_) => return Vec::new(),
+    };
+    let mut hits: Vec<(i64, u64, SearchHitDto)> = Vec::new();
+    for (scan_id, e) in entries {
+        let drive = e.volume.to_ascii_uppercase();
+        if !q.drives.is_empty() && !q.drives.iter().any(|d| drive.starts_with(*d)) {
+            continue;
+        }
+        let idx = e.index.get_or_init(|| scan::search::Index::build(&e.scan));
+        for h in scan::search::search(&e.scan, idx, &q, limit) {
+            let Some(n) = e.scan.node(h.id) else { continue };
+            hits.push((
+                h.score,
+                n.allocated,
+                SearchHitDto {
+                    scan_id,
+                    id: h.id,
+                    name: e.scan.name(h.id).to_owned(),
+                    path: e.scan.path(h.id),
+                    size: n.allocated,
+                    modified: epoch_ms(n.modified),
+                    kind: if matches!(n.kind, Kind::Dir | Kind::CloudDir) { "dir" } else { "file" },
+                    drive: drive.clone(),
+                    target: target_key(&e.target),
+                },
+            ));
+        }
+    }
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    hits.into_iter().take(limit).map(|(_, _, h)| h).collect()
+}
+
+/// Ouvre un résultat de la recherche (`open` : appli par défaut, jamais un programme ;
+/// `reveal` : montré dans l'Explorateur) ; renvoie ce qui a été fait. Le chemin vient de
+/// l'analyse, jamais du front.
+#[tauri::command]
+pub fn item_open(state: State<'_, ScanState>, scan_id: u32, id: u32, action: String) -> Result<&'static str, LumenError> {
+    let e = entry_of(&state, scan_id)?;
+    let n = e.scan.node(id).ok_or(LumenError::UnknownNode)?;
+    let path = safety::path::WinPath::parse(&e.scan.path(id)).map_err(|err| LumenError::Plan(err.to_string()))?;
+    let requested = if action == "reveal" { safety::open::OpenAction::Reveal } else { safety::open::OpenAction::Open };
+    let done = platform::open_item(&path, matches!(n.kind, Kind::Dir | Kind::CloudDir), requested)?;
+    Ok(match done {
+        safety::open::OpenAction::Open => "open",
+        safety::open::OpenAction::Reveal => "reveal",
+    })
 }
 
 /// Dernière analyse d'une cible gardée pendant la session (retour par « Précédent » sans
@@ -737,13 +903,35 @@ mod tests {
 }
 
 #[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn recherche_sur_toutes_les_analyses_en_memoire() {
+        let (_, profile) = crate::analysis::tests::applied();
+        let state = ScanState::default();
+        {
+            let mut inner = state.0.lock().unwrap();
+            inner.keep(1, Arc::new(Entry { target: ScanTarget::UserProfile, scan: profile, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false, index: Default::default() }));
+        }
+        let hits = search_all(&state, "npm", 10);
+        assert!(hits.iter().any(|h| h.name == "npm-cache" && h.path.ends_with("AppData\\Local\\npm-cache") && h.kind == "dir" && h.drive == "C:"), "{hits:?}");
+        assert!(search_all(&state, "npm disque:D", 10).is_empty(), "filtre de disque");
+        assert!(!search_all(&state, "npm disque:C", 10).is_empty());
+        // L'index est gardé avec l'analyse (et compté dans sa mémoire).
+        let inner = state.0.lock().unwrap();
+        assert!(inner.results[&1].index.get().is_some());
+    }
+}
+
+#[cfg(test)]
 mod cache_tests {
     use super::*;
 
     fn entry(target: ScanTarget) -> Arc<Entry> {
         let root = scan::RawEntry { name: "C:".into(), kind: Kind::Dir, attributes: 0, file_id: 5, logical: 0, allocated: 0, modified: 0, accessed: 0 };
         let scan = scan::model::Builder::new(&root).finish("C:\\".into(), 1, scan::Method::Walk, false, scan::Stats::default());
-        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None })
+        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false, index: Default::default() })
     }
 
     /// Analyse d'environ `mib` Mio (nœuds réservés, jamais remplis).
@@ -751,7 +939,7 @@ mod cache_tests {
         let root = scan::RawEntry { name: "C:".into(), kind: Kind::Dir, attributes: 0, file_id: 5, logical: 0, allocated: 0, modified: 0, accessed: 0 };
         let mut scan = scan::model::Builder::new(&root).finish("C:\\".into(), 1, scan::Method::Walk, false, scan::Stats::default());
         scan.nodes.reserve_exact(mib * 1024 * 1024 / std::mem::size_of::<scan::model::Node>());
-        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None })
+        Arc::new(Entry { target, scan, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false, index: Default::default() })
     }
 
     #[test]

@@ -23,6 +23,13 @@ import type {
   JournalAction,
   JournalDetail,
   Kpis,
+  MoveCheck,
+  MoveFinish,
+  MoveProgress,
+  MoveRow,
+  MoveRun,
+  MoveUndo,
+  SavedReport,
   NodeKind,
   Recommendation,
   RecommendationDetail,
@@ -39,6 +46,7 @@ import type {
   GamesResult,
   ShaderCaches,
   ScanCacheInfo,
+  SearchHit,
   WslDisks,
   DatabaseInfo,
   TimelineCompare,
@@ -252,6 +260,7 @@ export function createTauriBackend(): Backend {
 
     findNode: (scanId, path) => invoke<number | null>("scan_find", { scanId, path }),
     cachedScan: (target) => invoke<ScanSummary | null>("scan_cached", { target }),
+    restoreScans: () => invoke<ScanSummary[]>("scan_restore"),
     scanCacheInfo: () => invoke<ScanCacheInfo>("scan_cache_info"),
     async kpis(target, summary) {
       const list = volumes.length > 0 ? volumes : await loadVolumes();
@@ -371,7 +380,20 @@ export function createTauriBackend(): Backend {
     restore: (itemId) => invoke("journal_restore", { itemId }),
 
     // Recherche dans l'index du scan : jalon 9.
-    search: () => Promise.resolve([]),
+    search: (query, limit) => invoke<SearchHit[]>("scan_search", { query, limit }),
+    openItem: (scanId, id, action) => invoke<"open" | "reveal">("item_open", { scanId, id, action }),
+
+    moveCheck: (scanId, nodeId, drive) => invoke<MoveCheck>("move_check", { scanId, nodeId, drive }),
+    moveStart: (planId, fingerprint) => invoke<MoveRun>("move_start", { planId, fingerprint }),
+    moveConfirm: (moveId, deleteOriginal) => invoke<MoveFinish>("move_confirm", { moveId, delete: deleteOriginal }),
+    moves: () => invoke<MoveRow[]>("moves_list"),
+    moveUndo: (moveId) => invoke<MoveUndo>("move_undo", { moveId }),
+    onMoveProgress(listener) {
+      const off = listen<MoveProgress>("move:progress", (e) => listener(e.payload));
+      return () => void off.then((f) => f());
+    },
+    saveReport: (format, stamp, content) => invoke<SavedReport>("report_save", { format, stamp, content }),
+    revealReport: () => invoke("report_reveal"),
 
     settings: () => Promise.resolve({ ...settings }),
 

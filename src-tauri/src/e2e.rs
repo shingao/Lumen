@@ -10,7 +10,7 @@
 #![cfg(windows)]
 
 use std::fs::{self, OpenOptions};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 
@@ -334,4 +334,93 @@ fn purge_des_artefacts_de_faux_projets() {
         let n = scan.find(not).unwrap() as i64;
         assert!(crate::dev::select_artifacts(&applied, &scan, &[n]).is_err(), "{not}");
     }
+}
+
+/// Jalon 9 : déplacement réel d'un dossier d'un faux profil (analysé pour de vrai) vers un
+/// autre disque fixe NTFS (D: sur la CI), journalisé ; un second déplacement interrompu avant
+/// la confirmation est remis en état ; enfin « Annuler le déplacement ».
+#[test]
+fn deplacement_reel_d_un_dossier_du_faux_profil() {
+    use safety::relocate::{finish, prepare, recover, run, staging_of, undo, Finished, Health, MoveContext, MoveProbe, Recovered, Undone};
+    use safety::win::relocate::{app_data_roots, synced_roots, WinMover};
+
+    let root = tempfile::Builder::new().prefix("lumen-e2e-").tempdir().unwrap();
+    let p = root.path().join("Arthur");
+    let at = |rel: &str| p.join(rel);
+    write(&at("Vidéos\\Rushes\\jour 1.mp4"), &[1u8; 200_000]);
+    write(&at("Vidéos\\Rushes\\jour 2\\b.mov"), &[2u8; 100_000]);
+    write(&at("Vidéos\\Montage\\projet.prproj"), b"projet");
+    write(&at("Vidéos\\Archives\\2019.mp4"), &[3u8; 50_000]);
+    write(&at("Documents\\notes.txt"), b"notes");
+
+    let real = scan::win::root_path(p.to_str().unwrap());
+    let scan = scan::walk(&scan::win::WinSource::new(&real), &real, &AtomicBool::new(false), &|_: &scan::Progress| {}).unwrap();
+    // Le front n'envoie qu'un id de nœud : le chemin vient de l'analyse.
+    let node = |name: &str| WinPath::parse(&scan.path(scan.find(name).unwrap())).unwrap();
+    let rushes = node("Vidéos\\Rushes");
+    let archives = node("Vidéos\\Archives");
+    let src_drive = match rushes.prefix() {
+        safety::path::Prefix::Drive(d) => *d,
+        safety::path::Prefix::Unc { .. } => unreachable!(),
+    };
+    let drive = ('C'..='Z')
+        .filter(|d| *d != src_drive)
+        .find(|d| WinMover.volume(*d).is_some_and(|v| v.kind == safety::bin::DriveKind::Fixed && v.ntfs && !v.subst))
+        .expect("second disque fixe NTFS (D: sur la CI)");
+    let deny = DenyList::new(&system_layout().unwrap());
+    let (synced, app_data) = (synced_roots(), app_data_roots());
+    let ctx = MoveContext { deny: &deny, game_dirs: &[], synced_roots: &synced, app_data: &app_data };
+    let journal = Journal::in_memory().unwrap();
+    let c = journal.conn();
+
+    // Déplacement complet, journalisé.
+    let plan = prepare(&rushes, drive, &ctx, &WinMover).unwrap();
+    let target = plan.target.clone();
+    let cleanup = scopeguard(&target);
+    let (s, t) = (rushes.display_string(), target.display_string());
+    let id = crate::moves::store::insert(c, &crate::moves::store::NewMove { source: &s, target: &t, source_volume_key: None, target_volume_key: None, bytes: plan.bytes, files: plan.files, at: 1 }).unwrap();
+    let staged = run(&plan, &plan.fingerprint(), &ctx, &WinMover, &WinMover, &|_, _, _| {}).unwrap();
+    assert_eq!(finish(&staged, true, &WinMover, &WinMover), Finished::Done);
+    crate::moves::store::update(c, id, "done", None, None, Some(2)).unwrap();
+    assert_eq!(crate::moves::store::get(c, id).unwrap().unwrap().state, "done");
+    // Ce qui est parti : l'original (remplacé par la jonction) ; ce qui reste : tout le reste.
+    assert!(!PathBuf::from(staging_of(&rushes).unwrap().display_string()).exists());
+    assert_eq!(fs::read(at("Vidéos\\Rushes\\jour 2\\b.mov")).unwrap(), vec![2u8; 100_000], "lu à travers la jonction");
+    assert_eq!(fs::read(PathBuf::from(&t).join("jour 1.mp4")).unwrap(), vec![1u8; 200_000]);
+    assert_eq!(fs::read(at("Vidéos\\Montage\\projet.prproj")).unwrap(), b"projet");
+    assert_eq!(fs::read(at("Documents\\notes.txt")).unwrap(), b"notes");
+    assert_eq!(safety::relocate::health(&rushes, &target, &WinMover), Health::Ok);
+
+    // Second déplacement interrompu en attendant la confirmation (Lumen fermé) : remis en état.
+    let plan2 = prepare(&archives, drive, &ctx, &WinMover).unwrap();
+    let _cleanup2 = scopeguard(&plan2.target);
+    let staged2 = run(&plan2, &plan2.fingerprint(), &ctx, &WinMover, &WinMover, &|_, _, _| {}).unwrap();
+    drop(staged2);
+    assert_eq!(recover(&archives, &plan2.target, &WinMover, &WinMover), Recovered::RolledBack);
+    assert_eq!(fs::read(at("Vidéos\\Archives\\2019.mp4")).unwrap(), vec![3u8; 50_000]);
+    assert!(WinMover.junction_target(&archives).is_none());
+    assert!(!PathBuf::from(plan2.target.display_string()).exists());
+
+    // Annuler le premier : le dossier revient, vrai dossier, même contenu.
+    assert!(matches!(undo(&rushes, &target, &WinMover, &WinMover, &|_, _, _| {}), Undone::Done { .. }));
+    crate::moves::store::undone(c, id, 3).unwrap();
+    assert!(WinMover.junction_target(&rushes).is_none());
+    assert_eq!(fs::read(at("Vidéos\\Rushes\\jour 1.mp4")).unwrap(), vec![1u8; 200_000]);
+    assert!(!PathBuf::from(&t).exists());
+    drop(cleanup);
+}
+
+/// Retire (par `safety`) la copie laissée sur le disque cible si le test échoue en route.
+struct TargetGuard(WinPath);
+
+impl Drop for TargetGuard {
+    fn drop(&mut self) {
+        if PathBuf::from(self.0.display_string()).exists() {
+            let _ = safety::relocate::MoveEffects::delete_tree(&safety::win::relocate::WinMover, &self.0);
+        }
+    }
+}
+
+fn scopeguard(target: &WinPath) -> TargetGuard {
+    TargetGuard(target.clone())
 }

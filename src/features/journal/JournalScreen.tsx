@@ -6,6 +6,7 @@ import { formatBytes, formatCount, formatDate } from "../../core/format";
 import { currentT, useT } from "../../i18n";
 import { backend } from "../../ipc/client";
 import type { JournalAction, JournalDetail, JournalItem } from "../../ipc/types";
+import { MovesList } from "../move/Moves";
 import screens from "../screens/Screens.module.css";
 import styles from "./JournalScreen.module.css";
 
@@ -174,6 +175,7 @@ export function JournalScreen() {
           <p className={screens.subtitle}>{t("screen.journal.subtitle")}</p>
         </div>
       </div>
+      <MovesList />
       {actions !== null && actions.length === 0 ? (
         <div className={screens.empty}>
           <p>{t("screen.journal.empty")}</p>

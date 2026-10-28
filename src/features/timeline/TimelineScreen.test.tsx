@@ -101,18 +101,18 @@ describe("Timeline", () => {
     expect(growing(null)).toBe("L'espace utilisé augmente de 7,0 Go par semaine sur les 30 derniers jours, nettoyages de Lumen exclus.");
   });
 
-  it("Paramètres : taille de la base et purge des snapshots après confirmation", async () => {
+  it("Paramètres : données locales (snapshots et analyses enregistrées), purge après confirmation", async () => {
     useStore.setState({ settingsOpen: true });
     render(<SettingsScreen />);
-    const row = (await screen.findByText("Historique de la Timeline")).closest("div")?.parentElement ?? null;
-    await waitFor(() => expect(text(row)).toMatch(/\d+,\d Mo · \d+ snapshots · 5 séries/));
+    const row = (await screen.findByText("Données locales")).closest("div")?.parentElement ?? null;
+    await waitFor(() => expect(text(row)).toMatch(/\d+,\d Mo · \d+ snapshots · 5 séries · 2 analyses enregistrées \(40,0 Mo\)/));
     fireEvent.click(screen.getByRole("button", { name: "Purger…" }));
-    expect(text(row)).toContain("Le journal des nettoyages est gardé");
+    expect(text(row)).toContain("Les journaux des nettoyages et des déplacements sont gardés");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Supprimer tout l'historique" }));
+      fireEvent.click(screen.getByRole("button", { name: "Supprimer l'historique et les analyses" }));
     });
-    await waitFor(() => expect(text(row)).toMatch(/0 snapshot · 0 série/));
-    expect(useStore.getState().toast?.text).toBe("Historique de la Timeline purgé");
+    await waitFor(() => expect(text(row)).toMatch(/0 snapshot · 0 série · 0 analyse enregistrée/));
+    expect(useStore.getState().toast?.text).toBe("Historique et analyses enregistrées purgés");
     expect((screen.getByRole("button", { name: "Purger…" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

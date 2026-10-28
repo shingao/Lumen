@@ -369,23 +369,33 @@ pub struct DatabaseDto {
     pub bytes: u64,
     pub snapshots: u64,
     pub series: u64,
+    /// Analyses enregistrées (une par cible) et leur taille compressée.
+    pub saved_scans: u64,
+    pub saved_bytes: u64,
 }
 
-impl From<store::DbStats> for DatabaseDto {
-    fn from(s: store::DbStats) -> DatabaseDto {
-        DatabaseDto { bytes: s.bytes, snapshots: s.snapshots, series: s.series }
-    }
+fn database_dto(conn: &rusqlite::Connection, s: store::DbStats) -> Result<DatabaseDto, JournalError> {
+    let saved = crate::persist::stats(conn).map_err(sql)?;
+    Ok(DatabaseDto { bytes: s.bytes, snapshots: s.snapshots, series: s.series, saved_scans: saved.count, saved_bytes: saved.bytes })
 }
 
 #[tauri::command]
 pub fn timeline_database(app: AppHandle) -> Result<DatabaseDto, LumenError> {
-    with_journal(&app, |j| store::stats(j.conn()).map(DatabaseDto::from).map_err(sql))
+    with_journal(&app, |j| {
+        let s = store::stats(j.conn()).map_err(sql)?;
+        database_dto(j.conn(), s)
+    })
 }
 
-/// Purge de l'historique des snapshots (le journal des nettoyages est gardé).
+/// Purge de l'historique des snapshots et des analyses enregistrées (le journal des nettoyages,
+/// qui sert à restaurer depuis la Corbeille, et celui des déplacements sont gardés).
 #[tauri::command]
 pub fn timeline_purge(app: AppHandle) -> Result<DatabaseDto, LumenError> {
-    let dto = with_journal(&app, |j| store::purge(j.conn()).map(DatabaseDto::from).map_err(sql))?;
+    let dto = with_journal(&app, |j| {
+        crate::persist::purge(j.conn()).map_err(sql)?;
+        let s = store::purge(j.conn()).map_err(sql)?;
+        database_dto(j.conn(), s)
+    })?;
     let _ = app.emit("timeline:changed", ());
     Ok(dto)
 }

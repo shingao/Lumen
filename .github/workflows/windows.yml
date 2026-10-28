@@ -191,6 +191,13 @@ jobs:
           & $bench compare "C:\" | Tee-Object -Append -FilePath $sum
           '```' | Out-File -Append $sum
           "</details>" | Out-File -Append $sum
+          "" | Out-File -Append $sum
+          "## Recherche instantanée : 1 million d'entrées (objectif < 50 ms par requête)" | Out-File -Append $sum
+          "" | Out-File -Append $sum
+          "| requête | résultats | durée |" | Out-File -Append $sum
+          "|---|---|---|" | Out-File -Append $sum
+          & $bench search 1000000 | Tee-Object -Append -FilePath $sum
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
   front:
     needs: [safety, safety-portable]

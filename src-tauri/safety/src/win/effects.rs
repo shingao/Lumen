@@ -180,7 +180,7 @@ fn delete_one(path: &WinPath, expected: &Expected) -> Result<(), RemoveError> {
     mark_for_deletion(&h)
 }
 
-fn mark_for_deletion(h: &Handle) -> Result<(), RemoveError> {
+pub(super) fn mark_for_deletion(h: &Handle) -> Result<(), RemoveError> {
     let ex = FILE_DISPOSITION_INFO_EX {
         Flags: FILE_DISPOSITION_INFO_EX_FLAGS(
             FILE_DISPOSITION_FLAG_DELETE.0 | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS.0 | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE.0,

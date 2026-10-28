@@ -78,5 +78,9 @@ export async function initScanning(): Promise<void> {
   subscribe();
   const info = await backend.appInfo().catch(() => null);
   useStore.setState({ appInfo: info });
-  await startScan(useStore.getState().target);
+  // Dernière analyse enregistrée de la cible : affichée tout de suite, réanalysée à la demande.
+  await backend.restoreScans().catch(() => []);
+  const target = useStore.getState().target;
+  if ((await showCachedScan(target)) !== null) return;
+  await startScan(target);
 }

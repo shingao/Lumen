@@ -15,6 +15,13 @@ import type {
   JournalDetail,
   RestorePoints,
   Kpis,
+  MoveCheck,
+  MoveFinish,
+  MoveProgress,
+  MoveRow,
+  MoveRun,
+  MoveUndo,
+  SavedReport,
   LargestResult,
   NodeId,
   Recommendation,
@@ -56,6 +63,8 @@ export interface Backend {
   findNode(scanId: number, path: string): Promise<NodeId | null>;
   /** Dernière analyse d'une cible gardée pendant la session (retour instantané), ou null. */
   cachedScan(target: ScanTarget): Promise<ScanSummary | null>;
+  /** Analyses enregistrées au lancement précédent, remises en mémoire (une par cible). */
+  restoreScans(): Promise<ScanSummary[]>;
   /** Mémoire des analyses gardées pendant la session (Paramètres). */
   scanCacheInfo(): Promise<ScanCacheInfo>;
   kpis(target: ScanTarget, summary: ScanSummary | null): Promise<Kpis>;
@@ -88,7 +97,11 @@ export interface Backend {
   journalScript(actionId: number): Promise<string>;
   /** « Restaurer depuis la Corbeille » d'un élément du journal. */
   restore(itemId: number): Promise<void>;
+  /** Recherche dans les noms des dernières analyses (filtres `ext:`, `>1go`, `type:`, `disque:`). */
   search(query: string, limit: number): Promise<SearchHit[]>;
+  /** Ouvre un résultat (`open` : appli par défaut, jamais un programme ; `reveal` : Explorateur).
+   * Renvoie ce qui a été fait. */
+  openItem(scanId: number, id: NodeId, action: "open" | "reveal"): Promise<"open" | "reveal">;
   /** Jeux installés, détectés en lecture seule chez leurs launchers. */
   games(): Promise<GamesResult>;
   /** Jaquette du cache local du launcher (data URL), ou null. */
@@ -115,6 +128,20 @@ export interface Backend {
   database(): Promise<DatabaseInfo>;
   /** Supprime tous les snapshots (le journal des nettoyages est gardé). */
   purgeSnapshots(): Promise<DatabaseInfo>;
+  /** Vérifie le déplacement d'un dossier de l'analyse vers un autre disque (le plus libre si `drive` est null). */
+  moveCheck(scanId: number, nodeId: NodeId, drive: string | null): Promise<MoveCheck>;
+  /** Copie, vérification, jonction et test ; s'arrête avant toute suppression. */
+  moveStart(planId: number, fingerprint: string): Promise<MoveRun>;
+  /** Suppression définitive de l'original (confirmée), ou retour en arrière. */
+  moveConfirm(moveId: number, deleteOriginal: boolean): Promise<MoveFinish>;
+  /** Déplacements du journal et état de leurs jonctions. */
+  moves(): Promise<MoveRow[]>;
+  moveUndo(moveId: number): Promise<MoveUndo>;
+  onMoveProgress(listener: (p: MoveProgress) => void): () => void;
+  /** Enregistre un rapport dans Téléchargements, sous un nom neuf. */
+  saveReport(format: "html" | "csv", stamp: string, content: string): Promise<SavedReport>;
+  /** Montre le dernier rapport enregistré dans l'Explorateur. */
+  revealReport(): Promise<void>;
   settings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
 }
