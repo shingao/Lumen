@@ -45,7 +45,7 @@ export function commandList(): Command[] {
     })),
     { id: "settings", label: t("cmd.settings"), run: () => store.setSettingsOpen(true) },
     ...(store.scan.summary ? [{ id: "export", label: t("cmd.export"), run: openExport }] : []),
-    ...(store.scan.summary && store.node !== null
+    ...(store.scan.summary && store.node !== null && store.settings?.experimentalMove
       ? [
           {
             id: "move",

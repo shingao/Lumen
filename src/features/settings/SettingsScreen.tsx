@@ -246,6 +246,9 @@ export function SettingsScreen() {
             <Row label={t("settings.experimentalWsl")} hint={t("settings.experimentalWslHint")}>
               <Toggle label={t("settings.experimentalWsl")} checked={settings.experimentalWsl} onChange={(experimentalWsl) => set({ experimentalWsl })} />
             </Row>
+            <Row label={t("settings.experimentalMove")} hint={t("settings.experimentalMoveHint")}>
+              <Toggle label={t("settings.experimentalMove")} checked={settings.experimentalMove} onChange={(experimentalMove) => set({ experimentalMove })} />
+            </Row>
           </Group>
 
           <Group title={t("settings.help")}>

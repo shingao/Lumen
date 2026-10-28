@@ -189,6 +189,8 @@ export const fr = {
   "settings.experimentalSystem": "Gouffres système",
   "settings.experimentalSystemHint": "WinSxS, hibernation, points de restauration, Windows.old : commandes administrateur, pas encore vérifiées sur une vraie machine.",
   "settings.experimentalWsl": "Compactage WSL / Docker",
+  "settings.experimentalMove": "Déplacement intelligent",
+  "settings.experimentalMoveHint": "Déplacer un dossier vers un autre disque (copie vérifiée, jonction, suppression de l'original après confirmation) : pas encore vérifié sur une vraie machine.",
   "settings.experimentalWslHint": "wsl --shutdown puis compactage des disques virtuels (.vhdx) en administrateur : pas encore vérifié sur une vraie machine.",
 
   "palette.label": "Palette de recherche et de commandes",

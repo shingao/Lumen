@@ -207,6 +207,8 @@ export interface Settings {
   experimentalSystem: boolean;
   /** Compactage des disques WSL / Docker (jalon 8), désactivé tant qu'il n'est pas vérifié en VM. */
   experimentalWsl: boolean;
+  /** Déplacement intelligent (jalon 9), désactivé tant qu'il n'est pas vérifié en VM avec un second disque. */
+  experimentalMove: boolean;
 }
 
 // --- Nettoyage (jalon 5) -------------------------------------------------------------------

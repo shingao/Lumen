@@ -52,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = {
   logsFolder: "%LOCALAPPDATA%\\Lumen\\logs",
   experimentalSystem: false,
   experimentalWsl: false,
+  experimentalMove: false,
 };
 
 const gb = (n: number) => Math.round(n * GIB);

@@ -37,6 +37,8 @@ export function Explorer() {
   const fastScanAvailable = useStore((s) => s.appInfo?.fastScanAvailable ?? false);
   const node = useStore((s) => s.node);
   const scanId = useStore((s) => s.scan.summary?.scanId ?? null);
+  // Déplacement intelligent : réglage Expérimental tant qu'il n'est pas vérifié en VM.
+  const moveOn = useStore((s) => s.settings?.experimentalMove ?? false);
   const back = useNav((s) => s.back.at(-1) ?? null);
   const forward = useNav((s) => s.forward.at(-1) ?? null);
   const colorMode = useStore((s) => s.colorMode);
@@ -159,7 +161,7 @@ export function Explorer() {
         <div className={styles.crumbEnd}>
           {!running && (
             <>
-              {node !== null && scanId !== null && tree?.root.kind === "dir" && (
+              {moveOn && node !== null && scanId !== null && tree?.root.kind === "dir" && (
                 <Button variant="link" className={styles.scanLink} title={t("move.openLabel")} aria-haspopup="dialog" onClick={() => openMove(scanId, node)}>
                   {t("move.open")}
                 </Button>

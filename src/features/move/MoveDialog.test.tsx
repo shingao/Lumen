@@ -137,3 +137,16 @@ describe("Suivi des jonctions", () => {
     await waitFor(() => expect(undo).toHaveBeenCalledWith(1));
   });
 });
+
+describe("Réglage Expérimental", () => {
+  it("sans « Déplacement intelligent », aucune commande de déplacement", async () => {
+    const { commandList } = await import("../../app/commands");
+    const { DEFAULT_SETTINGS } = await import("../../ipc/mock");
+    const summary = { scanId: 1 } as NonNullable<ReturnType<typeof useStore.getState>["scan"]["summary"]>;
+    useStore.setState({ node: 42, settings: { ...DEFAULT_SETTINGS }, scan: { ...useStore.getState().scan, summary } });
+    expect(DEFAULT_SETTINGS.experimentalMove).toBe(false);
+    expect(commandList().some((c) => c.id === "move")).toBe(false);
+    useStore.setState({ settings: { ...DEFAULT_SETTINGS, experimentalMove: true } });
+    expect(commandList().some((c) => c.id === "move")).toBe(true);
+  });
+});

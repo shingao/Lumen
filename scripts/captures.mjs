@@ -316,6 +316,8 @@ await shot("46-parametres-memoire", { act: async (p) => {
 } });
 // Jalon 9 : analyse enregistrée, recherche filtrée, déplacement intelligent, export.
 const zoomInto = async (p, name) => {
+  // Déplacement intelligent : derrière le réglage Expérimental tant qu'il n'est pas vérifié en VM.
+  await experimental(p, "experimentalMove");
   await p.locator("[data-level='3']").first().waitFor();
   const tile = await hoverTile(p, name);
   await tile.locator(":scope > [data-expand]").click();

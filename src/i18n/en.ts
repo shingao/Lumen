@@ -188,6 +188,8 @@ export const en: Record<MessageKey, string> = {
   "settings.experimentalSystem": "System sinks",
   "settings.experimentalSystemHint": "WinSxS, hibernation, restore points, Windows.old: administrator commands, not yet verified on a real machine.",
   "settings.experimentalWsl": "WSL / Docker compaction",
+  "settings.experimentalMove": "Smart move",
+  "settings.experimentalMoveHint": "Move a folder to another disk (verified copy, junction, original deleted after confirmation): not yet verified on a real machine.",
   "settings.experimentalWslHint": "wsl --shutdown, then compaction of the virtual disks (.vhdx) as administrator: not yet verified on a real machine.",
 
   "palette.label": "Search and command palette",
