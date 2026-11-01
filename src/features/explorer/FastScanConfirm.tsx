@@ -11,10 +11,15 @@ interface Props {
   y: number;
   onConfirm(): void;
   onCancel(): void;
+  /** Autre confirmation de même forme (lecteur réseau) : titre, phrase et bouton. */
+  label?: string;
+  text?: string;
+  go?: string;
 }
 
-/** Une phrase d'explication avant la demande de droits administrateur du scan rapide. */
-export function FastScanConfirm({ x, y, onConfirm, onCancel }: Props) {
+/** Une phrase d'explication avant la demande de droits administrateur du scan rapide (ou avant
+ * l'analyse d'un lecteur réseau, lente). */
+export function FastScanConfirm({ x, y, onConfirm, onCancel, label, text, go }: Props) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [left, setLeft] = useState(x);
@@ -37,14 +42,14 @@ export function FastScanConfirm({ x, y, onConfirm, onCancel }: Props) {
   }, [onCancel]);
 
   return createPortal(
-    <div ref={ref} role="dialog" aria-label={t("explorer.fastScan")} className={`${pop.pop} ${styles.box}`} style={{ left, top: y }}>
-      <p className={styles.text}>{t("explorer.fastScanText")}</p>
+    <div ref={ref} role="dialog" aria-label={label ?? t("explorer.fastScan")} className={`${pop.pop} ${styles.box}`} style={{ left, top: y }}>
+      <p className={styles.text}>{text ?? t("explorer.fastScanText")}</p>
       <div className={styles.actions}>
         <Button variant="link" onClick={onCancel}>
           {t("explorer.fastScanCancel")}
         </Button>
         <Button variant="primary" onClick={onConfirm}>
-          {t("explorer.fastScanGo")}
+          {go ?? t("explorer.fastScanGo")}
         </Button>
       </div>
     </div>,

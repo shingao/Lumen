@@ -10,6 +10,7 @@ mod cleanup;
 #[cfg(test)]
 mod e2e;
 mod depth;
+mod devices;
 mod dev;
 mod error;
 mod games;
@@ -50,6 +51,8 @@ pub fn run() {
             // Jonctions du déplacement intelligent, listées pour la désinstallation.
             let handle = app.handle().clone();
             std::thread::spawn(move || moves::write_junction_list(&handle));
+            // Périphériques branchés ou débranchés : liste mise à jour sans redémarrer.
+            devices::watch(app.handle().clone());
             Ok(())
         })
         .on_window_event(integration::on_window_event)

@@ -694,6 +694,8 @@ pub fn advanced_plan(
         return cleanup::prepare(&clean, &sel, mode, "Images Docker sans étiquette".into(), ("docker", None), &|p| p.to_owned());
     }
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
+    // Clé USB, carte SD, réseau : pas de Corbeille, aucun nettoyage proposé.
+    crate::devices::ensure_cleanable(&entry.volume)?;
     if let AdvancedRequest::Shaders = request {
         let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
         let mut sel = cleanup::select(applied, &entry.scan, &[crate::games::SHADERS_RULE.to_owned()])?;

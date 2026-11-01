@@ -477,9 +477,20 @@ pub enum VolumeKind {
     Other,
 }
 
+/// Bus du support, lu par `IOCTL_STORAGE_QUERY_PROPERTY` : un disque USB peut se déclarer
+/// « fixe » (`GetDriveTypeW`), une carte SD « amovible » comme une clé.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bus {
+    Usb,
+    Sd,
+    Other,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Volume {
     pub letter: char,
+    pub bus: Bus,
     pub label: String,
     pub file_system: String,
     pub kind: VolumeKind,
@@ -531,9 +542,58 @@ pub fn volumes() -> Vec<Volume> {
         let mut name = [0u16; 64];
         // SAFETY : chaîne et tampon possédés (50 caractères suffisent pour « \\?\Volume{GUID}\ »).
         let guid = unsafe { GetVolumeNameForVolumeMountPointW(&root, &mut name) }.ok().map(|_| text(&name)).filter(|g| g.contains('{'));
-        out.push(Volume { letter, label: text(&label), file_system: text(&fs), kind, total, free, guid, serial });
+        let bus = if kind == VolumeKind::Network { Bus::Other } else { bus_type(letter) };
+        out.push(Volume { letter, bus, label: text(&label), file_system: text(&fs), kind, total, free, guid, serial });
     }
     out
+}
+
+/// Lettres présentes (bit 0 = A:) : appel immédiat, sans toucher aux lecteurs, d'où la détection
+/// à chaud par comparaison de ce masque (un lecteur réseau lent ne bloque jamais la boucle).
+pub fn drive_mask() -> u32 {
+    // SAFETY : sans paramètre.
+    unsafe { GetLogicalDrives() }
+}
+
+/// Bus du support d'une lettre : volume ouvert sans aucun droit d'accès (requête de propriétés
+/// seulement, aucun droit administrateur), jamais lu.
+fn bus_type(letter: char) -> Bus {
+    use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+    use windows::Win32::System::Ioctl::{PropertyStandardQuery, StorageDeviceProperty, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY};
+    use windows::Win32::System::IO::DeviceIoControl;
+    let path = HSTRING::from(format!("\\\\.\\{letter}:"));
+    // SAFETY : chaîne possédée ; handle fermé par Handle.
+    let Ok(h) = (unsafe { CreateFileW(&path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None) }) else {
+        return Bus::Unknown;
+    };
+    let h = Handle(h);
+    let query = STORAGE_PROPERTY_QUERY { PropertyId: StorageDeviceProperty, QueryType: PropertyStandardQuery, ..Default::default() };
+    // Tampon aligné : le descripteur et ses chaînes (on ne lit que BusType).
+    let mut buf = [0u64; 128];
+    let mut got = 0u32;
+    // SAFETY : structures et tampon possédés, tailles annoncées.
+    let ok = unsafe {
+        DeviceIoControl(
+            h.0,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            Some(&query as *const STORAGE_PROPERTY_QUERY as *const c_void),
+            std::mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            std::mem::size_of_val(&buf) as u32,
+            Some(&mut got),
+            None,
+        )
+    };
+    if ok.is_err() || (got as usize) < std::mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
+        return Bus::Unknown;
+    }
+    // SAFETY : tampon aligné sur 8 octets, au moins la taille du descripteur rempli.
+    let desc = unsafe { &*(buf.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR) };
+    match desc.BusType.0 {
+        7 => Bus::Usb,         // BusTypeUsb
+        0x0C | 0x0D => Bus::Sd, // BusTypeSd, BusTypeMmc
+        _ => Bus::Other,
+    }
 }
 
 /// L'appli tourne-t-elle déjà avec les droits administrateur ?

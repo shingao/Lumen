@@ -2,6 +2,7 @@ import { openCleanup } from "../../app/cleaning";
 import { useCopyFlash } from "../../app/clipboard";
 import { useKpis, useRecommendations } from "../../app/data";
 import { useStore } from "../../app/store";
+import { useCleanable } from "../../app/volumes";
 import { Button } from "../../components/Button";
 import { StatusDot } from "../../components/StatusDot";
 import { formatBytes } from "../../core/format";
@@ -18,6 +19,7 @@ function Row({ reco }: { reco: Recommendation }) {
   const toggle = useStore((s) => s.toggleChecked);
   const setHover = useStore((s) => s.setHoverReco);
   const open = useStore((s) => s.setOpenReco);
+  const cleanable = useCleanable();
   return (
     <div
       className={styles.row}
@@ -28,7 +30,7 @@ function Row({ reco }: { reco: Recommendation }) {
       onBlur={() => setHover(null)}
     >
       <label className={styles.label}>
-        <input type="checkbox" className={styles.check} checked={checked} onChange={() => toggle(reco.id)} />
+        {cleanable && <input type="checkbox" className={styles.check} checked={checked} onChange={() => toggle(reco.id)} />}
         <span className={styles.text}>
           <span className={styles.name}>{reco.name}</span>
           <span className={styles.path}>{reco.path}</span>
@@ -73,6 +75,8 @@ export function Recommendations() {
   const recos = useRecommendations() ?? [];
   const rulesReady = useKpis()?.rulesReady ?? true;
   const [copied, copy] = useCopyFlash();
+  // Clé USB, carte SD, lecteur réseau : recommandations affichées, aucun nettoyage proposé.
+  const cleanable = useCleanable();
 
   const safe = recos.filter((r) => r.status === "safe");
   const review = recos.filter((r) => r.status === "review");
@@ -96,44 +100,50 @@ export function Recommendations() {
         )}
       </div>
 
-      <div className={styles.footer}>
-        <span className={styles.summary}>
-          {(() => {
-            const [sizePart, rest] = t.plural("reco.selected", selected.length, { size: "\u0000" }).split("\u0000");
-            return (
-              <>
-                {sizePart}
-                <span className={styles.summarySize}>{formatBytes(selectedSize, t.locale)}</span>
-                {rest}
-              </>
-            );
-          })()}
-        </span>
-        <div className={styles.actions}>
-          <Button
-            variant="link"
-            onClick={() => setChecked([...new Set([...checked, ...safe.map((r) => r.id)])])}
-          >
-            {t("reco.selectSafe")}
-          </Button>
-          <div className={styles.buttons}>
+      {!cleanable ? (
+        <div className={styles.footer}>
+          <p className={styles.summary}>{t("devices.noCleanup")}</p>
+        </div>
+      ) : (
+        <div className={styles.footer}>
+          <span className={styles.summary}>
+            {(() => {
+              const [sizePart, rest] = t.plural("reco.selected", selected.length, { size: "\u0000" }).split("\u0000");
+              return (
+                <>
+                  {sizePart}
+                  <span className={styles.summarySize}>{formatBytes(selectedSize, t.locale)}</span>
+                  {rest}
+                </>
+              );
+            })()}
+          </span>
+          <div className={styles.actions}>
             <Button
-              variant="primary"
-              disabled={selected.length === 0 || scanId === null}
-              onClick={() =>
-                void copy(backend.script(scanId ?? 0, selected.map((r) => r.id))).then(
-                  (ok) => ok && showToast(currentT()("preview.scriptCopied")),
-                )
-              }
+              variant="link"
+              onClick={() => setChecked([...new Set([...checked, ...safe.map((r) => r.id)])])}
             >
-              {copied ? t("reco.copied") : t("reco.copyScript")}
+              {t("reco.selectSafe")}
             </Button>
-            <Button variant="clean" disabled={selected.length === 0 || scanId === null} onClick={() => openCleanup(selected.map((r) => r.id))}>
-              {t("reco.clean")}
-            </Button>
+            <div className={styles.buttons}>
+              <Button
+                variant="primary"
+                disabled={selected.length === 0 || scanId === null}
+                onClick={() =>
+                  void copy(backend.script(scanId ?? 0, selected.map((r) => r.id))).then(
+                    (ok) => ok && showToast(currentT()("preview.scriptCopied")),
+                  )
+                }
+              >
+                {copied ? t("reco.copied") : t("reco.copyScript")}
+              </Button>
+              <Button variant="clean" disabled={selected.length === 0 || scanId === null} onClick={() => openCleanup(selected.map((r) => r.id))}>
+                {t("reco.clean")}
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

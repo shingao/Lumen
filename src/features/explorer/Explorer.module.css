@@ -114,8 +114,7 @@
   border-radius: var(--r-seg-btn);
 }
 
-.drive:hover,
-.drive[aria-expanded="true"] {
+.drive:hover {
   background: var(--bg-sunken);
   color: var(--text-1);
 }
@@ -158,4 +157,14 @@
   font-size: var(--fs-12);
   color: var(--text-1);
   white-space: nowrap;
+}
+
+/* Clé USB, carte SD, lecteur réseau : pas de Corbeille, aucun nettoyage proposé. */
+.banner {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  background: var(--st-review);
+  font-size: var(--fs-12-5);
+  color: var(--text-2);
 }

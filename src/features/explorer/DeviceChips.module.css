@@ -1,0 +1,108 @@
+/* Puces des volumes : même DA que la barre du fil d'Ariane (fond de l'appli, bord fin, mono). */
+.row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.chip {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 132px;
+  max-width: 220px;
+  padding: 6px 10px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  background: var(--bg-app);
+  color: var(--text-2);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--bg-sunken);
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--bg-container);
+  border-color: var(--tile-ring);
+  color: var(--text-1);
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.letter {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+}
+
+.kind {
+  flex: none;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--bg-sunken);
+  font-size: var(--fs-10-5);
+  color: var(--text-label-sunken);
+  white-space: nowrap;
+}
+
+.chip[data-kind="usb"] .kind,
+.chip[data-kind="sd"] .kind,
+.chip[data-kind="removable"] .kind {
+  background: var(--st-review);
+  color: var(--text-2);
+}
+
+.chip[data-kind="network"] .kind {
+  background: var(--cat-android);
+  color: var(--text-2);
+}
+
+.gauge {
+  height: 3px;
+  border-radius: var(--r-bar);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.gaugeFill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-bar);
+  background: var(--text-4);
+}
+
+.gaugeFill[data-full] {
+  background: var(--st-review-dot);
+}
+
+.meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-10-5);
+  color: var(--text-label);
+}

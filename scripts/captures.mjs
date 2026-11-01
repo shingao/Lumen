@@ -500,5 +500,28 @@ await shot("73-kpi-profondeur", { act: async (p) => {
   await depthDone(p);
   await nav(p, "Analyse");
 } });
+// Périphériques : puces des volumes (clé USB branchée), bandeau « Pas de Corbeille », réseau.
+const withUsb = (act) => async (p) => {
+  await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-devices", "usb"));
+  await p.reload();
+  await p.waitForSelector("#root > *");
+  await p.getByRole("group", { name: "Volumes" }).getByRole("button", { name: /^E: KINGSTON/ }).waitFor();
+  if (act) await act(p);
+};
+await shot("74-peripheriques", { act: withUsb() });
+await shot("74-peripheriques-usb", { act: withUsb(async (p) => {
+  await p.getByRole("group", { name: "Volumes" }).getByRole("button", { name: /^E: KINGSTON/ }).click();
+  await p.getByRole("note").waitFor();
+  await p.waitForTimeout(600);
+}) });
+await shot("74-peripheriques-usb-sombre", { theme: "dark", act: withUsb(async (p) => {
+  await p.getByRole("group", { name: "Volumes" }).getByRole("button", { name: /^E: KINGSTON/ }).click();
+  await p.getByRole("note").waitFor();
+  await p.waitForTimeout(600);
+}) });
+await shot("75-lecteur-reseau", { act: async (p) => {
+  await p.getByRole("group", { name: "Volumes" }).getByRole("button", { name: /^Z:/ }).click();
+  await p.getByRole("dialog").waitFor();
+} });
 await browser.close();
 console.log(`captures dans ${out}`);

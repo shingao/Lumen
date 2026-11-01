@@ -76,6 +76,8 @@ function Unanalyzed({ value }: { value: string }) {
     void loadCachedDepth();
   }, []);
   const open = () => go("depth");
+  // L'analyse en profondeur porte sur le volume système : pas de bouton sur un autre disque.
+  const otherVolume = useStore((s) => s.target.kind === "volume" && s.target.letter.toUpperCase() !== systemDrive());
   return (
     <div className={styles.cell}>
       <span className={styles.label}>
@@ -85,7 +87,7 @@ function Unanalyzed({ value }: { value: string }) {
       <span className={`${styles.value} ${styles.muted}`}>{value}</span>
       <span className={styles.subRow}>
         <span className={styles.sub}>{status === "running" ? t("kpi.depthRunning") : t("kpi.unanalyzedSub")}</span>
-        {finishedAt !== null || status === "running" ? (
+        {otherVolume ? null : finishedAt !== null || status === "running" ? (
           <button type="button" className={styles.action} onClick={open}>
             {t("kpi.depthOpen")}
           </button>

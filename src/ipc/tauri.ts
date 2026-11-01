@@ -135,6 +135,8 @@ interface VolumeDto {
   total: number;
   free: number;
   mftCapable: boolean;
+  cleanable: boolean;
+  analyzedAt: number | null;
 }
 
 /** Plan tel que le renvoie Rust : nom de règle en (fr, en). */
@@ -221,9 +223,8 @@ export function createTauriBackend(): Backend {
   // Analyse affichée : les détails de recommandation s'y rapportent.
   let lastScanId = 0;
 
-  const loadVolumes = async (): Promise<Volume[]> => {
-    const list = await invoke<VolumeDto[]>("volumes_list");
-    volumes = list.map((v) => ({
+  const toVolumes = (list: VolumeDto[]): Volume[] =>
+    list.map((v) => ({
       id: v.letter,
       key: v.key,
       letter: v.letter,
@@ -233,7 +234,11 @@ export function createTauriBackend(): Backend {
       mftCapable: v.mftCapable,
       total: v.total,
       free: v.free,
+      cleanable: v.cleanable,
+      analyzedAt: v.analyzedAt,
     }));
+  const loadVolumes = async (): Promise<Volume[]> => {
+    volumes = toVolumes(await invoke<VolumeDto[]>("volumes_list"));
     return volumes;
   };
 
@@ -245,6 +250,14 @@ export function createTauriBackend(): Backend {
     appInfo: () => invoke<AppInfo>("app_info"),
 
     volumes: loadVolumes,
+
+    onVolumesChanged(listener) {
+      const off = listen<VolumeDto[]>("volumes:changed", (e) => {
+        volumes = toVolumes(e.payload);
+        listener(volumes);
+      });
+      return () => void off.then((f) => f());
+    },
 
     startScan: (target, method) => invoke<number>("scan_start", { target, method }),
 

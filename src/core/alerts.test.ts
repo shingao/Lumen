@@ -7,6 +7,8 @@ const vol = (letter: string, free: number, total: number, kind: Volume["kind"] =
   key: `guid-${letter}`,
   letter,
   label: "",
+  cleanable: kind === "fixed",
+  analyzedAt: null,
   kind,
   fileSystem: "NTFS",
   mftCapable: true,

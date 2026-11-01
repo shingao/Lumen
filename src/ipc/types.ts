@@ -58,7 +58,9 @@ export interface TreeSlice {
   breadcrumb: Crumb[];
 }
 
-export type VolumeKind = "fixed" | "removable" | "network" | "other";
+/** fixed : disque interne ; usb (clé ou disque USB, même « fixe ») ; sd (carte SD) ; removable
+ * (autre amovible) ; network (lecteur réseau) ; other (optique, disque en mémoire…). */
+export type VolumeKind = "fixed" | "usb" | "sd" | "removable" | "network" | "other";
 
 export interface Volume {
   id: string;
@@ -72,6 +74,10 @@ export interface Volume {
   mftCapable: boolean;
   total: number;
   free: number;
+  /** Nettoyage proposé : disque interne seulement (ailleurs, pas de Corbeille). */
+  cleanable: boolean;
+  /** Fin de la dernière analyse gardée de ce volume (ms), ou null. */
+  analyzedAt: number | null;
 }
 
 export type ScanTarget = { kind: "userProfile" } | { kind: "volume"; letter: string };

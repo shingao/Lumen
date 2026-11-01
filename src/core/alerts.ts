@@ -16,7 +16,7 @@ export function freeRatio(v: Pick<Volume, "free" | "total">): number {
 
 /** Disques locaux sous le seuil (%) qui n'ont pas encore été signalés aujourd'hui. */
 export function dueAlerts(volumes: readonly Volume[], thresholdPct: number, sent: Readonly<Record<string, string>>, today: string): Volume[] {
-  return volumes.filter((v) => (v.kind === "fixed" || v.kind === "removable") && v.total > 0 && freeRatio(v) < thresholdPct / 100 && sent[v.key] !== today);
+  return volumes.filter((v) => (v.kind === "fixed" || v.kind === "removable" || v.kind === "usb" || v.kind === "sd") && v.total > 0 && freeRatio(v) < thresholdPct / 100 && sent[v.key] !== today);
 }
 
 /** Alertes du jour ajoutées ; les jours passés sont oubliés (rien ne grossit avec le temps). */

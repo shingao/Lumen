@@ -58,6 +58,8 @@ export interface Backend {
   setLocale(locale: Locale): void;
   appInfo(): Promise<AppInfo>;
   volumes(): Promise<Volume[]>;
+  /** Branchement ou débranchement d'un support : nouvelle liste, sans redémarrer. */
+  onVolumesChanged(listener: (volumes: Volume[]) => void): () => void;
   /** Lance une analyse ; le résultat arrive par `onScanEvent`. */
   startScan(target: ScanTarget, method: ScanMethod): Promise<number>;
   cancelScan(scanId: number): Promise<void>;

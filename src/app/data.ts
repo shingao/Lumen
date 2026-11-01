@@ -1,6 +1,7 @@
 // Accès aux données du backend depuis les composants : une ressource par clé, rechargée quand la clé change.
 
 import { useEffect, useEffectEvent, useState } from "react";
+import { loadVolumes, useVolumeList } from "./volumes";
 import { backend } from "../ipc/client";
 import { targetKey } from "../ipc/backend";
 import type { Kpis, NodeId, Recommendation, RecommendationDetail, TreeSlice, Volume } from "../ipc/types";
@@ -25,9 +26,13 @@ function useResource<T>(key: string | null, load: () => Promise<T>): T | undefin
   return key === null ? undefined : state?.value;
 }
 
+/** Volumes présents, tenus à jour à chaud (voir `app/volumes.ts`). */
 export function useVolumes(): Volume[] | undefined {
-  const locale = useStore((s) => s.locale);
-  return useResource(`volumes:${locale}`, () => backend.volumes());
+  const list = useVolumeList((s) => s.list);
+  useEffect(() => {
+    if (list === null) void loadVolumes();
+  }, [list]);
+  return list ?? undefined;
 }
 
 /** Analyse terminée affichée (null tant qu'aucune n'est prête). */

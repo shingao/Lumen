@@ -395,5 +395,17 @@ export const D_TILES: MockTile[] = [
 export const VOLUMES = [
   { id: "C:", letter: "C:", label: { fr: "Système", en: "System" }, kind: "fixed" as const, total: 476, free: 73.8 },
   { id: "D:", letter: "D:", label: { fr: "Données", en: "Data" }, kind: "fixed" as const, total: 931, free: 44 },
-  { id: "\\\\NAS\\partage", letter: "\\\\NAS\\partage", label: { fr: "Réseau", en: "Network" }, kind: "network" as const, total: 3726, free: 1210 },
+  { id: "Z:", letter: "Z:", label: { fr: "partage (\\\\NAS)", en: "share (\\\\NAS)" }, kind: "network" as const, total: 3726, free: 1210 },
+];
+
+/** Clé USB branchée à chaud dans le coffre factice (`mockDevices().plug()`), ou présente d'office
+ * avec `localStorage` `lumen-dev-devices` = `usb`. */
+export const USB_KEY = { id: "E:", letter: "E:", label: { fr: "KINGSTON", en: "KINGSTON" }, kind: "usb" as const, total: 57.6, free: 21.3 };
+
+export const E_TILES: MockTile[] = [
+  t("dcim", null, "media", "keep", "DCIM", "DCIM", 22.4, 6_204, days(20), null),
+  t("d_100", "dcim", "media", "keep", "100CANON", "DCIM\\100CANON", 14.1, 3_902, days(20), null),
+  t("d_101", "dcim", "media", "keep", "101CANON", "DCIM\\101CANON", 8.3, 2_302, days(64), null),
+  t("films", null, "media", "keep", "Films", "Films", 9.6, 12, days(120), null),
+  t("isos", null, "tools", "keep", "ISO", "ISO", 4.3, 3, days(300), null),
 ];
