@@ -460,5 +460,18 @@ await shot("68-analyser-avec-lumen-refus", { act: async (p) => {
   await opened("\\\\NAS\\partage\\Films")(p);
   await p.getByText("Impossible d'ouvrir ce dossier").waitFor();
 } });
+// Jalon 12 : zones couvertes par une règle (hachures au plus haut seulement, descendants unis avec
+// un bord) et contenu interne des caches en tuile unique. Avant / après : jalon-12/69-70.
+const zoomTile = (name) => async (p) => {
+  await p.locator("[data-node]", { hasText: name }).first().waitFor();
+  await p.locator("[data-node]", { hasText: name }).first().click({ position: { x: 20, y: 12 } });
+  await p.waitForTimeout(600);
+};
+await shot("69-hachures-apres-gradle", { act: zoomTile(".gradle") });
+await shot("69-hachures-apres-gradle-sombre", { theme: "dark", act: zoomTile(".gradle") });
+await shot("70-cache-opaque-apres", { act: async (p) => {
+  await p.locator("[data-node][data-opaque]").first().hover();
+  await p.waitForTimeout(400);
+} });
 await browser.close();
 console.log(`captures dans ${out}`);

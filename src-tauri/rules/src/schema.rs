@@ -238,6 +238,9 @@ pub struct Rule {
     pub regenerated_by: Option<Text>,
     /// Conseil affiché avec la règle (par exemple : où régler la taille d'un cache).
     pub tip: Option<Text>,
+    /// Contenu « opaque » (dossiers nommés par empreinte : pip http-v2, npm _cacache,
+    /// D3DSCache…) : la treemap n'y descend pas et montre une seule tuile avec ce libellé.
+    pub opaque: Option<Text>,
     pub screen: Screen,
     pub targets: Vec<Target>,
     pub scope: Scope,
@@ -310,6 +313,7 @@ struct RuleRaw {
     explanation: Text,
     regenerated_by: Option<Text>,
     tip: Option<Text>,
+    opaque: Option<Text>,
     #[serde(default)]
     screen: Screen,
     #[serde(default)]
@@ -435,6 +439,9 @@ pub fn load(source: &str) -> Result<RuleSet, LoadError> {
         if let Some(t) = &r.tip {
             check_text(&mut errors, &id, "tip", t, 300);
         }
+        if let Some(t) = &r.opaque {
+            check_text(&mut errors, &id, "opaque", t, 60);
+        }
         if r.screen == Screen::Games && (r.status == Status::Safe || r.category != Category::Games) {
             errors.push(format!("{id} : une règle de l'onglet Jeux est « review » et de catégorie « games »"));
         }
@@ -526,6 +533,7 @@ pub fn load(source: &str) -> Result<RuleSet, LoadError> {
             explanation: r.explanation,
             regenerated_by: r.regenerated_by,
             tip: r.tip,
+            opaque: r.opaque,
             screen: r.screen,
             targets,
             scope,

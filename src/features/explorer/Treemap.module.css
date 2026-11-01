@@ -161,6 +161,30 @@
   background: var(--hatch), var(--tile-bg);
 }
 
+/* Descendants d'un élément couvert par une règle (jalon 12) : fond uni de la couleur de statut,
+   un pas plus proche du fond du conteneur à chaque niveau, et un bord bien visible ; les hachures
+   restent au seul élément le plus haut (sinon, tout se confond). */
+.tile[data-cover],
+.child[data-cover],
+.child[data-level][data-cover] {
+  background: color-mix(in sRGB, var(--tile-bg) calc(100% - var(--cover-level) * var(--cover-step)), var(--bg-container));
+  border: 1px solid var(--cover-border);
+}
+
+.child[data-cover] {
+  padding: 4px 6px;
+}
+
+/* Contenu interne d'un cache (règle opaque) : une seule tuile, jamais détaillée. */
+.opaqueNote {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
 .child[data-tiny] {
   border-radius: var(--r-tile-tiny);
 }
@@ -271,6 +295,12 @@
   word-break: break-all;
 }
 
+.tipNote {
+  font-size: var(--fs-11-5);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
 .tipGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -305,4 +335,9 @@
   gap: 6px;
   font-size: var(--fs-12);
   color: var(--text-1);
+}
+
+.tile[data-opaque] .name,
+.child[data-opaque] .childName {
+  white-space: normal;
 }

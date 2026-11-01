@@ -24,6 +24,8 @@ const node = (path: string, size: number, children: TreeNode[] = []): TreeNode =
   gain: 0,
   gainStatus: null,
   gainUpTo: false,
+    coverDepth: null,
+    opaque: null,
   hasChildren: children.length > 0,
   children,
 });

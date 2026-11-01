@@ -72,6 +72,11 @@
   /* Tuiles */
   --tile-veil: rgba(255, 255, 255, 0.45);   /* éclaircit les sous-tuiles */
   --tile-ring: #1C1917;
+  /* Descendants d'un élément couvert par une règle (jalon 12) : fond uni de la couleur de statut,
+     un pas plus proche du fond du conteneur à chaque niveau, bord bien visible (3:1 au moins). */
+  --cover-step: 9%;
+  --cover-border-safe: #2B7A57;
+  --cover-border-review: #9A5F0E;
   --tile-dim: 0.26;                          /* opacité des tuiles estompées */
   --swatch-border: rgba(28, 25, 23, 0.08);
 
@@ -199,6 +204,8 @@
 
   --tile-veil: rgba(22, 22, 21, 0.45);       /* assombrit les sous-tuiles vers le conteneur */
   --tile-ring: #EDEBE8;
+  --cover-border-safe: #3FBF87;
+  --cover-border-review: #F0A33A;
   --swatch-border: rgba(237, 235, 232, 0.12);
 
   --win-btn-fg: #D6D3D1;

@@ -44,9 +44,21 @@ function deltaText(node: TreeNode, t: Translator): string | null {
   return node.gainStatus === "review" ? `${delta} ?` : delta;
 }
 
-/** Nom affiché : celui de l'élément, ou « 12 autres éléments » pour un regroupement. */
+/** Nom affiché : celui de l'élément, « 12 autres éléments » pour un regroupement, ou « Contenu
+ * interne du cache pip » pour le contenu d'un cache (règle opaque). */
 function label(node: TreeNode, t: Translator): string {
+  if (node.opaque) return node.opaque.label;
   return node.othersCount !== null ? t.plural("explorer.others", node.othersCount, { n: node.othersCount }) : node.name;
+}
+
+/** « 12 340 fichiers · 7,2 Go » sous le libellé d'un contenu opaque. */
+function opaqueMeta(node: TreeNode, t: Translator): string {
+  return t("explorer.opaqueMeta", { files: t.plural("explorer.files", node.files, { n: formatCount(node.files, t.locale) }), size: formatBytes(node.size, t.locale) });
+}
+
+/** Variables CSS d'une tuile : couleur, et pour les descendants couverts, niveau et bord. */
+function fillStyle(fill: ReturnType<typeof tileFill>): Record<string, string | number> {
+  return fill.cover === null ? { "--tile-bg": fill.bg } : { "--tile-bg": fill.bg, "--cover-level": fill.cover, "--cover-border": fill.coverBorder ?? "transparent" };
 }
 
 /** Opacité de la maquette : estompe tout sauf les tuiles concernées (et l'intérieur des parents estompés). */
@@ -221,11 +233,13 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
       className={styles.tile}
       data-small={small || undefined}
       data-hatch={fill.hatch || undefined}
+      data-cover={fill.cover ?? undefined}
+      data-opaque={node.opaque !== null || undefined}
       data-deep={fill.deep || undefined}
       data-hover={hoverId === node.id || undefined}
       data-dim={isDimmed(node.id, null, highlight) || undefined}
       data-clickable={node.hasChildren || node.reco !== null || undefined}
-      style={{ ...style, "--tile-bg": fill.bg } as CSSProperties}
+      style={{ ...style, ...fillStyle(fill) } as CSSProperties}
       tabIndex={0}
       role="button"
       aria-label={t("explorer.tileLabel", { name: label(node, t), size })}
@@ -260,7 +274,8 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
       {node.children.length > 0 && height >= 72 && width >= 48 && (
         <Children node={node} level={1} hoverId={hoverId} highlight={highlight} now={now} mode={mode} t={t} onActivate={onActivate} onMenu={onMenu} />
       )}
-      {showFoot && <span className={styles.foot}>{size}</span>}
+      {node.opaque && width >= 140 && height >= 96 && <span className={styles.opaqueNote}>{node.opaque.explanation}</span>}
+      {showFoot && <span className={styles.foot}>{node.opaque ? opaqueMeta(node, t) : size}</span>}
     </div>
   );
 }
@@ -294,10 +309,12 @@ function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, o
             data-level={level + 1}
             data-tiny={rect.w < 24 || rect.h < 24 || undefined}
             data-hatch={fill.hatch || undefined}
+            data-cover={fill.cover ?? undefined}
+            data-opaque={item.opaque !== null || undefined}
             data-deep={fill.deep || undefined}
             data-hover={hoverId === item.id || undefined}
             data-dim={isDimmed(item.id, node.id, highlight) || undefined}
-            style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, "--tile-bg": fill.bg } as CSSProperties}
+            style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, ...fillStyle(fill) } as CSSProperties}
             onClick={(e) => {
               if (!item.hasChildren && !item.reco) return;
               e.stopPropagation();
@@ -322,6 +339,7 @@ function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, o
                 )}
               </div>
             )}
+            {item.opaque && rect.w >= 120 && rect.h >= 44 && <span className={styles.childSize}>{opaqueMeta(item, t)}</span>}
             {group && (
               <Children
                 node={item}
@@ -360,7 +378,8 @@ function TileTooltip({ node, x, y, width, height, now, t }: TooltipProps) {
   if (top + 150 > height) top = Math.max(0, y - 162);
   return (
     <div role="tooltip" className={`${pop.pop} ${styles.tooltip}`} style={{ left: Math.round(left), top: Math.round(top) }}>
-      <span className={styles.tipPath}>{node.othersCount !== null ? `${node.path} · ${label(node, t)}` : node.path}</span>
+      <span className={styles.tipPath}>{node.othersCount !== null || node.opaque ? `${node.path} · ${label(node, t)}` : node.path}</span>
+      {node.opaque && <span className={styles.tipNote}>{node.opaque.explanation}</span>}
       <div className={styles.tipGrid}>
         <div className={styles.tipCell}>
           <span className={styles.tipLabel}>{t("tooltip.size")}</span>

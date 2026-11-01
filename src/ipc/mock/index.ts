@@ -142,10 +142,26 @@ export function createMockBackend(now: () => number = Date.now): Backend {
 
   /** Même règle que le backend : enfants et petits-enfants toujours, puis jusqu'à 4 niveaux sous
    * les dossiers d'au moins 1 % de la vue. */
+  /** Profondeur sous le plus haut élément couvert par la même règle (0 : hachuré). */
+  function coverDepth(tree: VolumeTree, id: NodeId): number | null {
+    const t = tree.nodes.get(id)?.tile;
+    if (!t?.reco || t.status === "keep") return null;
+    let depth = 0;
+    let parent = tree.nodes.get(id)?.parent ?? null;
+    while (parent !== null && tree.nodes.get(parent)?.tile?.reco === t.reco) {
+      depth += 1;
+      parent = tree.nodes.get(parent)?.parent ?? null;
+    }
+    return depth;
+  }
+
   function toNode(tree: VolumeTree, id: NodeId, level: number, minExpand: number): TreeNode {
     const n = tree.nodes.get(id);
     const t = n?.tile ?? null;
-    const expand = level < 2 || (level < 4 && sizeOf(tree, id) >= minExpand);
+    const depth = coverDepth(tree, id);
+    // Contenu interne d'un cache (règle opaque) : jamais détaillé.
+    const opaque = t?.opaque && depth === 0 ? { label: l(t.opaque.label), explanation: l(t.opaque.explanation) } : null;
+    const expand = !opaque && (level < 2 || (level < 4 && sizeOf(tree, id) >= minExpand));
     const children = expand ? (n?.children ?? []).map((c) => toNode(tree, c, level + 1, minExpand)) : [];
     if (!t) {
       const name = tree.prefix[tree.prefix.length - 1] ?? "";
@@ -165,6 +181,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         gain: 0,
         gainStatus: null,
         gainUpTo: false,
+        coverDepth: null,
+        opaque: null,
         hasChildren: (n?.children.length ?? 0) > 0,
         children,
       };
@@ -186,7 +204,9 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       gain: gb(t.gain ?? 0),
       gainStatus: t.gainStatus ?? null,
       gainUpTo: t.gainUpTo ?? false,
-      hasChildren: (n?.children.length ?? 0) > 0,
+      coverDepth: depth,
+      opaque,
+      hasChildren: !opaque && (n?.children.length ?? 0) > 0,
       children,
     };
   }

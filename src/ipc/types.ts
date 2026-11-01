@@ -36,6 +36,11 @@ export interface TreeNode {
   gainStatus: RecoStatus | null;
   /** « jusqu'à » : le gain est un maximum (compactage). */
   gainUpTo: boolean;
+  /** Profondeur sous le plus haut élément couvert par la règle (0 : hachuré) ; null hors règle. */
+  coverDepth: number | null;
+  /** Contenu interne d'un cache (règle « opaque ») : tuile unique, jamais détaillée ; un clic
+   * ouvre la recommandation. */
+  opaque: { label: string; explanation: string } | null;
   hasChildren: boolean;
   children: TreeNode[];
 }

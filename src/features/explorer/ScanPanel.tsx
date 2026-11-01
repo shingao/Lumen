@@ -32,6 +32,8 @@ function liveRoot(tops: TopProgress[]): TreeNode {
     gain: 0,
     gainStatus: null,
     gainUpTo: false,
+    coverDepth: null,
+    opaque: null,
     hasChildren: false,
     children: [],
   });

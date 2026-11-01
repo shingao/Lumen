@@ -79,6 +79,8 @@ interface TreeNodeDto {
   gain: number;
   gainStatus: RecoStatus | null;
   gainUpTo: boolean;
+  coverDepth: number | null;
+  opaque: { label: Text; explanation: Text } | null;
   children: TreeNodeDto[];
 }
 
@@ -140,7 +142,7 @@ interface PlanDto extends Omit<CleanPlan, "items"> {
 
 const SETTINGS_KEY = "lumen-settings";
 
-function toNode(dto: TreeNodeDto): TreeNode {
+function toNode(dto: TreeNodeDto, locale: Locale): TreeNode {
   // Statut, catégorie et gains viennent du moteur de règles (rules.toml), jamais du nom.
   return {
     id: dto.id,
@@ -158,8 +160,10 @@ function toNode(dto: TreeNodeDto): TreeNode {
     gain: dto.gain,
     gainStatus: dto.gainStatus,
     gainUpTo: dto.gainUpTo,
+    coverDepth: dto.coverDepth,
+    opaque: dto.opaque ? { label: pick(dto.opaque.label, locale), explanation: pick(dto.opaque.explanation, locale) } : null,
     hasChildren: dto.hasChildren,
-    children: dto.children.map(toNode),
+    children: dto.children.map((c) => toNode(c, locale)),
   };
 }
 
@@ -260,7 +264,7 @@ export function createTauriBackend(): Backend {
         scanId,
         node,
       });
-      const result: TreeSlice = { root: toNode(slice.root), breadcrumb: slice.breadcrumb };
+      const result: TreeSlice = { root: toNode(slice.root, locale), breadcrumb: slice.breadcrumb };
       return result;
     },
 

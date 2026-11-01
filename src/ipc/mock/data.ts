@@ -41,6 +41,8 @@ export interface MockTile {
   gainUpTo?: boolean;
   /** Surface de la tuile si elle diffère de la taille affichée (maquette : projet sans ses artefacts). */
   layoutSize?: number;
+  /** Règle « opaque » : contenu interne du cache, montré en une seule tuile (libellé, explication). */
+  opaque?: { label: L10n; explanation: L10n };
 }
 
 const t = (
@@ -120,7 +122,17 @@ export const TILES: MockTile[] = [
   t("o_mis", "ollama", "ai", "review", "mistral", ".ollama\\models · mistral", 4.1, 13, days(120), "ollama"),
 
   t("npm", null, "packages", "safe", "npm-cache", "AppData\\Local\\npm-cache", 13.4, 412_380, days(2), "npm", safe(13.4)),
+  // Contenu interne du cache npm : dossiers nommés par empreinte (jamais détaillés, règle opaque).
+  t("n_cacache", "npm", "packages", "safe", "_cacache", "AppData\\Local\\npm-cache\\_cacache", 13.1, 410_102, days(2), "npm"),
+  t("n_content", "n_cacache", "packages", "safe", "content-v2", "AppData\\Local\\npm-cache\\_cacache\\content-v2", 11.8, 205_051, days(2), "npm"),
+  t("n_index", "n_cacache", "packages", "safe", "index-v5", "AppData\\Local\\npm-cache\\_cacache\\index-v5", 1.3, 205_051, days(2), "npm"),
+  t("n_logs", "npm", "packages", "safe", "_logs", "AppData\\Local\\npm-cache\\_logs", 0.3, 2_278, days(2), "npm"),
   t("gradle", null, "packages", "safe", ".gradle", ".gradle", 10.6, 286_409, days(3), "gradle", safe(10.6)),
+  t("g_caches", "gradle", "packages", "safe", "caches", ".gradle\\caches", 8.9, 271_380, days(3), "gradle"),
+  t("g_mod", "g_caches", "packages", "safe", "modules-2", ".gradle\\caches\\modules-2", 5.1, 98_412, days(3), "gradle"),
+  t("g_tr", "g_caches", "packages", "safe", "transforms-4", ".gradle\\caches\\transforms-4", 2.6, 160_220, days(3), "gradle"),
+  t("g_bc", "g_caches", "packages", "safe", "build-cache-1", ".gradle\\caches\\build-cache-1", 1.2, 12_748, days(8), "gradle"),
+  t("g_wrap", "gradle", "packages", "safe", "wrapper", ".gradle\\wrapper\\dists", 1.7, 15_029, days(40), "gradle"),
   t("dl", null, "media", "keep", { fr: "Téléchargements", en: "Downloads" }, { fr: "Téléchargements", en: "Downloads" }, 9.5, 1_126, at(1, 18, 3), null),
   t("temp", null, "tools", "safe", "Temp", "AppData\\Local\\Temp", 4.1, 9_742, at(0, 14, 2), "temp", safe(4.1)),
   t("pip", null, "packages", "safe", "pip & uv", ".cache\\pip + AppData\\Local\\uv", 3.0, 51_220, days(9), "pip", safe(3.0)),
@@ -128,6 +140,18 @@ export const TILES: MockTile[] = [
   // Shaders : « À vérifier », catégorie Jeux, proposés seulement dans l'onglet Jeux (jalon 8).
   t("a_d3d", "autres", "games", "review", "D3DSCache", "AppData\\Local\\D3DSCache", 0.8, 2_304, days(4), null),
 ];
+
+// Cache npm : règle « opaque » (dossiers nommés par empreinte), une seule tuile.
+const npmTile = TILES.find((x) => x.id === "npm");
+if (npmTile) {
+  npmTile.opaque = {
+    label: { fr: "Contenu interne du cache npm", en: "npm cache internals" },
+    explanation: {
+      fr: "Le cache npm ne contient que des copies de paquets déjà publiés : npm les retélécharge à la demande.",
+      en: "The npm cache only holds copies of published packages: npm downloads them again when needed.",
+    },
+  };
+}
 
 // Le projet garde sa taille totale mais sa tuile laisse la place à ses artefacts (comme la maquette).
 const LAYOUT: Record<string, number> = { p_tsubaki: 7.8, p_hina: 5.6, p_kai: 2.6, p_old: 3.1 };

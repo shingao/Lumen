@@ -146,7 +146,18 @@ pub struct TreeNodeDto {
     pub gain: u64,
     pub gain_status: Option<&'static str>,
     pub gain_up_to: bool,
+    /// Profondeur sous le plus haut nœud couvert par la règle (0 : hachuré) ; absent hors règle.
+    pub cover_depth: Option<u8>,
+    /// Contenu interne d'un cache (règle « opaque ») : tuile unique, jamais détaillée.
+    pub opaque: Option<OpaqueDto>,
     pub children: Vec<TreeNodeDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueDto {
+    pub label: analysis::TextDto,
+    pub explanation: analysis::TextDto,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -308,10 +319,90 @@ fn epoch_ms(filetime: i64) -> i64 {
     filetime / 10_000 - 11_644_473_600_000
 }
 
+/// Identifiants des tuiles « contenu interne » regroupées : loin de ceux des « autres » (−(parent + 1)).
+const OPAQUE_ID_BASE: i64 = -(1 << 40);
+
+/// Contenu interne des caches (règles « opaques ») : jamais détaillé. Sous chaque dossier, les
+/// éléments les plus hauts couverts par une même règle opaque deviennent une seule tuile sans
+/// enfants (plusieurs frères, comme les dossiers d'empreinte de D3DSCache, sont regroupés).
+fn collapse_opaque(n: &mut SliceNode, applied: &Applied) {
+    let parent = n.id;
+    let mut groups: Vec<(*const rules::schema::Text, Vec<usize>)> = Vec::new();
+    for (i, c) in n.children.iter().enumerate() {
+        let Some(o) = (c.id >= 0).then(|| applied.opaque(c.id as NodeId)).flatten().filter(|o| o.depth == 0) else { continue };
+        let key: *const rules::schema::Text = o.label;
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, list)) => list.push(i),
+            None => groups.push((key, vec![i])),
+        }
+    }
+    let mut merged: Vec<SliceNode> = Vec::new();
+    let mut remove: Vec<usize> = Vec::new();
+    for (k, (_, list)) in groups.iter().enumerate() {
+        if let [single] = list.as_slice() {
+            let c = &mut n.children[*single];
+            c.children.clear();
+            c.has_children = false;
+            continue;
+        }
+        let members: Vec<&SliceNode> = list.iter().map(|&i| &n.children[i]).collect();
+        merged.push(SliceNode {
+            id: OPAQUE_ID_BASE - parent.max(0) * 16 - k as i64,
+            name: String::new(),
+            path: n.path.clone(),
+            kind: Kind::Dir,
+            allocated: members.iter().map(|m| m.allocated).sum(),
+            logical: members.iter().map(|m| m.logical).sum(),
+            files: members.iter().map(|m| m.files).sum(),
+            last_used: members.iter().map(|m| m.last_used).max().unwrap_or(0),
+            file_id: 0,
+            modified: members.iter().map(|m| m.modified).max().unwrap_or(0),
+            others: None,
+            members: members.iter().filter_map(|m| NodeId::try_from(m.id).ok()).collect(),
+            has_children: false,
+            children: Vec::new(),
+        });
+        remove.extend(list);
+    }
+    remove.sort_unstable();
+    for i in remove.into_iter().rev() {
+        n.children.remove(i);
+    }
+    if !merged.is_empty() {
+        n.children.extend(merged);
+        // Par taille, le regroupement « autres » toujours en dernier.
+        n.children.sort_by(|a, b| a.others.is_some().cmp(&b.others.is_some()).then(b.allocated.cmp(&a.allocated)));
+    }
+    for c in &mut n.children {
+        collapse_opaque(c, applied);
+    }
+}
+
+/// Dossier demandé à l'intérieur d'un contenu opaque (historique, chemin ouvert depuis un autre
+/// écran) : la vue s'ouvre sur le dossier qui le contient, où il apparaît en tuile unique.
+fn outside_opaque(scan: &Scan, applied: Option<&Applied>, id: NodeId) -> NodeId {
+    let Some(o) = applied.and_then(|a| a.opaque(id)) else { return id };
+    let mut cur = id;
+    for _ in 0..=o.depth {
+        if cur == scan.root() {
+            return cur;
+        }
+        cur = scan.node(cur).map_or(scan.root(), |n| n.parent);
+    }
+    cur
+}
+
 fn to_dto(n: SliceNode, applied: Option<&Applied>, scan: &Scan) -> TreeNodeDto {
     // Nœud « autres » (identifiant négatif) : statut, catégorie et gain de ce qu'il regroupe.
     let view = applied.map(|a| if n.id >= 0 { a.node(n.id as NodeId) } else { a.aggregate(scan, &n.members) });
     let reco = view.and_then(|v| v.reco);
+    let opaque = applied
+        .and_then(|a| {
+            let first = if n.id >= 0 { NodeId::try_from(n.id).ok() } else { n.others.is_none().then(|| n.members.first().copied()).flatten() };
+            first.and_then(|m| a.opaque(m))
+        })
+        .filter(|o| o.depth == 0)
+        .map(|o| OpaqueDto { label: analysis::text(o.label), explanation: analysis::text(o.explanation) });
     TreeNodeDto {
         id: n.id,
         name: n.name,
@@ -329,6 +420,8 @@ fn to_dto(n: SliceNode, applied: Option<&Applied>, scan: &Scan) -> TreeNodeDto {
         gain: view.map_or(0, |v| v.gain),
         gain_status: view.and_then(|v| v.gain_status),
         gain_up_to: reco.is_some_and(|r| applied.is_some_and(|a| a.reco_up_to(r))),
+        cover_depth: view.and_then(|v| v.cover_depth),
+        opaque,
         children: n.children.into_iter().map(|c| to_dto(c, applied, scan)).collect(),
     }
 }
@@ -768,10 +861,14 @@ pub fn scan_tree(state: State<'_, ScanState>, scan_id: u32, node: Option<i64>) -
         None => s.root(),
         Some(n) => u32::try_from(n).ok().filter(|&n| (n as usize) < s.len()).ok_or(LumenError::UnknownNode)?,
     };
+    let id = outside_opaque(s, e.applied.as_ref(), id);
     // Profondeur adaptative : jusqu'à 4 niveaux sous les dossiers d'au moins 1 % de la vue,
     // assez grands pour être dessinés avec leurs enfants.
     let min_expand = s.node(id).map_or(0, |n| n.allocated / 100).max(1);
-    let slice = s.slice_adaptive(id, MAX_LEVELS, TOP_N, min_expand).ok_or(LumenError::UnknownNode)?;
+    let mut slice = s.slice_adaptive(id, MAX_LEVELS, TOP_N, min_expand).ok_or(LumenError::UnknownNode)?;
+    if let Some(a) = e.applied.as_ref() {
+        collapse_opaque(&mut slice, a);
+    }
 
     // Fil d'Ariane : segments au-dessus de la racine (non cliquables), puis la racine et ses descendants.
     let mut chain = Vec::new();
@@ -862,6 +959,42 @@ mod tests {
         let v = a.aggregate(&scan, &[npm, d3d]);
         assert_eq!((v.status, v.category, v.gain, v.gain_status), ("safe", "packages", 1000, Some("safe")));
         assert_eq!(a.aggregate(&scan, &[npm]).reco, a.node(npm).reco, "recommandation commune");
+    }
+
+    #[test]
+    fn hachures_au_plus_haut_et_contenu_interne_des_caches_en_tuile_unique() {
+        let (a, scan) = crate::analysis::tests::applied();
+        let local = scan.find("AppData\\Local").unwrap();
+        let npm = scan.find("AppData\\Local\\npm-cache").unwrap();
+        let index = scan.find("AppData\\Local\\npm-cache\\index").unwrap();
+        let d3d = scan.find("AppData\\Local\\D3DSCache").unwrap();
+        let bin = scan.find("AppData\\Local\\D3DSCache\\a.bin").unwrap();
+        // Hachures au plus haut nœud couvert seulement ; ses descendants : profondeur 1, 2…
+        assert_eq!((a.node(npm).cover_depth, a.node(index).cover_depth, a.node(local).cover_depth), (Some(0), Some(1), None));
+        assert_eq!((a.node(d3d).cover_depth, a.node(bin).cover_depth), (None, Some(0)), "D3DSCache : seul son contenu est couvert");
+
+        let mut slice = scan.slice_adaptive(local, 4, 30, 1).unwrap();
+        collapse_opaque(&mut slice, &a);
+        let dto = to_dto(slice, Some(&a), &scan);
+        // Cache npm : une tuile, sans enfants ni descente possible, avec le libellé et l'explication de la règle.
+        let npm_tile = dto.children.iter().find(|c| c.id == i64::from(npm)).unwrap();
+        assert!(!npm_tile.has_children && npm_tile.children.is_empty());
+        let o = npm_tile.opaque.as_ref().unwrap();
+        assert_eq!((o.label.fr.as_str(), npm_tile.cover_depth, npm_tile.reco.as_deref()), ("Contenu interne du cache npm", Some(0), Some("cache-npm")));
+        assert!(o.explanation.fr.starts_with("Le cache npm"));
+        // D3DSCache : ses dossiers d'empreinte (ici deux fichiers) regroupés en une seule tuile.
+        let d3d_tile = dto.children.iter().find(|c| c.id == i64::from(d3d)).unwrap();
+        assert_eq!(d3d_tile.children.len(), 1);
+        let group = &d3d_tile.children[0];
+        assert!(group.id < 0 && group.others.is_none() && !group.has_children);
+        assert_eq!((group.size, group.files, group.status, group.cover_depth), (500, 2, "review", Some(0)));
+        assert_eq!(group.opaque.as_ref().unwrap().label.fr, "Contenu interne des caches de shaders");
+        // Un dossier demandé à l'intérieur : la vue s'ouvre sur le dossier qui le contient.
+        assert_eq!(outside_opaque(&scan, Some(&a), index), local);
+        assert_eq!(outside_opaque(&scan, Some(&a), npm), local);
+        assert_eq!(outside_opaque(&scan, Some(&a), bin), d3d);
+        assert_eq!(outside_opaque(&scan, Some(&a), d3d), d3d);
+        assert_eq!(outside_opaque(&scan, None, index), index);
     }
 
     #[test]
