@@ -15,16 +15,18 @@ interface Props {
 }
 
 /** « ? » d'un statut : met en évidence ses tuiles dans la treemap (le reste estompé, comme au
- * survol d'une recommandation) et ouvre une bulle d'une phrase. Second clic, Échap ou clic
- * ailleurs : fin. Reste actif pendant le zoom et la navigation. */
+ * survol d'une recommandation) et ouvre une bulle d'une phrase. La mise en évidence dure jusqu'à
+ * un second clic sur « ? », Échap ou la puce ✕ au-dessus de la treemap, y compris pendant le zoom
+ * et la navigation ; un clic ailleurs ne ferme que la bulle. */
 export function StatusHelp({ status, from }: Props) {
   const t = useT();
   const focus = useStore((s) => s.statusFocus);
   const setFocus = useStore((s) => s.setStatusFocus);
   const ref = useRef<HTMLButtonElement>(null);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [dismissed, setDismissed] = useState(false);
   const active = focus?.status === status;
-  const bubble = active && focus.from === from;
+  const bubble = active && focus.from === from && !dismissed;
 
   useLayoutEffect(() => {
     if (!bubble) return;
@@ -45,9 +47,10 @@ export function StatusHelp({ status, from }: Props) {
       setFocus(null);
       ref.current?.focus();
     };
+    // Un clic ailleurs ferme la bulle ; la mise en évidence reste (puce ✕, Échap, « ? »).
     const onDown = (e: PointerEvent) => {
       const el = e.target instanceof Element ? e.target : null;
-      if (!el?.closest(`[${KEEP_FOCUS}]`)) setFocus(null);
+      if (!el?.closest(`[${KEEP_FOCUS}]`)) setDismissed(true);
     };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("pointerdown", onDown, true);
@@ -69,6 +72,7 @@ export function StatusHelp({ status, from }: Props) {
         title={t(`statusHelp.show.${status}`)}
         onClick={(e) => {
           e.stopPropagation();
+          setDismissed(false);
           setFocus(active && focus.from === from ? null : { status, from });
         }}
       >

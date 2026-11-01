@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { openCleanup } from "../../app/cleaning";
 import { useCopyFlash } from "../../app/clipboard";
 import { useKpis, useRecommendations } from "../../app/data";
@@ -20,6 +21,14 @@ function Row({ reco }: { reco: Recommendation }) {
   const setHover = useStore((s) => s.setHoverReco);
   const open = useStore((s) => s.setOpenReco);
   const cleanable = useCleanable();
+  // Survol : seulement pendant le survol. Une ligne qui disparaît sous le pointeur (panneau
+  // ouvert, liste rechargée) ne laisse jamais la treemap estompée.
+  useEffect(
+    () => () => {
+      if (useStore.getState().hoverReco === reco.id) useStore.getState().setHoverReco(null);
+    },
+    [reco.id],
+  );
   return (
     <div
       className={styles.row}

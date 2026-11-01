@@ -53,7 +53,8 @@ export function App() {
     // Précédent / suivant : seulement sur l'écran Analyse, sans fenêtre ouverte par-dessus.
     const canNavigate = () => {
       const s = useStore.getState();
-      return s.screen === "analyse" && !s.settingsOpen && !s.paletteOpen && s.clean.step === "closed" && s.openReco === null;
+      // Panneau de détail ouvert : la navigation le ferme (store.zoom).
+      return s.screen === "analyse" && !s.settingsOpen && !s.paletteOpen && s.clean.step === "closed";
     };
     const navigate = (to: "back" | "forward" | null) => {
       if (to === null || !canNavigate()) return false;
@@ -76,6 +77,7 @@ export function App() {
       else if (matchShortcut(e, "settings")) s.setSettingsOpen(!s.settingsOpen);
       else if (matchShortcut(e, "theme")) void toggleTheme();
       else if (e.key === "Escape" && !s.paletteOpen && s.openReco) s.setOpenReco(null);
+      else if (e.key === "Escape" && !s.paletteOpen && s.statusFocus) s.setStatusFocus(null);
       else if (e.key === "Escape" && !s.paletteOpen && s.settingsOpen) s.setSettingsOpen(false);
       else return;
       e.preventDefault();

@@ -147,19 +147,24 @@ export const useStore = create<State>()((set) => ({
   journalVersion: 0,
   cleanupTab: "dormant",
 
-  go: (screen) => set({ screen, settingsOpen: false }),
+  // Changer d'onglet ferme le panneau de détail (et sa mise en évidence).
+  go: (screen) => set({ screen, settingsOpen: false, openReco: null, hoverReco: null }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setTarget: (target) => set({ target, node: null, openReco: null, hoverReco: null }),
   setScan: (patch) => set((s) => ({ scan: { ...s.scan, ...patch } })),
-  zoom: (node) => set({ node }),
+  // Zoomer ou naviguer (fil d'Ariane, ← →, Étendre) ferme le panneau de détail : sa mise en
+  // évidence ne suit jamais l'utilisateur ailleurs. Le « ? » d'un statut, lui, reste actif.
+  zoom: (node) => set({ node, openReco: null, hoverReco: null }),
   setColorMode: (colorMode) => set({ colorMode }),
   toggleChecked: (id) =>
     set((s) => ({ checked: s.checked.includes(id) ? s.checked.filter((c) => c !== id) : [...s.checked, id] })),
   setChecked: (checked) => set({ checked }),
-  setOpenReco: (openReco) => set({ openReco, hoverReco: null }),
+  // Une seule mise en évidence persistante : ouvrir le panneau arrête le « ? » d'un statut.
+  setOpenReco: (openReco) => set((s) => ({ openReco, hoverReco: null, statusFocus: openReco ? null : s.statusFocus })),
   setHoverReco: (hoverReco) => set({ hoverReco }),
-  setStatusFocus: (statusFocus) => set({ statusFocus }),
+  // … et activer le « ? » d'un statut ferme le panneau.
+  setStatusFocus: (statusFocus) => set((s) => ({ statusFocus, openReco: statusFocus ? null : s.openReco })),
   showToast: (text) => set({ toast: { id: ++toastId, text } }),
   dismissToast: () => set({ toast: null }),
   setClean: (patch) => set((s) => ({ clean: { ...s.clean, ...patch } })),
