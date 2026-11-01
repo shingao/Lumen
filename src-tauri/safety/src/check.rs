@@ -11,7 +11,7 @@
 
 use crate::allow::{Allowlist, Authority};
 use crate::bin::RecycleBlock;
-use crate::denylist::{DenyList, DenyReason};
+use crate::denylist::{AppZone, DenyList, DenyReason};
 use crate::path::{PathError, WinPath};
 use crate::probe::{Facts, FileId, Probe, ProbeError};
 
@@ -210,6 +210,14 @@ impl<P: Probe> Checker<'_, P> {
         //    qui fausseraient la comparaison), puis attributs (SYSTEM, dossier git).
         if let Some(reason) = self.deny.check(&canonical) {
             return Err(Refusal::Denied(reason));
+        }
+        // Dossiers d'installation (jeux, applications) : jamais par une sélection (Dormants,
+        // Doublons, Gros fichiers) ; une règle explicite peut agir dedans, jamais sur un parent.
+        match (self.deny.app_install(&canonical), &target.authority) {
+            (Some(AppZone::Parent), _) | (Some(AppZone::Inside), Authority::Selection(_) | Authority::Duplicates(_)) => {
+                return Err(Refusal::Denied(DenyReason::AppInstall));
+            }
+            _ => {}
         }
         let facts = self.probe.facts(&canonical).map_err(probe_refusal)?;
         if let Some(reason) =
@@ -479,21 +487,68 @@ mod tests {
     #[test]
     fn selection_explicite() {
         let mut w = World::new();
-        w.probe.dir("D:\\Vidéos");
-        w.probe.file("D:\\Vidéos\\rush.mov", 4096);
-        w.allow.add_selection(Selection { id: 3, members: vec![WinPath::parse("D:\\Vidéos\\rush.mov").unwrap()] });
-        let path = WinPath::parse("D:\\Vidéos\\rush.mov").unwrap();
-        let facts = w.probe.facts(&path).unwrap();
-        let t = Target {
-            path: "D:\\Vidéos\\rush.mov".into(),
-            authority: Authority::Selection(3),
-            expected: Expected::from_facts(&facts),
-            bytes: facts.size,
-            contents: None,
-            hash: None,
-        };
+        w.probe.dir("C:\\Users\\Arthur\\Vidéos");
+        w.probe.file("C:\\Users\\Arthur\\Vidéos\\rush.mov", 4096);
+        w.allow.add_selection(Selection { id: 3, members: vec![WinPath::parse("C:\\Users\\Arthur\\Vidéos\\rush.mov").unwrap()] });
+        let t = w.selected("C:\\Users\\Arthur\\Vidéos\\rush.mov", 3);
         assert!(w.checker().check(&t).is_accepted());
         let other = Target { authority: Authority::Selection(4), ..t };
         assert_eq!(w.checker().check(&other).refusal(), Some(&Refusal::NotAllowed));
+    }
+
+    impl World {
+        fn selected(&self, raw: &str, id: u64) -> Target {
+            let path = WinPath::parse(raw).unwrap();
+            let facts = self.probe.facts(&path).unwrap();
+            Target { path: raw.into(), authority: Authority::Selection(id), expected: Expected::from_facts(&facts), bytes: facts.size, contents: None, hash: None }
+        }
+    }
+
+    /// Fichiers d'un jeu installé (anciens et volumineux : proposés par Dormants ou Gros fichiers
+    /// avant le jalon 13) : une sélection ne peut jamais les supprimer, qu'ils soient détectés
+    /// par un launcher ou seulement à la racine d'un volume.
+    #[test]
+    fn dossier_d_application_refuse_aux_selections() {
+        let mut w = World::new();
+        let wad = "C:\\Riot Games\\League of Legends\\Game\\DATA\\FINAL\\Champions\\Ahri.wad.client";
+        let genshin = "C:\\Users\\Arthur\\Jeux\\Genshin Impact\\Genshin Impact Game\\GenshinImpact_Data\\blocks.blk";
+        for d in [
+            "C:\\Riot Games",
+            "C:\\Riot Games\\League of Legends",
+            "C:\\Riot Games\\League of Legends\\Game",
+            "C:\\Riot Games\\League of Legends\\Game\\DATA",
+            "C:\\Riot Games\\League of Legends\\Game\\DATA\\FINAL",
+            "C:\\Riot Games\\League of Legends\\Game\\DATA\\FINAL\\Champions",
+            "C:\\Users\\Arthur\\Jeux",
+            "C:\\Users\\Arthur\\Jeux\\Genshin Impact",
+            "C:\\Users\\Arthur\\Jeux\\Genshin Impact\\Genshin Impact Game",
+            "C:\\Users\\Arthur\\Jeux\\Genshin Impact\\Genshin Impact Game\\GenshinImpact_Data",
+            "C:\\Users\\Arthur\\Jeux\\Genshin Impact\\Genshin Impact Game\\GenshinImpact_Data\\webCaches",
+        ] {
+            w.probe.dir(d);
+        }
+        w.probe.file(wad, 900 << 20);
+        w.probe.file(genshin, 1 << 30);
+        let cache = "C:\\Users\\Arthur\\Jeux\\Genshin Impact\\Genshin Impact Game\\GenshinImpact_Data\\webCaches\\data_0";
+        w.probe.file(cache, 1 << 20);
+        // Jeu HoYoPlay détecté (dossier sous le profil : seul le dossier détecté le protège).
+        w.deny = w.deny.clone().with_apps([WinPath::parse("C:\\Users\\Arthur\\Jeux\\Genshin Impact").unwrap()]);
+        w.allow.add_selection(Selection { id: 7, members: vec![WinPath::parse(wad).unwrap(), WinPath::parse(genshin).unwrap()] });
+        for raw in [wad, genshin] {
+            assert_eq!(w.checker().check(&w.selected(raw, 7)).refusal(), Some(&Refusal::Denied(DenyReason::AppInstall)), "{raw}");
+        }
+        // Une règle explicite peut agir dans le dossier (cache web du jeu)…
+        w.allow.grant(RuleGrant {
+            rule_id: "cache-jeu".into(),
+            root: WinPath::parse("C:\\Users\\Arthur\\Jeux\\Genshin Impact\\Genshin Impact Game\\GenshinImpact_Data\\webCaches").unwrap(),
+            scope: Scope::Contents,
+            min_age_secs: None,
+        });
+        assert!(w.verdict(cache, "cache-jeu").is_accepted());
+        // … jamais sur un parent du dossier d'installation.
+        w.allow.grant(RuleGrant { rule_id: "trop-large".into(), root: WinPath::parse("C:\\Users\\Arthur").unwrap(), scope: Scope::Contents, min_age_secs: None });
+        let mut t = w.target("C:\\Users\\Arthur\\Jeux", "trop-large");
+        t.contents = Some(Vec::new());
+        assert_eq!(w.checker().check(&t).refusal(), Some(&Refusal::Denied(DenyReason::AppInstall)));
     }
 }

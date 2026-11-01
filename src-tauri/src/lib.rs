@@ -6,6 +6,7 @@
 
 mod advanced;
 mod analysis;
+mod apps;
 mod cleanup;
 #[cfg(test)]
 mod e2e;

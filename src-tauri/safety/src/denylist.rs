@@ -48,6 +48,18 @@ pub enum DenyReason {
     GameSave,
     #[error("jeux et applis du Microsoft Store (WindowsApps, XboxGames) : uniquement par l'appli Xbox ou le Store")]
     StoreApps,
+    #[error("dossier d'installation d'un jeu ou d'une application : uniquement par son launcher, son désinstalleur ou une règle explicite")]
+    AppInstall,
+}
+
+/// Position d'un chemin par rapport aux dossiers d'installation (jeux, applications).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppZone {
+    /// Dans un dossier d'installation (ou ce dossier lui-même) : refusé aux sélections (Dormants,
+    /// Doublons, Gros fichiers) ; seule une règle explicite peut y agir.
+    Inside,
+    /// Parent d'un dossier d'installation : le supprimer emporterait l'installation, toujours refusé.
+    Parent,
 }
 
 /// Emplacements réels de la machine (dossiers connus de Windows), fournis par `safety::win`.
@@ -79,6 +91,9 @@ pub struct DenyList {
     zones: Vec<(WinPath, Zone, DenyReason)>,
     users: Vec<WinPath>,
     profile: WinPath,
+    /// Dossiers d'installation détectés (launchers de jeux, `InstallLocation` des clés Uninstall,
+    /// dossiers avec un exécutable et un désinstalleur), fournis par l'appli.
+    apps: Vec<WinPath>,
 }
 
 /// Noms à la racine d'un volume.
@@ -193,7 +208,36 @@ impl DenyList {
             }
         }
 
-        DenyList { zones, users, profile: layout.profile.clone() }
+        DenyList { zones, users, profile: layout.profile.clone(), apps: Vec::new() }
+    }
+
+    /// Ajoute les dossiers d'installation détectés sur la machine (jeux, applications).
+    pub fn with_apps(mut self, dirs: impl IntoIterator<Item = WinPath>) -> DenyList {
+        for d in dirs {
+            // Jamais une racine de volume (déjà refusée) ni un dossier de profils.
+            if d.depth() > 0 && !self.apps.contains(&d) {
+                self.apps.push(d);
+            }
+        }
+        self
+    }
+
+    /// Dossiers d'installation : détectés, et par repli le contenu de tout dossier à la racine
+    /// d'un volume hors du dossier des profils (`C:\Riot Games\…`, `D:\SteamLibrary\…` ; un
+    /// fichier posé à la racine n'est pas un dossier d'application). Sur un partage réseau : rien
+    /// (aucun nettoyage n'y est proposé).
+    pub fn app_install(&self, path: &WinPath) -> Option<AppZone> {
+        if self.apps.iter().any(|d| d.is_strictly_under(path)) {
+            return Some(AppZone::Parent);
+        }
+        if self.apps.iter().any(|d| path.starts_with(d)) {
+            return Some(AppZone::Inside);
+        }
+        let in_profiles = self.users.iter().any(|u| path.starts_with(u)) || path.starts_with(&self.profile);
+        if matches!(path.prefix(), Prefix::Drive(_)) && path.depth() >= 2 && !in_profiles {
+            return Some(AppZone::Inside);
+        }
+        None
     }
 
     /// Motif de refus d'un chemin canonique, ou `None` s'il n'est pas dans la denylist.
@@ -543,5 +587,31 @@ mod tests {
         assert_eq!(list.check_facts(false, true, true), Some(GitProject));
         assert_eq!(list.check_facts(false, false, true), None);
         assert_eq!(list.check_facts(false, true, false), None);
+    }
+
+    #[test]
+    fn dossiers_d_installation() {
+        let p = |s: &str| WinPath::parse(s).unwrap();
+        let list = DenyList::new(&test_layout()).with_apps([p("D:\\Jeux\\HoYoPlay\\Genshin Impact"), p("C:\\Users\\Arthur\\AppData\\Local\\Programs\\Discord"), p("E:\\")]);
+        // Détectés : le dossier et son contenu ; un parent est refusé à tous.
+        assert_eq!(list.app_install(&p("D:\\Jeux\\HoYoPlay\\Genshin Impact\\GenshinImpact.exe")), Some(AppZone::Inside));
+        assert_eq!(list.app_install(&p("D:\\Jeux\\HoYoPlay")), Some(AppZone::Parent));
+        assert_eq!(list.app_install(&p("C:\\Users\\Arthur\\AppData\\Local\\Programs\\Discord\\app-1.0\\Discord.exe")), Some(AppZone::Inside));
+        assert_eq!(list.app_install(&p("C:\\Users\\Arthur\\AppData\\Local")), Some(AppZone::Parent));
+        // Repli : tout ce qui est à la racine d'un volume, hors du dossier des profils.
+        assert_eq!(list.app_install(&p("C:\\Riot Games\\League of Legends\\Game\\DATA\\FINAL\\Champions\\Ahri.wad.client")), Some(AppZone::Inside));
+        assert_eq!(list.app_install(&p("F:\\SteamLibrary\\steamapps\\common\\Hades\\Content")), Some(AppZone::Inside));
+        assert_eq!(list.app_install(&p("C:\\Users\\Arthur\\Vidéos\\rush.mov")), None);
+        // Un fichier posé à la racine d'un volume n'est pas un dossier d'application.
+        assert_eq!(list.app_install(&p("D:\\ubuntu.iso")), None);
+        // Profil d'un compte hors de C:\Users (le profil courant n'est jamais un dossier d'appli).
+        let mut custom = test_layout();
+        custom.profile = p("D:\\Comptes\\arthur");
+        assert_eq!(DenyList::new(&custom).app_install(&p("D:\\Comptes\\arthur\\Documents\\a.pdf")), None);
+        // Une racine de volume fournie par erreur n'est jamais retenue ; partage réseau : rien.
+        assert_eq!(list.app_install(&p("C:\\Users\\Arthur\\Documents")), None);
+        assert_eq!(list.app_install(&p("\\\\nas\\partage\\jeux\\a.bin")), None);
+        // La denylist ordinaire n'est pas changée (le moteur de règles ne la voit pas).
+        assert_eq!(list.check(&p("C:\\Riot Games\\League of Legends\\x")), None);
     }
 }

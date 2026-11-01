@@ -77,19 +77,58 @@ pub struct Zones {
     git: Vec<bool>,
 }
 
+/// Désinstalleur d'une application (`unins000.exe`, `Uninstall.exe`, `uninstaller.dat`…).
+fn is_uninstaller(name: &str) -> bool {
+    name.starts_with("UNINS") || name.contains("UNINSTALL")
+}
+
+/// Dossier d'application par repli (aucune détection) : il contient un exécutable et un
+/// désinstalleur.
+fn has_exe_and_uninstaller(scan: &Scan, id: NodeId) -> bool {
+    let (mut exe, mut uninstaller) = (false, false);
+    for c in scan.children(id) {
+        if scan.node(c).is_some_and(|n| n.kind == Kind::File) {
+            let name = fold(scan.name(c));
+            exe |= name.ends_with(".EXE");
+            uninstaller |= is_uninstaller(&name);
+        }
+    }
+    exe && uninstaller
+}
+
+/// Analyse d'un volume entier : sa racine est une racine de volume (`C:\`).
+fn volume_scan(scan: &Scan) -> bool {
+    WinPath::parse(&scan.root_path).is_ok_and(|p| p.is_volume_root())
+}
+
+/// Dossiers d'applications trouvés par repli dans l'analyse (exécutable + désinstalleur), transmis
+/// à `safety` avec les dossiers détectés.
+pub fn heuristic_app_dirs(scan: &Scan) -> Vec<WinPath> {
+    (0..scan.len() as NodeId)
+        .filter(|&id| id != scan.root() && scan.node(id).is_some_and(|n| n.kind == Kind::Dir) && has_exe_and_uninstaller(scan, id))
+        .filter_map(|id| WinPath::parse(&scan.path(id)).ok())
+        .collect()
+}
+
 impl Zones {
     /// Un seul passage : les enfants ont toujours un indice supérieur à leur parent.
     pub fn new(scan: &Scan) -> Zones {
         let n = scan.len();
         let mut app = vec![false; n];
         let mut git = vec![false; n];
+        let volume = volume_scan(scan);
         for id in 0..n as NodeId {
             let Some(node) = scan.node(id) else { continue };
             let (pa, pg) = if id == scan.root() { (false, false) } else { (app[node.parent as usize], git[node.parent as usize]) };
             let name = fold(scan.name(id));
+            // Repli quand rien n'est détecté : à la racine d'un volume hors du dossier des profils
+            // (`C:\Riot Games`, `D:\SteamLibrary`…), ou un dossier avec un exécutable et un
+            // désinstalleur. Les dossiers détectés (launchers, Uninstall) passent par la denylist.
+            let root_level = volume && id != scan.root() && node.parent == scan.root() && node.kind == Kind::Dir && name != "USERS";
             let is_app = id != scan.root()
-                && node.kind == Kind::Dir
-                && (APP_DIRS.contains(&name.as_str()) || name.starts_with('.') || name.starts_with('$'));
+                && (root_level
+                    || (node.kind == Kind::Dir
+                        && (APP_DIRS.contains(&name.as_str()) || name.starts_with('.') || name.starts_with('$') || has_exe_and_uninstaller(scan, id))));
             let is_git = node.kind == Kind::Dir && scan.children(id).any(|c| scan.name(c).eq_ignore_ascii_case(".git"));
             app[id as usize] = pa || is_app;
             git[id as usize] = pg || is_git;
@@ -114,10 +153,11 @@ pub fn plain_file(scan: &Scan, id: NodeId) -> bool {
     })
 }
 
-/// La denylist de `safety` refuse-t-elle ce chemin ? (`safety` le revérifie de toute façon.)
+/// La denylist de `safety` refuse-t-elle ce chemin, y compris comme dossier d'installation d'un
+/// jeu ou d'une application ? (`safety` le revérifie de toute façon au moment de l'action.)
 pub fn denied(deny: Option<&DenyList>, scan: &Scan, id: NodeId) -> bool {
     match deny {
-        Some(d) => WinPath::parse(&scan.path(id)).map_or(true, |p| d.check(&p).is_some()),
+        Some(d) => WinPath::parse(&scan.path(id)).map_or(true, |p| d.check(&p).is_some() || d.app_install(&p).is_some()),
         None => false,
     }
 }

@@ -720,7 +720,7 @@ export interface DatabaseInfo {
 
 // --- Jeux et Dev (jalon 8) ------------------------------------------------------------------
 
-export type LauncherId = "steam" | "epic" | "gog" | "battlenet" | "ea" | "ubisoft" | "riot" | "curseforge" | "minecraft" | "xbox";
+export type LauncherId = "steam" | "epic" | "gog" | "battlenet" | "ea" | "ubisoft" | "riot" | "curseforge" | "minecraft" | "xbox" | "hoyoplay";
 
 export interface Game {
   /** `launcher:clé`, seul identifiant renvoyé au backend. */
@@ -743,7 +743,7 @@ export interface Game {
   cover: boolean;
   /** Ce que Lumen peut ouvrir : adresse Steam ou appli du Store, le launcher, ou rien. */
   open: "uri" | "app" | "none";
-  /** Le launcher sait-il déplacer un jeu ? (Riot Client, CurseForge : non.) */
+  /** Le launcher sait-il déplacer un jeu ? (Riot Client, CurseForge, HoYoPlay : non.) */
   canMove: boolean;
   /** Données et sauvegardes hors du dossier du jeu, protégées (jamais proposées). */
   data: { size: number; paths: string[] } | null;

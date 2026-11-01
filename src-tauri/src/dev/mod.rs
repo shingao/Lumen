@@ -276,7 +276,7 @@ pub fn projects(applied: &Applied, scan: &Scan, disk: &dyn ProjectDisk) -> Vec<P
 pub fn select_artifacts(applied: &Applied, scan: &Scan, ids: &[i64]) -> Result<Selection, LumenError> {
     let set = applied.set().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
     let cover = artifact_cover(applied);
-    let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new(), elevated: false, guard: None };
+    let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new(), elevated: false, guard: None, app_dirs: Vec::new() };
     for &id in ids {
         let n = NodeId::try_from(id).ok().filter(|n| cover.contains_key(n)).ok_or(LumenError::UnknownNode)?;
         let reco = &applied.analysis.recos[cover[&n].0];
@@ -352,7 +352,7 @@ pub fn select_docker() -> Result<Selection, LumenError> {
         return Err(LumenError::Plan("aucune image Docker sans étiquette".into()));
     }
     let command = safety::plan::PlannedCommand::action(safety::commands::OfficialCommand::DockerImagePrune, None, d.total);
-    Ok(Selection { targets: Vec::new(), allow: Allowlist::new(), commands: vec![command], rule_names: HashMap::new(), elevated: false, guard: None })
+    Ok(Selection { targets: Vec::new(), allow: Allowlist::new(), commands: vec![command], rule_names: HashMap::new(), elevated: false, guard: None, app_dirs: Vec::new() })
 }
 
 /// Dernière liste des disques virtuels (le front coche des identifiants, jamais des chemins).

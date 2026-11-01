@@ -60,6 +60,8 @@ fn launcher_of(e: &Entry) -> Option<Launcher> {
         Some(Launcher::BattleNet)
     } else if p.starts_with("electronic arts") && !["ea app", "ea", "origin", "ea desktop"].contains(&n.as_str()) {
         Some(Launcher::Ea)
+    } else if crate::hoyoplay::is_game_entry(e) {
+        Some(Launcher::HoYoPlay)
     } else if (e.key.to_ascii_lowercase().starts_with("riot game ") || p.starts_with("riot games"))
         && !n.starts_with("riot client")
         && !n.starts_with("riot vanguard")
@@ -114,6 +116,8 @@ pub fn detect(reg: &dyn Registry, d: &mut Detection) {
             d.found(Launcher::Ubisoft);
         } else if n.starts_with("riot client") {
             d.found(Launcher::Riot);
+        } else if n == "hoyoplay" {
+            d.found(Launcher::HoYoPlay);
         }
         if let Some(l) = launcher_of(e) {
             d.found(l);

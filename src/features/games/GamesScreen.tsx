@@ -27,6 +27,7 @@ const LAUNCHER_KEYS: Record<LauncherId, MessageKey> = {
   curseforge: "games.launcher.curseforge",
   minecraft: "games.launcher.minecraft",
   xbox: "games.launcher.xbox",
+  hoyoplay: "games.launcher.hoyoplay",
 };
 
 /** Infobulle de « Désinstaller » / « Déplacer » : ce que Lumen ouvre. */

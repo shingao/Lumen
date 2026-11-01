@@ -266,13 +266,15 @@ pub(crate) mod platform {
     use crate::advanced::duplicates::{ContentReader, ReadError};
     use safety::denylist::DenyList;
 
+    /// Denylist de `safety` avec les dossiers d'installation (jeux, applications) : rien de ce
+    /// qu'ils contiennent n'est proposé par Dormants, Doublons ni Gros fichiers.
     #[cfg(windows)]
-    pub fn deny() -> Option<DenyList> {
-        safety::win::system_layout().ok().map(|l| DenyList::new(&l))
+    pub fn deny(games: &crate::games::GamesState) -> Option<DenyList> {
+        safety::win::system_layout().ok().map(|l| DenyList::new(&l).with_apps(crate::apps::installed(games, Some(&l.profile))))
     }
 
     #[cfg(not(windows))]
-    pub fn deny() -> Option<DenyList> {
+    pub fn deny(_: &crate::games::GamesState) -> Option<DenyList> {
         None
     }
 
@@ -422,7 +424,7 @@ pub(crate) fn select_files(scan: &Scan, ids: &[NodeId], label: (&str, &str)) -> 
     }
     let mut allow = Allowlist::new();
     allow.add_selection(AllowSelection { id: SELECTION_ID, members });
-    Ok(Selection { targets, allow, commands: Vec::new(), rule_names: names(label.0, label.1), elevated: false, guard: None })
+    Ok(Selection { targets, allow, commands: Vec::new(), rule_names: names(label.0, label.1), elevated: false, guard: None, app_dirs: Vec::new() })
 }
 
 /// Exemplaires cochés : chaque groupe concerné est transmis en entier à `safety` (empreinte et
@@ -464,7 +466,7 @@ pub(crate) fn select_duplicates(scan: &Scan, found: &Found, ids: &[i64]) -> Resu
     }
     let mut allow = Allowlist::new();
     allow.add_duplicates(DuplicateSelection { id: SELECTION_ID, groups: dup_groups });
-    Ok(Selection { targets, allow, commands: Vec::new(), rule_names: names("Doublons", "Duplicates"), elevated: false, guard: None })
+    Ok(Selection { targets, allow, commands: Vec::new(), rule_names: names("Doublons", "Duplicates"), elevated: false, guard: None, app_dirs: Vec::new() })
 }
 
 /// Actions système : commandes officielles élevées, mesurées sur le lecteur système, après un
@@ -507,7 +509,7 @@ pub(crate) fn select_system(ctx: &SystemContext<'_>, actions: &[SystemAction], r
         };
         commands.push(PlannedCommand::action(command, Some(root.clone()), bytes));
     }
-    Ok(Selection { targets: Vec::new(), allow: Allowlist::new(), commands, rule_names: HashMap::new(), elevated: true, guard: None })
+    Ok(Selection { targets: Vec::new(), allow: Allowlist::new(), commands, rule_names: HashMap::new(), elevated: true, guard: None, app_dirs: Vec::new() })
 }
 
 fn display_of(entry: &crate::scanning::Entry) -> impl Fn(&str) -> String + '_ {
@@ -517,9 +519,15 @@ fn display_of(entry: &crate::scanning::Entry) -> impl Fn(&str) -> String + '_ {
 /// Fichiers dormants (« À vérifier ») : dernier accès si Windows le tient à jour, sinon
 /// dernière modification, ce que l'interface affiche.
 #[tauri::command]
-pub fn dormant_find(scans: State<'_, ScanState>, state: State<'_, AdvancedState>, scan_id: u32, months: Option<u32>) -> Result<dormant::DormantDto, LumenError> {
+pub fn dormant_find(
+    scans: State<'_, ScanState>,
+    games: State<'_, crate::games::GamesState>,
+    state: State<'_, AdvancedState>,
+    scan_id: u32,
+    months: Option<u32>,
+) -> Result<dormant::DormantDto, LumenError> {
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
-    let deny = platform::deny();
+    let deny = platform::deny(&games);
     let (raw, updated) = platform::last_access();
     let covered = |id: NodeId| entry.applied.as_ref().is_some_and(|a| a.node(id).reco.is_some());
     let display = display_of(&entry);
@@ -539,10 +547,16 @@ pub fn dormant_find(scans: State<'_, ScanState>, state: State<'_, AdvancedState>
 
 /// Les 100 plus gros fichiers (« À vérifier »), filtrables par type.
 #[tauri::command]
-pub fn largest_files(scans: State<'_, ScanState>, state: State<'_, AdvancedState>, scan_id: u32, kind: Option<String>) -> Result<largest::LargestDto, LumenError> {
+pub fn largest_files(
+    scans: State<'_, ScanState>,
+    games: State<'_, crate::games::GamesState>,
+    state: State<'_, AdvancedState>,
+    scan_id: u32,
+    kind: Option<String>,
+) -> Result<largest::LargestDto, LumenError> {
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
     let kind = kind.as_deref().map(|k| FileKind::parse(k).ok_or(LumenError::UnknownNode)).transpose()?;
-    let deny = platform::deny();
+    let deny = platform::deny(&games);
     let found = largest::find(&entry.scan, deny.as_ref(), kind, &display_of(&entry));
     let mut inner = state.lock()?;
     // Changer de filtre ne retire pas ce qui a déjà été proposé pour cette analyse.
@@ -572,7 +586,7 @@ pub fn duplicates_start(app: AppHandle, scans: State<'_, ScanState>, state: Stat
     let spawned = std::thread::Builder::new().name("lumen-duplicates".into()).spawn(move || {
         let scan = &entry.scan;
         let cache = crate::cleanup::with_journal(&app, |j| j.hash_cache(scan.volume_serial)).unwrap_or_default();
-        let deny = platform::deny();
+        let deny = platform::deny(&app.state::<crate::games::GamesState>());
         let mut last = Instant::now() - Duration::from_secs(1);
         let mut phase = "";
         let on_progress = |p: ProgressDto| {
@@ -699,20 +713,22 @@ pub fn advanced_plan(
     if let AdvancedRequest::Shaders = request {
         let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
         let mut sel = cleanup::select(applied, &entry.scan, &[crate::games::SHADERS_RULE.to_owned()])?;
+        sel.app_dirs = crate::apps::protected_for(&app.state::<crate::games::GamesState>(), &entry.scan);
         sel.guard = Some(safety::guard::ProcessGuard::games(crate::games::game_dirs(&app.state::<crate::games::GamesState>())));
         let volume_key = crate::timeline::volume_key(&entry.volume);
         return cleanup::prepare(&clean, &sel, mode, "Caches de shaders".into(), ("shaders", volume_key), &|p| applied.display(p));
     }
     if let AdvancedRequest::Artifacts { ids } = &request {
         let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
-        let sel = crate::dev::select_artifacts(applied, &entry.scan, ids)?;
+        let mut sel = crate::dev::select_artifacts(applied, &entry.scan, ids)?;
+        sel.app_dirs = crate::apps::protected_for(&app.state::<crate::games::GamesState>(), &entry.scan);
         let volume_key = crate::timeline::volume_key(&entry.volume);
         return cleanup::prepare(&clean, &sel, mode, "Artefacts de projets".into(), ("artifacts", volume_key), &|p| applied.display(p));
     }
     let display = display_of(&entry);
     let inner = state.lock()?;
     let for_scan = |slot: &Option<(u32, HashSet<NodeId>)>| slot.as_ref().filter(|(id, _)| *id == scan_id).map(|(_, s)| s.clone()).unwrap_or_default();
-    let (sel, title, kind) = match &request {
+    let (mut sel, title, kind) = match &request {
         AdvancedRequest::Dormant { ids } => {
             let ids = node_ids(ids, &for_scan(&inner.dormant))?;
             (select_files(&entry.scan, &ids, ("Fichiers dormants", "Dormant files"))?, "Fichiers dormants", "dormant")
@@ -733,6 +749,8 @@ pub fn advanced_plan(
     if sel.targets.is_empty() {
         return Err(LumenError::Plan("aucun élément choisi".into()));
     }
+    // Dossiers d'installation : `safety` refuse toute sélection qui s'y trouve (jalon 13).
+    sel.app_dirs = crate::apps::protected_for(&app.state::<crate::games::GamesState>(), &entry.scan);
     let volume_key = crate::timeline::volume_key(&entry.volume);
     cleanup::prepare(&clean, &sel, mode, title.into(), (kind, volume_key), &display)
 }

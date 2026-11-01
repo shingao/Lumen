@@ -92,6 +92,7 @@ pub fn select(paths: &[PathBuf]) -> Result<Selection, LumenError> {
         rule_names: std::collections::HashMap::new(),
         elevated: true,
         guard: None,
+        app_dirs: Vec::new(),
     })
 }
 

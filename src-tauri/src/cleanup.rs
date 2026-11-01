@@ -44,6 +44,10 @@ pub struct Selection {
     /// launchers fermés).
     #[cfg_attr(not(windows), allow(dead_code))]
     pub guard: Option<safety::guard::ProcessGuard>,
+    /// Dossiers d'installation (jeux, applications) transmis à `safety` : refusés à toute
+    /// sélection, jamais supprimés comme parent (jalon 13).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub app_dirs: Vec<WinPath>,
 }
 
 pub(crate) fn expected(scan: &Scan, n: NodeId) -> Option<Expected> {
@@ -104,7 +108,7 @@ pub(crate) fn grant_for(applied: &Applied, scan: &Scan, rule: &Rule, n: NodeId) 
 /// Cibles, autorisations et commandes des recommandations cochées.
 pub fn select(applied: &Applied, scan: &Scan, ids: &[String]) -> Result<Selection, LumenError> {
     let set = applied.set().ok_or_else(|| LumenError::UnknownReco(ids.join(", ")))?;
-    let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new(), elevated: false, guard: None };
+    let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new(), elevated: false, guard: None, app_dirs: Vec::new() };
     for id in ids {
         let reco = applied.analysis.recos.iter().find(|r| &set.rules[r.rule].id == id).ok_or_else(|| LumenError::UnknownReco(id.clone()))?;
         let rule = &set.rules[reco.rule];
@@ -361,6 +365,9 @@ struct Prepared {
     kind: &'static str,
     /// Volume visé (clé de la Timeline), pour les repères de nettoyage sur la courbe.
     volume_key: Option<String>,
+    /// Dossiers d'installation à protéger, revérifiés à l'exécution (Windows).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    app_dirs: Vec<WinPath>,
 }
 
 #[derive(Default)]
@@ -404,7 +411,7 @@ mod platform {
     #[cfg(windows)]
     pub fn build(sel: &Selection, mode: DeleteMode) -> Result<Plan, LumenError> {
         let layout = safety::win::system_layout().map_err(|e| LumenError::Plan(e.to_string()))?;
-        let deny = safety::denylist::DenyList::new(&layout);
+        let deny = safety::denylist::DenyList::new(&layout).with_apps(sel.app_dirs.iter().cloned());
         let checker = safety::check::Checker { probe: &safety::win::WinProbe, deny: &deny, allow: &sel.allow, now: now_filetime() };
         let mut plan = Plan::build(&checker, &sel.targets, mode).with_commands(sel.commands.clone());
         if let Some(guard) = &sel.guard {
@@ -427,7 +434,7 @@ mod platform {
     #[cfg(windows)]
     pub fn execute(p: &Prepared, confirmation: &safety::plan::Confirmation, cancel: &AtomicBool, on: impl FnMut(Event)) -> Result<Report, LumenError> {
         let layout = safety::win::system_layout().map_err(|e| LumenError::Plan(e.to_string()))?;
-        let deny = safety::denylist::DenyList::new(&layout);
+        let deny = safety::denylist::DenyList::new(&layout).with_apps(p.app_dirs.iter().cloned());
         let checker = safety::check::Checker { probe: &safety::win::WinProbe, deny: &deny, allow: &p.allow, now: now_filetime() };
         safety::plan::execute(&p.plan, confirmation, &checker, &safety::win::WinEffects::new(), cancel, on).map_err(|e| LumenError::Plan(e.to_string()))
     }
@@ -553,6 +560,7 @@ pub(crate) fn refuse_games_rules(applied: &Applied, ids: &[String]) -> Result<()
 #[tauri::command]
 pub fn plan_create(
     scans: State<'_, crate::scanning::ScanState>,
+    games: State<'_, crate::games::GamesState>,
     state: State<'_, CleanState>,
     scan_id: u32,
     recos: Vec<String>,
@@ -563,7 +571,9 @@ pub fn plan_create(
     crate::devices::ensure_cleanable(&entry.volume)?;
     let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
     refuse_games_rules(applied, &recos)?;
-    let sel = select(applied, &entry.scan, &recos)?;
+    let mut sel = select(applied, &entry.scan, &recos)?;
+    // Une règle peut agir dans un dossier d'application, jamais sur un dossier qui en contient un.
+    sel.app_dirs = crate::apps::protected_for(&games, &entry.scan);
     let mode = delete_mode(mode);
     let names: Vec<&str> = recos.iter().filter_map(|r| sel.rule_names.get(r)).map(|(fr, _)| fr.as_str()).collect();
     let title = if names.len() <= 3 { names.join(", ") } else { format!("{} recommandations", names.len()) };
@@ -588,7 +598,7 @@ pub(crate) fn prepare(
     display: &dyn Fn(&str) -> String,
 ) -> Result<PlanDto, LumenError> {
     let plan = platform::build(sel, mode)?;
-    let prepared = Prepared { plan, allow: sel.allow.clone(), title, kind, volume_key };
+    let prepared = Prepared { plan, allow: sel.allow.clone(), title, kind, volume_key, app_dirs: sel.app_dirs.clone() };
     let mut inner = state.0.lock().map_err(|_| LumenError::Plan("état indisponible".into()))?;
     inner.next_id += 1;
     let id = inner.next_id;
