@@ -4,8 +4,10 @@
 //! Lumen ne désinstalle ni ne déplace jamais un jeu : il ouvre le launcher (`safety::launch`).
 //! Les caches de shaders se nettoient ici seulement, refusés si un jeu ou un launcher tourne.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use launchers::{Detection, Game, Launcher, Reason};
 use serde::Serialize;
@@ -16,8 +18,11 @@ use crate::error::LumenError;
 /// Jaquette lue au plus (le cache de Steam fait quelques centaines de Ko).
 const MAX_COVER: u64 = 2 << 20;
 
+/// Une taille mesurée (dossier hors de l'analyse en cours) sert ce temps avant d'être remesurée.
+const MEASURE_TTL: Duration = Duration::from_secs(60 * 60);
+
 #[derive(Default)]
-pub struct GamesState(Mutex<Option<Arc<Found>>>);
+pub struct GamesState(Mutex<Option<Arc<Found>>>, Mutex<HashMap<String, (u64, Instant)>>);
 
 pub(crate) struct Found {
     detection: Detection,
@@ -28,6 +33,22 @@ pub(crate) struct Found {
 impl GamesState {
     pub(crate) fn found(&self) -> Option<Arc<Found>> {
         self.0.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Taille d'un dossier hors de l'analyse : parcours rapide de ce seul dossier (lecture seule),
+    /// gardé une heure.
+    fn measured(&self, dir: &Path, measure: &dyn Fn(&Path) -> Option<u64>) -> Option<u64> {
+        let key = launchers::norm(dir);
+        if let Some(&(size, at)) = self.1.lock().ok()?.get(&key) {
+            if at.elapsed() < MEASURE_TTL {
+                return Some(size);
+            }
+        }
+        let size = measure(dir)?;
+        if let Ok(mut cache) = self.1.lock() {
+            cache.insert(key, (size, Instant::now()));
+        }
+        Some(size)
     }
 }
 
@@ -40,11 +61,16 @@ pub struct GameDto {
     pub name: String,
     pub install_dir: Option<String>,
     pub size: Option<u64>,
-    /// `launcher` (annoncée), `measured` (mesurée sur le disque) ou `unknown`.
+    /// `launcher` (annoncée), `analysis` (lue dans l'analyse en cours), `measured` (mesurée
+    /// sur le disque, dossier hors de l'analyse) ou `unknown`.
     pub size_source: &'static str,
     pub drive: Option<String>,
-    /// Dernière partie (ms), seulement si le launcher la connaît.
+    /// Dernière partie (ms), donnée par le launcher ou estimée (`last_played_estimated`).
     pub last_played: Option<i64>,
+    /// Estimée d'après les journaux de parties (Riot), jamais inventée.
+    pub last_played_estimated: bool,
+    /// Modes inclus dans ce jeu, jamais comptés à part (Teamfight Tactics dans League of Legends).
+    pub modes: Vec<String>,
     /// `keep` ou `review` ; jamais coché, Lumen ne supprime jamais un jeu.
     pub status: &'static str,
     pub cover: bool,
@@ -110,12 +136,20 @@ fn drive_of(p: &Path) -> Option<String> {
     (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()).then(|| s[..2].to_ascii_uppercase())
 }
 
-/// Ce que l'on sait d'un jeu, mis en forme ; `measured` : taille mesurée faute de mieux ;
+/// Taille d'un jeu que le launcher ne donne pas : lue dans l'analyse, ou mesurée.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Known {
+    Analysis(u64),
+    Measured(u64),
+}
+
+/// Ce que l'on sait d'un jeu, mis en forme ; `known` : taille trouvée faute de mieux ;
 /// `apps` : launchers trouvés (Program Files, ou lus dans leurs fichiers pour Riot et CurseForge).
-pub(crate) fn game_dto(g: &Game, measured: Option<u64>, data: Option<GameDataDto>, apps: &[(Launcher, PathBuf)], now_secs: i64) -> GameDto {
-    let (size, size_source) = match (g.size, measured) {
+pub(crate) fn game_dto(g: &Game, known: Option<Known>, data: Option<GameDataDto>, apps: &[(Launcher, PathBuf)], now_secs: i64) -> GameDto {
+    let (size, size_source) = match (g.size, known) {
         (Some(s), _) => (Some(s), "launcher"),
-        (None, Some(m)) => (Some(m), "measured"),
+        (None, Some(Known::Analysis(m))) => (Some(m), "analysis"),
+        (None, Some(Known::Measured(m))) => (Some(m), "measured"),
         (None, None) => (None, "unknown"),
     };
     GameDto {
@@ -127,6 +161,8 @@ pub(crate) fn game_dto(g: &Game, measured: Option<u64>, data: Option<GameDataDto
         size_source,
         drive: g.install_dir.as_deref().and_then(drive_of),
         last_played: g.last_played.map(|t| t * 1000),
+        last_played_estimated: g.last_played_estimated && g.last_played.is_some(),
+        modes: g.modes.clone(),
         status: if launchers::needs_review(g.last_played, now_secs) { "review" } else { "keep" },
         cover: g.cover.is_some(),
         open: match g.launcher {
@@ -215,7 +251,7 @@ mod platform {
         let vars = safety::win::rule_variables();
         let var = |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, p)| PathBuf::from(p.display_string()));
         let program_data = var("PROGRAMDATA").unwrap_or_else(|| PathBuf::from("C:\\ProgramData"));
-        let drives = scan::win::volumes().iter().filter(|v| v.kind == scan::win::VolumeKind::Fixed).map(|v| PathBuf::from(format!("{}:\\", v.letter))).collect();
+        let drives = scan::win::fixed_letters().into_iter().map(|l| PathBuf::from(format!("{l}:\\"))).collect();
         let env = launchers::Env { program_data, profile: var("USERPROFILE"), local_app_data: var("LOCALAPPDATA"), app_data: var("APPDATA"), drives };
         (env, var("DOCUMENTS"))
     }
@@ -293,8 +329,9 @@ fn game_data(g: &Game, candidates: &[launchers::data::Candidate], steam_users: &
     (!paths.is_empty()).then_some(GameDataDto { size, paths })
 }
 
-/// Détection complète, tailles manquantes mesurées : appelée hors du fil de l'interface.
-fn list(state: &GamesState) -> GamesDto {
+/// Détection complète, tailles manquantes trouvées (analyse en cours, sinon mesure gardée en
+/// cache) : appelée hors du fil de l'interface.
+fn list(state: &GamesState, scans: &crate::scanning::ScanState) -> GamesDto {
     let (env, documents) = platform::env();
     let detection = platform::detect(&env);
     // Launchers ouvrables : sous Program Files, puis ceux lus dans leurs fichiers (Riot, CurseForge).
@@ -317,9 +354,14 @@ fn list(state: &GamesState) -> GamesDto {
         .games
         .iter()
         .map(|g| {
-            let measured = if g.size.is_none() { g.install_dir.as_deref().and_then(platform::measure) } else { None };
-            let data = game_data(g, &candidates, &roots.steam_users, &platform::measure);
-            game_dto(g, measured, data, &apps, now)
+            let known = match (g.size, g.install_dir.as_deref()) {
+                (None, Some(dir)) => crate::scanning::size_in_scans(scans, dir)
+                    .map(Known::Analysis)
+                    .or_else(|| state.measured(dir, &platform::measure).map(Known::Measured)),
+                _ => None,
+            };
+            let data = game_data(g, &candidates, &roots.steam_users, &|p| state.measured(p, &platform::measure));
+            game_dto(g, known, data, &apps, now)
         })
         .collect();
     let steam_shader_caches = detection
@@ -344,7 +386,9 @@ fn list(state: &GamesState) -> GamesDto {
 #[tauri::command]
 pub async fn games_list(app: AppHandle) -> Result<GamesDto, LumenError> {
     let worker = app.clone();
-    tauri::async_runtime::spawn_blocking(move || list(&worker.state::<GamesState>())).await.map_err(|e| LumenError::Games(e.to_string()))
+    tauri::async_runtime::spawn_blocking(move || list(&worker.state::<GamesState>(), &worker.state::<crate::scanning::ScanState>()))
+        .await
+        .map_err(|e| LumenError::Games(e.to_string()))
 }
 
 fn find<'a>(found: &'a Found, id: &str) -> Result<&'a Game, LumenError> {
@@ -520,7 +564,7 @@ mod tests {
     use super::*;
 
     fn game(launcher: Launcher, key: &str, last: Option<i64>, size: Option<u64>) -> Game {
-        Game { launcher, key: key.into(), name: "Jeu".into(), install_dir: Some(PathBuf::from("D:\\Jeux\\Jeu")), size, last_played: last, cover: None, shader_cache: None }
+        Game { launcher, key: key.into(), name: "Jeu".into(), install_dir: Some(PathBuf::from("D:\\Jeux\\Jeu")), size, last_played: last, cover: None, shader_cache: None, modes: Vec::new(), last_played_estimated: false }
     }
 
     #[test]
@@ -531,7 +575,7 @@ mod tests {
         assert_eq!((old.status, old.open, old.size_source, old.drive.as_deref()), ("review", "uri", "launcher", Some("D:")));
         assert_eq!(old.last_played, Some((now - 200 * 86_400) * 1000));
         // Date inconnue : « À garder », jamais une date inventée.
-        let epic = game_dto(&game(Launcher::Epic, "Fortnite", None, None), Some(42), None, &apps, now);
+        let epic = game_dto(&game(Launcher::Epic, "Fortnite", None, None), Some(Known::Measured(42)), None, &apps, now);
         assert_eq!((epic.status, epic.last_played, epic.size, epic.size_source, epic.open), ("keep", None, Some(42), "measured", "app"));
         let gog = game_dto(&game(Launcher::Gog, "1", None, None), None, None, &apps, now);
         assert_eq!((gog.size, gog.size_source, gog.open), (None, "unknown", "none"));
@@ -540,6 +584,28 @@ mod tests {
         assert_eq!((xbox.open, xbox.can_move), ("uri", true));
         let riot = game_dto(&game(Launcher::Riot, "valorant.live", None, None), None, None, &apps, now);
         assert_eq!((riot.open, riot.can_move), ("none", false));
+        // League of Legends : taille lue dans l'analyse, TFT en mode rattaché, date estimée.
+        let mut lol = game(Launcher::Riot, "league_of_legends.live", Some(now - 3 * 86_400), None);
+        lol.modes = vec!["Teamfight Tactics".into()];
+        lol.last_played_estimated = true;
+        let lol = game_dto(&lol, Some(Known::Analysis(7 << 30)), None, &apps, now);
+        assert_eq!((lol.size, lol.size_source, lol.last_played_estimated), (Some(7 << 30), "analysis", true));
+        assert_eq!(lol.modes, ["Teamfight Tactics"]);
+    }
+
+    #[test]
+    fn taille_mesuree_une_fois_puis_en_cache() {
+        let state = GamesState::default();
+        let calls = std::cell::Cell::new(0);
+        let measure = |_: &Path| {
+            calls.set(calls.get() + 1);
+            Some(1234)
+        };
+        let dir = Path::new("C:\\Riot Games\\League of Legends");
+        assert_eq!(state.measured(dir, &measure), Some(1234));
+        assert_eq!(state.measured(Path::new("c:\\riot games\\league of legends\\"), &measure), Some(1234));
+        assert_eq!(calls.get(), 1, "même dossier : une seule mesure");
+        assert_eq!(state.measured(Path::new("D:\\Absent"), &|_| None), None);
     }
 
     #[test]

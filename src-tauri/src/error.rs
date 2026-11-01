@@ -42,6 +42,8 @@ pub enum LumenError {
     Report(String),
     #[error("Intégration Windows : {0}")]
     Integration(String),
+    #[error("Analyse en profondeur : {0}")]
+    Depth(String),
 }
 
 /// Les commandes IPC renvoient le message lisible, jamais la structure interne.

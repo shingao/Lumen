@@ -1,21 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { copyText } from "../../app/clipboard";
 import { useRecommendations, useTree, useVolumes } from "../../app/data";
-import { goBack, goForward, goTo, goToTarget, setHere, useNav } from "../../app/navigation";
+import { goBack, goForward, goTo, setHere, useNav } from "../../app/navigation";
 import { startScan } from "../../app/scanning";
 import { type ColorMode, useStore } from "../../app/store";
 import { Button } from "../../components/Button";
-import { ArrowLeftIcon, ArrowRightIcon, ChevronDownIcon } from "../../components/icons";
-import { Menu, type MenuItem } from "../../components/Menu";
+import { ArrowLeftIcon, ArrowRightIcon } from "../../components/icons";
 import { Segmented } from "../../components/Segmented";
 import { openMove } from "../../app/moves";
 import { openExport } from "../../app/report";
 import { formatBytes } from "../../core/format";
 import { currentT, useT } from "../../i18n";
 import type { Category, TreeNode } from "../../ipc/types";
+import { DeviceChips } from "./DeviceChips";
 import { FastScanConfirm } from "./FastScanConfirm";
 import { Legend } from "./Legend";
 import { ScanProgressPanel, ScanStats } from "./ScanPanel";
+import { KEEP_FOCUS } from "../status/StatusHelp";
 import { Treemap } from "./Treemap";
 import styles from "./Explorer.module.css";
 
@@ -44,12 +45,12 @@ export function Explorer() {
   const colorMode = useStore((s) => s.colorMode);
   const setColorMode = useStore((s) => s.setColorMode);
   const hoverReco = useStore((s) => s.hoverReco);
+  const statusFocus = useStore((s) => s.statusFocus);
   const openReco = useStore((s) => s.openReco);
   const showToast = useStore((s) => s.showToast);
   const tree = useTree(node);
   const recos = useRecommendations();
   const volumes = useVolumes();
-  const [driveMenu, setDriveMenu] = useState<{ x: number; y: number } | null>(null);
   const [fastAnchor, setFastAnchor] = useState<{ x: number; y: number } | null>(null);
 
   // Emplacement affiché, pour l'historique (libellé et chemin du dossier, valables d'une analyse à l'autre).
@@ -60,7 +61,12 @@ export function Explorer() {
   }, [tree, target, scanId, node]);
 
   const focus = hoverReco ?? openReco;
-  const highlight = useMemo(() => recos?.find((r) => r.id === focus)?.highlight ?? null, [recos, focus]);
+  // Une recommandation survolée ou ouverte passe avant la mise en évidence d'un statut (« ? »).
+  const statusHighlight = focus === null ? (statusFocus?.status ?? null) : null;
+  const highlight = useMemo(() => {
+    if (statusHighlight) return (recos ?? []).filter((r) => r.status === statusHighlight).flatMap((r) => r.highlight);
+    return recos?.find((r) => r.id === focus)?.highlight ?? null;
+  }, [recos, focus, statusHighlight]);
   const categories = useMemo(() => (tree ? presentCategories(tree.root) : new Set<Category>()), [tree]);
 
   const modes: { value: ColorMode; label: string }[] = [
@@ -80,18 +86,11 @@ export function Explorer() {
   // seulement si l'appli n'est pas déjà administrateur (sinon la MFT est lue d'office).
   const canFastScan = !elevated && fastScanAvailable && (targetVolume?.mftCapable ?? false);
 
-  const targetItems: MenuItem[] = [
-    { label: t("explorer.target.user"), onSelect: () => goToTarget({ kind: "userProfile" }) },
-    ...(volumes ?? []).map((v, i) => ({
-      label: t("explorer.target.volume", { letter: v.letter, label: v.label || t(`explorer.volumeKind.${v.kind}`) }),
-      hint: t("explorer.driveFree", { free: formatBytes(v.free, t.locale), total: formatBytes(v.total, t.locale) }),
-      separatorBefore: i === 0,
-      onSelect: () => goToTarget({ kind: "volume", letter: v.letter }),
-    })),
-  ];
+  // Clé USB, carte SD, lecteur réseau : analyse et export seulement (pas de Corbeille).
+  const noCleanup = target.kind === "volume" && targetVolume !== undefined && !targetVolume.cleanable;
 
   return (
-    <section aria-label={t("explorer.title")} className={styles.explorer}>
+    <section aria-label={t("explorer.title")} className={styles.explorer} {...{ [KEEP_FOCUS]: "" }}>
       <div className={styles.header}>
         <div className={styles.heading}>
           <h2 className={styles.title}>{t("explorer.title")}</h2>
@@ -99,6 +98,13 @@ export function Explorer() {
         </div>
         <Segmented options={modes} value={colorMode} onChange={setColorMode} label={t("explorer.coloring")} />
       </div>
+
+      <DeviceChips />
+      {noCleanup && (
+        <p className={styles.banner} role="note">
+          {targetVolume.kind === "network" ? t("devices.bannerNetwork") : t("devices.bannerRemovable")}
+        </p>
+      )}
 
       <div className={styles.crumbBar}>
         <div className={styles.history}>
@@ -124,19 +130,8 @@ export function Explorer() {
           </button>
         </div>
         <nav aria-label={t("explorer.breadcrumb")} className={styles.crumbs}>
-          <button
-            type="button"
-            className={styles.drive}
-            aria-haspopup="menu"
-            aria-expanded={driveMenu !== null}
-            aria-label={t("explorer.drive", { drive: targetLetter })}
-            onClick={(e) => {
-              const box = e.currentTarget.getBoundingClientRect();
-              setDriveMenu({ x: box.left, y: box.bottom + 4 });
-            }}
-          >
+          <button type="button" className={styles.drive} aria-label={t("explorer.drive", { drive: targetLetter })} onClick={() => goTo(null)}>
             {drive?.label ?? targetLetter}
-            <ChevronDownIcon />
           </button>
           {rest.map((c, i) => {
             const last = i === rest.length - 1;
@@ -198,6 +193,7 @@ export function Explorer() {
           <Treemap
             root={tree.root}
             highlight={highlight}
+            highlightStatus={statusHighlight}
             onCopyPath={(n) => {
               void copyText(n.path).then((ok) => ok && showToast(currentT()("preview.pathCopied")));
             }}
@@ -210,7 +206,6 @@ export function Explorer() {
       <Legend mode={colorMode} categories={categories} />
       <ScanStats />
 
-      {driveMenu && <Menu x={driveMenu.x} y={driveMenu.y} label={t("explorer.targets")} onClose={() => setDriveMenu(null)} items={targetItems} />}
       {fastAnchor && (
         <FastScanConfirm
           x={fastAnchor.x}

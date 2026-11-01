@@ -19,7 +19,7 @@ const light = block(":root");
 const themes = { clair: light, sombre: new Map([...light, ...block('[data-theme="dark"]')]) };
 
 const CATS = ["--cat-media", "--cat-code", "--cat-packages", "--cat-tools", "--cat-android", "--cat-ai", "--cat-games"];
-const STATUS = ["--st-safe", "--st-review", "--st-keep"];
+const STATUS = ["--st-safe", "--st-review", "--st-keep", "--st-protected"];
 const AA = 4.5;
 
 describe.each(Object.entries(themes))("contraste AA, thème %s", (_name, tokens) => {
@@ -65,6 +65,24 @@ describe.each(Object.entries(themes))("contraste AA, thème %s", (_name, tokens)
       for (const fg of ["--text-1", "--text-2"]) {
         check(fg, solid(`--age-${i}`), `--age-${i}`);
         check(fg, veiled(`--age-${i}`), `--age-${i} + voile`);
+      }
+    }
+  });
+
+  it("contenu d'un élément couvert par une règle : fond uni éclairci par niveau, bord visible", () => {
+    // Treemap.module.css : color-mix(statut (100 − niveau × pas) %, --bg-container), bord 1 px.
+    const step = Number.parseFloat(tokens.get("--cover-step") ?? "0") / 100;
+    for (const [status, border] of [
+      ["--st-safe", "--cover-border-safe"],
+      ["--st-review", "--cover-border-review"],
+    ] as const) {
+      for (const level of [1, 2, 3, 4]) {
+        const fill = over({ ...container, a: level * step }, solid(status));
+        for (const fg of ["--text-1", "--text-2", "--text-3", "--text-4", "--delta-safe", "--delta-review"]) check(fg, fill, `${status} niveau ${level}`);
+        const ratio = contrastRatio(color(border), fill);
+        expect(ratio, `${border} sur ${status} niveau ${level} : ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+        const gap = contrastRatio(color(border), container);
+        expect(gap, `${border} sur le fond du conteneur : ${gap.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
       }
     }
   });

@@ -19,6 +19,8 @@ function node(path: string, size: number, patch: Partial<TreeNode> = {}, childre
     gain: 0,
     gainStatus: null,
     gainUpTo: false,
+    coverDepth: null,
+    opaque: null,
     hasChildren: children.length > 0,
     children,
     ...patch,

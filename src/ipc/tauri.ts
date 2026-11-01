@@ -23,6 +23,7 @@ import type {
   DuplicatesResult,
   LargestResult,
   RestorePoints,
+  DepthReport,
   SystemSinks,
   JournalAction,
   JournalDetail,
@@ -79,6 +80,9 @@ interface TreeNodeDto {
   gain: number;
   gainStatus: RecoStatus | null;
   gainUpTo: boolean;
+  coverDepth: number | null;
+  opaque: { label: Text; explanation: Text } | null;
+  protected: boolean;
   children: TreeNodeDto[];
 }
 
@@ -131,6 +135,9 @@ interface VolumeDto {
   total: number;
   free: number;
   mftCapable: boolean;
+  cleanable: boolean;
+  analyzedAt: number | null;
+  ready: boolean;
 }
 
 /** Plan tel que le renvoie Rust : nom de règle en (fr, en). */
@@ -140,7 +147,7 @@ interface PlanDto extends Omit<CleanPlan, "items"> {
 
 const SETTINGS_KEY = "lumen-settings";
 
-function toNode(dto: TreeNodeDto): TreeNode {
+function toNode(dto: TreeNodeDto, locale: Locale): TreeNode {
   // Statut, catégorie et gains viennent du moteur de règles (rules.toml), jamais du nom.
   return {
     id: dto.id,
@@ -158,8 +165,11 @@ function toNode(dto: TreeNodeDto): TreeNode {
     gain: dto.gain,
     gainStatus: dto.gainStatus,
     gainUpTo: dto.gainUpTo,
+    coverDepth: dto.coverDepth,
+    opaque: dto.opaque ? { label: pick(dto.opaque.label, locale), explanation: pick(dto.opaque.explanation, locale) } : null,
+    ...(dto.protected ? { protected: true } : {}),
     hasChildren: dto.hasChildren,
-    children: dto.children.map(toNode),
+    children: dto.children.map((c) => toNode(c, locale)),
   };
 }
 
@@ -214,9 +224,8 @@ export function createTauriBackend(): Backend {
   // Analyse affichée : les détails de recommandation s'y rapportent.
   let lastScanId = 0;
 
-  const loadVolumes = async (): Promise<Volume[]> => {
-    const list = await invoke<VolumeDto[]>("volumes_list");
-    volumes = list.map((v) => ({
+  const toVolumes = (list: VolumeDto[]): Volume[] =>
+    list.map((v) => ({
       id: v.letter,
       key: v.key,
       letter: v.letter,
@@ -226,7 +235,12 @@ export function createTauriBackend(): Backend {
       mftCapable: v.mftCapable,
       total: v.total,
       free: v.free,
+      cleanable: v.cleanable,
+      analyzedAt: v.analyzedAt,
+      ready: v.ready,
     }));
+  const loadVolumes = async (): Promise<Volume[]> => {
+    volumes = toVolumes(await invoke<VolumeDto[]>("volumes_list"));
     return volumes;
   };
 
@@ -238,6 +252,19 @@ export function createTauriBackend(): Backend {
     appInfo: () => invoke<AppInfo>("app_info"),
 
     volumes: loadVolumes,
+
+    async refreshVolumes() {
+      volumes = toVolumes(await invoke<VolumeDto[]>("volumes_refresh"));
+      return volumes;
+    },
+
+    onVolumesChanged(listener) {
+      const off = listen<VolumeDto[]>("volumes:changed", (e) => {
+        volumes = toVolumes(e.payload);
+        listener(volumes);
+      });
+      return () => void off.then((f) => f());
+    },
 
     startScan: (target, method) => invoke<number>("scan_start", { target, method }),
 
@@ -260,7 +287,7 @@ export function createTauriBackend(): Backend {
         scanId,
         node,
       });
-      const result: TreeSlice = { root: toNode(slice.root), breadcrumb: slice.breadcrumb };
+      const result: TreeSlice = { root: toNode(slice.root, locale), breadcrumb: slice.breadcrumb };
       return result;
     },
 
@@ -379,6 +406,12 @@ export function createTauriBackend(): Backend {
     purgeSnapshots: () => invoke<DatabaseInfo>("timeline_purge"),
     systemSinks: () => invoke<SystemSinks>("system_sinks"),
     readRestorePoints: () => invoke<RestorePoints>("restore_points_read"),
+    depthReport: (scanId) => invoke<DepthReport>("depth_report", { scanId }),
+    async depthTree(scanId, node) {
+      const slice = await invoke<{ root: TreeNodeDto; breadcrumb: { label: string; id: number | null }[] }>("depth_tree", { scanId, node });
+      return { root: toNode(slice.root, locale), breadcrumb: slice.breadcrumb } satisfies TreeSlice;
+    },
+    openAppsSettings: () => invoke<void>("open_apps_settings"),
     openSystemProtection: () => invoke("open_system_protection"),
     journal: () => invoke<JournalAction[]>("journal_list"),
     journalDetail: (actionId) => invoke<JournalDetail>("journal_detail", { actionId }),

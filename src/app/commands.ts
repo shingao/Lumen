@@ -24,6 +24,7 @@ const SCREEN_KEYS = {
   dev: "nav.dev",
   games: "nav.games",
   journal: "nav.journal",
+  depth: "nav.depth",
 } as const satisfies Record<Screen, string>;
 
 export function screenLabel(screen: Screen, t: Translator = currentT()): string {

@@ -246,11 +246,20 @@ fn others() -> Others {
     let local = profile.join("AppData").join("Local");
     let roaming = profile.join("AppData").join("Roaming");
     let riot_games = root.join("C").join("Riot Games");
-    // Riot : deux jeux, le client exclu, un YAML sans chemin, un YAML absent.
+    // Riot : LoL live (journaux de parties) et PBE (son propre dossier), VALORANT, le client
+    // exclu, un produit TFT (mode de LoL, jamais un jeu), un YAML sans chemin, un YAML absent.
     let meta = riot::riot_dir(&program_data).join("Metadata");
     write(&riot::riot_dir(&program_data).join("RiotClientInstalls.json"), &format!("{{\"rc_default\":\"{}\"}}", vdf_path(&riot_games.join("Riot Client").join("RiotClientServices.exe"))));
     let yaml = |dir: &Path| format!("product_install_full_path: \"{}\"\nproduct_install_root: \"x\"\n", dir.display().to_string().replace('\\', "/"));
     write(&meta.join("league_of_legends.live").join("league_of_legends.live.product_settings.yaml"), &yaml(&riot_games.join("League of Legends")));
+    write(&meta.join("league_of_legends.pbe").join("league_of_legends.pbe.product_settings.yaml"), &yaml(&riot_games.join("League of Legends (PBE)")));
+    fs::create_dir_all(riot_games.join("League of Legends (PBE)")).unwrap();
+    write(&meta.join("tft.live").join("tft.live.product_settings.yaml"), &yaml(&riot_games.join("League of Legends")));
+    let game_logs = riot_games.join("League of Legends").join("Logs").join("GameLogs");
+    for (name, secs) in [("2026-09-01T18-00-00_r3dlog.txt", 1_788_285_600u64), ("2026-10-20T19-03-12_r3dlog.txt", 1_792_524_600)] {
+        write(&game_logs.join(name), "log");
+        fs::File::options().write(true).open(game_logs.join(name)).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)).unwrap();
+    }
     write(&meta.join("valorant.live").join("valorant.live.product_settings.yaml"), &yaml(&riot_games.join("VALORANT")));
     write(&meta.join("riot_client").join("riot_client.product_settings.yaml"), &yaml(&riot_games.join("Riot Client")));
     write(&meta.join("bacon.live").join("bacon.live.product_settings.yaml"), "product_install_root: \"C:/Riot Games\"\n");
@@ -300,6 +309,7 @@ fn others() -> Others {
     for (key, name, dir) in [
         ("Riot Game league_of_legends.live", "League of Legends", Some(riot_games.join("League of Legends"))),
         ("Riot Game bacon.live", "Legends of Runeterra", Some(riot_games.join("LoR"))),
+        ("Riot Game tft.live", "Teamfight Tactics", Some(riot_games.join("TFT"))),
         ("Riot Client", "Riot Client", None),
         ("Riot Vanguard", "Riot Vanguard", None),
     ] {
@@ -318,7 +328,7 @@ fn riot_curseforge_minecraft_et_xbox() {
     let o = others();
     let d = detect(&o.env, &o.reg);
     let of = |l: Launcher| d.games.iter().filter(|g| g.launcher == l).map(|g| g.name.as_str()).collect::<Vec<_>>();
-    assert_eq!(of(Launcher::Riot), ["League of Legends", "Legends of Runeterra", "VALORANT"]);
+    assert_eq!(of(Launcher::Riot), ["League of Legends", "League of Legends PBE", "Legends of Runeterra", "VALORANT"]);
     assert_eq!(of(Launcher::CurseForge), ["All the Mods 9", "Vanilla+"]);
     assert_eq!(of(Launcher::Minecraft), ["Minecraft: Java Edition", "Modpack"]);
     assert_eq!(of(Launcher::Xbox), ["Forza Horizon 5", "Halo Infinite"]);
@@ -329,6 +339,16 @@ fn riot_curseforge_minecraft_et_xbox() {
     let lol = find(&d, "League of Legends");
     assert!(lol.install_dir.as_ref().is_some_and(|p| p.ends_with("League of Legends")));
     assert_eq!(d.games.iter().filter(|g| g.name == "League of Legends").count(), 1, "repli Uninstall sans doublon");
+    // Teamfight Tactics : rattaché à League of Legends (live et PBE), jamais un jeu à part.
+    assert!(!d.games.iter().any(|g| g.name.contains("Teamfight") || g.key.contains("tft")), "{:?}", d.games);
+    assert_eq!(lol.modes, ["Teamfight Tactics"]);
+    let pbe = find(&d, "League of Legends PBE");
+    assert_eq!(pbe.modes, ["Teamfight Tactics"]);
+    assert!(pbe.install_dir.as_ref().is_some_and(|p| p.ends_with("League of Legends (PBE)")));
+    assert!(find(&d, "VALORANT").modes.is_empty());
+    // Dernière partie : Riot ne la donne pas ; estimée par le journal de partie le plus récent.
+    assert_eq!((lol.last_played, lol.last_played_estimated), (Some(1_792_524_600), true));
+    assert_eq!((pbe.last_played, pbe.last_played_estimated), (None, false), "pas de journaux : inconnue");
     assert!(d.launcher_exes.iter().any(|(l, p)| *l == Launcher::Riot && p.ends_with("RiotClientServices.exe")));
     assert!(d.launcher_exes.iter().any(|(l, p)| *l == Launcher::CurseForge && p.ends_with("CurseForge.exe")));
     // Dernière partie : connue (fuseau pris en compte), « jamais » = inconnue.
@@ -400,7 +420,7 @@ fn donnees_et_sauvegardes_rattachees_au_jeu() {
     }
     let roots = data::DataRoots { documents: Some(docs.clone()), profile: Some(profile.clone()), local_app_data: Some(local.clone()), app_data: Some(roaming), steam_users: vec![steam_user.clone()] };
     let cands = roots.candidates();
-    let game = |l: Launcher, key: &str, name: &str| Game { launcher: l, key: key.into(), name: name.into(), install_dir: Some(tmp.path().join("Jeux").join(name)), size: None, last_played: None, cover: None, shader_cache: None };
+    let game = |l: Launcher, key: &str, name: &str| Game { launcher: l, key: key.into(), name: name.into(), install_dir: Some(tmp.path().join("Jeux").join(name)), size: None, last_played: None, cover: None, shader_cache: None, modes: Vec::new(), last_played_estimated: false };
     let rel = |v: Vec<PathBuf>| v.iter().map(|p| p.strip_prefix(tmp.path()).unwrap().display().to_string().replace('\\', "/")).collect::<Vec<_>>();
     assert_eq!(
         rel(data::data_dirs(&game(Launcher::Steam, "1086940", "Baldur's Gate 3"), &cands, std::slice::from_ref(&steam_user))),

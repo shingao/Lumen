@@ -81,6 +81,12 @@
   color: var(--text-label);
 }
 
+/* Mode inclus (Teamfight Tactics dans League of Legends) : rattaché à la carte, jamais une carte. */
+.modes {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+
 .keep {
   background: var(--st-keep);
 }

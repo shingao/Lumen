@@ -75,7 +75,7 @@ fn exe() -> Result<String, LumenError> {
 }
 
 fn validate_open(raw: &str) -> OpenDto {
-    let volumes = crate::scanning::volumes_list();
+    let volumes = crate::scanning::volumes_list_raw();
     let known: Vec<KnownVolume<'_>> = volumes.iter().map(|v| KnownVolume { letter: &v.letter, kind: v.kind }).collect();
     match launch::validate(raw, &known, platform::is_dir) {
         Ok(OpenRequest { letter, path }) => OpenDto::Open { letter, path },
@@ -287,7 +287,7 @@ pub fn open_request_take(state: State<'_, IntegrationState>) -> Result<Option<Op
 #[tauri::command]
 pub fn notify_low_space(app: AppHandle, letter: String, title: String, body: String) -> Result<(), LumenError> {
     // Seule une lettre de la liste des volumes est acceptée.
-    let letter = crate::scanning::volumes_list()
+    let letter = crate::scanning::volumes_list_raw()
         .into_iter()
         .find(|v| v.letter.eq_ignore_ascii_case(&letter))
         .map(|v| v.letter)

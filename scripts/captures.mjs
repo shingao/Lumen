@@ -12,7 +12,7 @@ mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({ executablePath });
 
 // Tutoriel et astuces (jalon 10) déjà vus, sauf pour les captures qui les montrent (`fresh`).
-const SCREENS = ["analyse", "timeline", "cleanup", "dev", "games", "journal"];
+const SCREENS = ["analyse", "timeline", "cleanup", "dev", "games", "journal", "depth"];
 async function welcomed(page, { onboarding = true, tips = SCREENS } = {}) {
   await page.addInitScript(
     ([done, seen]) => {
@@ -40,7 +40,7 @@ async function shot(name, { theme = "light", locale = "fr-FR", width = 1440, hei
 }
 
 const hoverNpm = async (page) => {
-  const tile = page.locator("[data-node]", { hasText: "npm-cache" }).first();
+  const tile = page.locator("[data-node][data-opaque]").first();
   const box = await tile.boundingBox();
   if (box) await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.4);
 };
@@ -324,7 +324,7 @@ await shot("44-jeux-anglais", { locale: "en-US", act: async (p) => {
 await shot("45-jeux-launchers-1920", { width: 1920, height: 1080, act: async (p) => {
   await nav(p, "Jeux");
   await p.getByRole("list", { name: "Jeux installés" }).waitFor();
-  await p.getByRole("listitem", { name: "League of Legends" }).getByRole("button", { name: "Déplacer" }).hover();
+  await p.getByRole("listitem", { name: "League of Legends", exact: true }).getByRole("button", { name: "Déplacer" }).hover();
 } });
 await shot("46-parametres-memoire", { act: async (p) => {
   await p.locator("[data-level='3']").first().waitFor();
@@ -459,6 +459,69 @@ await shot("67-analyser-avec-lumen", { act: async (p) => {
 await shot("68-analyser-avec-lumen-refus", { act: async (p) => {
   await opened("\\\\NAS\\partage\\Films")(p);
   await p.getByText("Impossible d'ouvrir ce dossier").waitFor();
+} });
+// Jalon 12 : zones couvertes par une règle (hachures au plus haut seulement, descendants unis avec
+// un bord) et contenu interne des caches en tuile unique. Avant / après : jalon-12/69-70.
+const zoomTile = (name) => async (p) => {
+  await p.locator("[data-node]", { hasText: name }).first().waitFor();
+  await p.locator("[data-node]", { hasText: name }).first().click({ position: { x: 20, y: 12 } });
+  await p.waitForTimeout(600);
+};
+await shot("69-hachures-apres-gradle", { act: zoomTile(".gradle") });
+await shot("69-hachures-apres-gradle-sombre", { theme: "dark", act: zoomTile(".gradle") });
+await shot("70-cache-opaque-apres", { act: async (p) => {
+  await p.locator("[data-node][data-opaque]").first().hover();
+  await p.waitForTimeout(400);
+} });
+// « ? » d'un statut : tuiles de ce statut mises en évidence, bulle d'explication.
+await shot("71-statut-sans-risque", { act: async (p) => {
+  await p.getByRole("button", { name: "Montrer dans la treemap ce qui est sans risque" }).first().click();
+  await p.waitForTimeout(500);
+} });
+await shot("71-statut-a-verifier-sombre", { theme: "dark", act: async (p) => {
+  await p.getByRole("button", { name: "Montrer dans la treemap ce qui est à vérifier" }).last().click();
+  await p.waitForTimeout(500);
+} });
+// Analyse en profondeur : postes du volume, renvois vers les modules, treemap « Protégé ».
+const depthDone = async (p) => {
+  await p.getByRole("button", { name: "Analyser en profondeur" }).first().click();
+  await p.getByRole("region", { name: "Postes du volume" }).waitFor();
+  await p.waitForTimeout(400);
+};
+await shot("72-profondeur", { height: 1500, act: depthDone });
+await shot("72-profondeur-sombre", { theme: "dark", height: 1500, act: depthDone });
+await shot("72-profondeur-treemap", { act: async (p) => {
+  await depthDone(p);
+  await p.getByRole("region", { name: "Postes du volume" }).getByRole("button", { name: "WinSxS" }).click();
+  await p.waitForTimeout(600);
+  await p.locator("[data-protected]").first().hover();
+} });
+await shot("73-kpi-profondeur", { act: async (p) => {
+  await depthDone(p);
+  await nav(p, "Analyse");
+} });
+// Périphériques : puces des volumes (clé USB branchée), bandeau « Pas de Corbeille », réseau.
+const withUsb = (act) => async (p) => {
+  await p.evaluate(() => globalThis.localStorage.setItem("lumen-dev-devices", "usb"));
+  await p.reload();
+  await p.waitForSelector("#root > *");
+  await p.getByRole("group", { name: "Volumes" }).getByRole("button", { name: /^E: KINGSTON/ }).waitFor();
+  if (act) await act(p);
+};
+await shot("74-peripheriques", { act: withUsb() });
+await shot("74-peripheriques-usb", { act: withUsb(async (p) => {
+  await p.getByRole("group", { name: "Volumes" }).getByRole("button", { name: /^E: KINGSTON/ }).click();
+  await p.getByRole("note").waitFor();
+  await p.waitForTimeout(600);
+}) });
+await shot("74-peripheriques-usb-sombre", { theme: "dark", act: withUsb(async (p) => {
+  await p.getByRole("group", { name: "Volumes" }).getByRole("button", { name: /^E: KINGSTON/ }).click();
+  await p.getByRole("note").waitFor();
+  await p.waitForTimeout(600);
+}) });
+await shot("75-lecteur-reseau", { act: async (p) => {
+  await p.getByRole("group", { name: "Volumes" }).getByRole("button", { name: /^Z:/ }).click();
+  await p.getByRole("dialog").waitFor();
 } });
 await browser.close();
 console.log(`captures dans ${out}`);

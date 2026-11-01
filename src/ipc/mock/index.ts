@@ -27,8 +27,9 @@ import type {
   Volume,
 } from "../types";
 import type { L10n, MockReco, MockTile, When } from "./data";
-import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
+import { D_TILES, E_TILES, KPI, RECOS, TILES, USB_KEY, USER_ROOT, VOLUMES } from "./data";
 import { createMockTimeline } from "./timeline";
+import { mockDepthReport, mockDepthTree } from "./depth";
 import { createMoves } from "./moves";
 import { createIntegration, type MockIntegration } from "./integration";
 import { DEV_EXTRA_CACHES, mockCover, mockDevCaches, mockDocker, mockGames, mockProjects, mockRunning, mockShaders, mockWsl } from "./devgames";
@@ -97,7 +98,26 @@ function buildVolume(tiles: MockTile[], rootId: NodeId, prefix: string[], base: 
 const TREES: Record<string, VolumeTree> = {
   "C:": buildVolume(TILES, 0, [USER_ROOT.volume, ...USER_ROOT.segments], "C:\\Users\\Arthur\\"),
   "D:": buildVolume(D_TILES, 10_000, ["D:"], "D:\\"),
+  "E:": buildVolume(E_TILES, 20_000, ["E:"], "E:\\"),
 };
+
+/** Périphériques du coffre factice : brancher ou débrancher la clé USB (tests, captures). */
+export interface MockDevices {
+  plug(): void;
+  unplug(letter: string): void;
+}
+let lastDevices: MockDevices | null = null;
+export function mockDevices(): MockDevices | null {
+  return lastDevices;
+}
+
+function usbAtStart(): boolean {
+  try {
+    return localStorage.getItem("lumen-dev-devices") === "usb";
+  } catch {
+    return false;
+  }
+}
 
 function readSettings(): Settings {
   try {
@@ -142,10 +162,26 @@ export function createMockBackend(now: () => number = Date.now): Backend {
 
   /** Même règle que le backend : enfants et petits-enfants toujours, puis jusqu'à 4 niveaux sous
    * les dossiers d'au moins 1 % de la vue. */
+  /** Profondeur sous le plus haut élément couvert par la même règle (0 : hachuré). */
+  function coverDepth(tree: VolumeTree, id: NodeId): number | null {
+    const t = tree.nodes.get(id)?.tile;
+    if (!t?.reco || t.status === "keep") return null;
+    let depth = 0;
+    let parent = tree.nodes.get(id)?.parent ?? null;
+    while (parent !== null && tree.nodes.get(parent)?.tile?.reco === t.reco) {
+      depth += 1;
+      parent = tree.nodes.get(parent)?.parent ?? null;
+    }
+    return depth;
+  }
+
   function toNode(tree: VolumeTree, id: NodeId, level: number, minExpand: number): TreeNode {
     const n = tree.nodes.get(id);
     const t = n?.tile ?? null;
-    const expand = level < 2 || (level < 4 && sizeOf(tree, id) >= minExpand);
+    const depth = coverDepth(tree, id);
+    // Contenu interne d'un cache (règle opaque) : jamais détaillé.
+    const opaque = t?.opaque && depth === 0 ? { label: l(t.opaque.label), explanation: l(t.opaque.explanation) } : null;
+    const expand = !opaque && (level < 2 || (level < 4 && sizeOf(tree, id) >= minExpand));
     const children = expand ? (n?.children ?? []).map((c) => toNode(tree, c, level + 1, minExpand)) : [];
     if (!t) {
       const name = tree.prefix[tree.prefix.length - 1] ?? "";
@@ -165,6 +201,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         gain: 0,
         gainStatus: null,
         gainUpTo: false,
+        coverDepth: null,
+        opaque: null,
         hasChildren: (n?.children.length ?? 0) > 0,
         children,
       };
@@ -186,7 +224,9 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       gain: gb(t.gain ?? 0),
       gainStatus: t.gainStatus ?? null,
       gainUpTo: t.gainUpTo ?? false,
-      hasChildren: (n?.children.length ?? 0) > 0,
+      coverDepth: depth,
+      opaque,
+      hasChildren: !opaque && (n?.children.length ?? 0) > 0,
       children,
     };
   }
@@ -213,7 +253,48 @@ export function createMockBackend(now: () => number = Date.now): Backend {
   let nextScan = 0;
   const listeners = new Set<(e: ScanEvent) => void>();
   const emit = (e: ScanEvent) => listeners.forEach((fn) => fn(e));
-  const volumeOf = (key: string) => (key === "D:" ? "D:" : "C:");
+  const volumeOf = (key: string) => (key === "D:" || key === "E:" ? key : "C:");
+  // Volumes présents (la clé USB se branche et se débranche à chaud).
+  let present = usbAtStart() ? [...VOLUMES, USB_KEY] : [...VOLUMES];
+  const volumeListeners = new Set<(v: Volume[]) => void>();
+  /** Analyses arrêtées (annulées ou support débranché) : leurs événements suivants sont ignorés. */
+  const stopped = new Set<number>();
+  let running: { id: number; key: string } | null = null;
+  const volumeList = (): Volume[] =>
+    present.map((v) => {
+      const done = [...scans].filter(([id, key]) => key === v.letter && finished.has(id)).map(([id]) => finishedAt.get(id) ?? 0);
+      return {
+        id: v.id,
+        key: `mock-${v.id}`,
+        letter: v.letter,
+        label: l(v.label),
+        kind: v.kind,
+        fileSystem: v.kind === "network" ? "SMB" : v.kind === "usb" ? "exFAT" : "NTFS",
+        mftCapable: v.kind === "fixed",
+        total: gb(v.total),
+        free: gb(v.free),
+        cleanable: v.kind === "fixed",
+        analyzedAt: done.length > 0 ? Math.max(...done) : null,
+        ready: true,
+      };
+    });
+  const volumesChanged = () => volumeListeners.forEach((fn) => fn(volumeList()));
+  lastDevices = {
+    plug() {
+      if (!present.some((v) => v.letter === USB_KEY.letter)) present = [...present, USB_KEY];
+      volumesChanged();
+    },
+    unplug(letter) {
+      present = present.filter((v) => v.letter !== letter);
+      // Analyse du support retiré : arrêt propre, signalé comme tel.
+      if (running && running.key === letter) {
+        stopped.add(running.id);
+        emit({ type: "failed", scanId: running.id, cancelled: false, message: `le support ${letter} a été débranché pendant l'analyse : rien n'a été modifié` });
+        running = null;
+      }
+      volumesChanged();
+    },
+  };
   const scanVolume = (scanId: number) => volumeOf(scans.get(scanId) ?? "user");
   const summaryOf = (scanId: number): ScanSummary => {
     const tree = treeOf(scanVolume(scanId));
@@ -303,28 +384,27 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     volumes() {
-      return resolved<Volume[]>(
-        VOLUMES.map((v) => ({
-          id: v.id,
-          key: `mock-${v.id}`,
-          letter: v.letter,
-          label: l(v.label),
-          kind: v.kind,
-          fileSystem: v.kind === "network" ? "SMB" : "NTFS",
-          mftCapable: v.kind !== "network",
-          total: gb(v.total),
-          free: gb(v.free),
-        })),
-      );
+      return resolved<Volume[]>(volumeList());
+    },
+
+    refreshVolumes() {
+      return resolved<Volume[]>(volumeList());
+    },
+
+    onVolumesChanged(listener) {
+      volumeListeners.add(listener);
+      return () => volumeListeners.delete(listener);
     },
 
     startScan(target) {
       const id = ++nextScan;
       scans.set(id, targetKey(target));
+      running = { id, key: targetKey(target) };
       const total = summaryOf(id);
       // Progression rapide puis résultat, comme le backend réel (événements ≈ 10/s).
       [0.25, 0.6, 0.9].forEach((ratio, i) => {
         setTimeout(() => {
+          if (stopped.has(id)) return;
           emit({
             type: "progress",
             progress: {
@@ -341,6 +421,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         }, (i + 1) * 100);
       });
       setTimeout(() => {
+        if (stopped.has(id)) return;
+        if (running?.id === id) running = null;
         finished.add(id);
         finishedAt.set(id, Date.now());
         emit({ type: "done", summary: { ...total, finishedAt: Date.now() } });
@@ -385,6 +467,8 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     cancelScan(scanId) {
+      stopped.add(scanId);
+      if (running?.id === scanId) running = null;
       emit({ type: "failed", scanId, cancelled: true, message: "analyse annulée" });
       return resolved(undefined);
     },
@@ -399,7 +483,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       const recos = recosOf(volume);
       const sum = (status: string) => recos.filter((r) => r.status === status).reduce((s, r) => s + r.size, 0);
       const count = (status: string) => recos.filter((r) => r.status === status).length;
-      const vol = VOLUMES.find((v) => v.id === volume);
+      const vol = present.find((v) => v.id === volume);
       const freeNow = volume === "C:" ? KPI.freeNow : (vol?.free ?? 0);
       const k: Kpis = {
         rulesReady: true,
@@ -714,6 +798,9 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     purgeSnapshots: () => resolved(timeline.purge()),
     systemSinks: () => resolved(mockSinks()),
     readRestorePoints: () => resolved(mockRestorePoints(now())),
+    depthReport: (scanId) => resolved(mockDepthReport(scanId, restoredAt.get(scanId) ?? finishedAt.get(scanId) ?? now())),
+    depthTree: (_scanId, node) => resolved(mockDepthTree(node)),
+    openAppsSettings: () => resolved(undefined),
     openSystemProtection: () => resolved(undefined),
 
     journal: () => resolved([...journalActions]),

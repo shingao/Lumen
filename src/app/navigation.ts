@@ -67,6 +67,18 @@ export function goToTarget(target: ScanTarget): void {
   void startScan(target);
 }
 
+/** Clic sur une puce de volume : sa dernière analyse gardée s'affiche tout de suite (« analysé
+ * il y a X »), sinon une nouvelle analyse. La cible déjà affichée ne se réanalyse pas ici
+ * (« Analyser à nouveau » le fait). */
+export async function selectTarget(target: ScanTarget): Promise<void> {
+  const { here, back } = useNav.getState();
+  const { target: current, scan } = useStore.getState();
+  if (sameTarget(current, target) && (scan.summary !== null || scan.status === "running")) return;
+  useNav.setState({ back: here ? push(back, here) : back, forward: [], pending: null });
+  const cached = await showCachedScan(target);
+  if (cached === null) await startScan(target);
+}
+
 export function goBack(): void {
   const { back, forward, here } = useNav.getState();
   const place = back.at(-1);

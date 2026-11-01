@@ -58,10 +58,18 @@ pub struct VolumeDto {
     pub letter: String,
     pub label: String,
     pub file_system: String,
+    /// `fixed` (interne), `usb`, `sd`, `removable`, `network`, `other` (voir `devices::kind`).
     pub kind: &'static str,
     pub total: u64,
     pub free: u64,
     pub mft_capable: bool,
+    /// Nettoyage proposé : disque interne seulement (ailleurs, pas de Corbeille).
+    pub cleanable: bool,
+    /// Fin de la dernière analyse gardée de ce volume (ms), pour « analysé il y a X ».
+    pub analyzed_at: Option<i64>,
+    /// Détails lus (nom, espace, bus). Faux pour une lettre qui vient d'apparaître, et pour un
+    /// lecteur réseau tant qu'il n'a pas été analysé (le sondage ne le touche jamais).
+    pub ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -146,7 +154,20 @@ pub struct TreeNodeDto {
     pub gain: u64,
     pub gain_status: Option<&'static str>,
     pub gain_up_to: bool,
+    /// Profondeur sous le plus haut nœud couvert par la règle (0 : hachuré) ; absent hors règle.
+    pub cover_depth: Option<u8>,
+    /// Contenu interne d'un cache (règle « opaque ») : tuile unique, jamais détaillée.
+    pub opaque: Option<OpaqueDto>,
+    /// Zone de la denylist de `safety` (analyse en profondeur : statut « Protégé »).
+    pub protected: bool,
     pub children: Vec<TreeNodeDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueDto {
+    pub label: analysis::TextDto,
+    pub explanation: analysis::TextDto,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -185,6 +206,11 @@ pub(crate) fn target_key(t: &ScanTarget) -> String {
 }
 
 impl Entry {
+    #[cfg(test)]
+    pub(crate) fn for_tests(target: ScanTarget, scan: Scan) -> Entry {
+        Entry { target, scan, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false, index: Default::default() }
+    }
+
     /// Mémoire occupée (octets, estimation) : arbre de l'analyse et résultats des règles.
     pub(crate) fn memory_bytes(&self) -> u64 {
         self.scan.memory_bytes() + self.applied.as_ref().map_or(0, |a| a.analysis.memory_bytes()) + self.index.get().map_or(0, |i| i.memory_bytes())
@@ -195,6 +221,10 @@ impl Entry {
 struct Inner {
     next_id: u32,
     running: Option<(u32, Arc<AtomicBool>)>,
+    /// Lettre du volume de l'analyse en cours (arrêt propre s'il est débranché).
+    running_volume: Option<String>,
+    /// Analyse arrêtée parce que son support a disparu.
+    unplugged: Option<u32>,
     results: HashMap<u32, Arc<Entry>>,
     /// Dernière utilisation de chaque analyse (horloge logique).
     used: HashMap<u32, u64>,
@@ -308,10 +338,90 @@ fn epoch_ms(filetime: i64) -> i64 {
     filetime / 10_000 - 11_644_473_600_000
 }
 
+/// Identifiants des tuiles « contenu interne » regroupées : loin de ceux des « autres » (−(parent + 1)).
+const OPAQUE_ID_BASE: i64 = -(1 << 40);
+
+/// Contenu interne des caches (règles « opaques ») : jamais détaillé. Sous chaque dossier, les
+/// éléments les plus hauts couverts par une même règle opaque deviennent une seule tuile sans
+/// enfants (plusieurs frères, comme les dossiers d'empreinte de D3DSCache, sont regroupés).
+fn collapse_opaque(n: &mut SliceNode, applied: &Applied) {
+    let parent = n.id;
+    let mut groups: Vec<(*const rules::schema::Text, Vec<usize>)> = Vec::new();
+    for (i, c) in n.children.iter().enumerate() {
+        let Some(o) = (c.id >= 0).then(|| applied.opaque(c.id as NodeId)).flatten().filter(|o| o.depth == 0) else { continue };
+        let key: *const rules::schema::Text = o.label;
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, list)) => list.push(i),
+            None => groups.push((key, vec![i])),
+        }
+    }
+    let mut merged: Vec<SliceNode> = Vec::new();
+    let mut remove: Vec<usize> = Vec::new();
+    for (k, (_, list)) in groups.iter().enumerate() {
+        if let [single] = list.as_slice() {
+            let c = &mut n.children[*single];
+            c.children.clear();
+            c.has_children = false;
+            continue;
+        }
+        let members: Vec<&SliceNode> = list.iter().map(|&i| &n.children[i]).collect();
+        merged.push(SliceNode {
+            id: OPAQUE_ID_BASE - parent.max(0) * 16 - k as i64,
+            name: String::new(),
+            path: n.path.clone(),
+            kind: Kind::Dir,
+            allocated: members.iter().map(|m| m.allocated).sum(),
+            logical: members.iter().map(|m| m.logical).sum(),
+            files: members.iter().map(|m| m.files).sum(),
+            last_used: members.iter().map(|m| m.last_used).max().unwrap_or(0),
+            file_id: 0,
+            modified: members.iter().map(|m| m.modified).max().unwrap_or(0),
+            others: None,
+            members: members.iter().filter_map(|m| NodeId::try_from(m.id).ok()).collect(),
+            has_children: false,
+            children: Vec::new(),
+        });
+        remove.extend(list);
+    }
+    remove.sort_unstable();
+    for i in remove.into_iter().rev() {
+        n.children.remove(i);
+    }
+    if !merged.is_empty() {
+        n.children.extend(merged);
+        // Par taille, le regroupement « autres » toujours en dernier.
+        n.children.sort_by(|a, b| a.others.is_some().cmp(&b.others.is_some()).then(b.allocated.cmp(&a.allocated)));
+    }
+    for c in &mut n.children {
+        collapse_opaque(c, applied);
+    }
+}
+
+/// Dossier demandé à l'intérieur d'un contenu opaque (historique, chemin ouvert depuis un autre
+/// écran) : la vue s'ouvre sur le dossier qui le contient, où il apparaît en tuile unique.
+fn outside_opaque(scan: &Scan, applied: Option<&Applied>, id: NodeId) -> NodeId {
+    let Some(o) = applied.and_then(|a| a.opaque(id)) else { return id };
+    let mut cur = id;
+    for _ in 0..=o.depth {
+        if cur == scan.root() {
+            return cur;
+        }
+        cur = scan.node(cur).map_or(scan.root(), |n| n.parent);
+    }
+    cur
+}
+
 fn to_dto(n: SliceNode, applied: Option<&Applied>, scan: &Scan) -> TreeNodeDto {
     // Nœud « autres » (identifiant négatif) : statut, catégorie et gain de ce qu'il regroupe.
     let view = applied.map(|a| if n.id >= 0 { a.node(n.id as NodeId) } else { a.aggregate(scan, &n.members) });
     let reco = view.and_then(|v| v.reco);
+    let opaque = applied
+        .and_then(|a| {
+            let first = if n.id >= 0 { NodeId::try_from(n.id).ok() } else { n.others.is_none().then(|| n.members.first().copied()).flatten() };
+            first.and_then(|m| a.opaque(m))
+        })
+        .filter(|o| o.depth == 0)
+        .map(|o| OpaqueDto { label: analysis::text(o.label), explanation: analysis::text(o.explanation) });
     TreeNodeDto {
         id: n.id,
         name: n.name,
@@ -329,6 +439,9 @@ fn to_dto(n: SliceNode, applied: Option<&Applied>, scan: &Scan) -> TreeNodeDto {
         gain: view.map_or(0, |v| v.gain),
         gain_status: view.and_then(|v| v.gain_status),
         gain_up_to: reco.is_some_and(|r| applied.is_some_and(|a| a.reco_up_to(r))),
+        cover_depth: view.and_then(|v| v.cover_depth),
+        opaque,
+        protected: false,
         children: n.children.into_iter().map(|c| to_dto(c, applied, scan)).collect(),
     }
 }
@@ -387,33 +500,6 @@ pub(crate) mod platform {
     #[cfg(not(windows))]
     pub fn open_item(_: &safety::path::WinPath, _: bool, _: safety::open::OpenAction) -> Result<safety::open::OpenAction, LumenError> {
         Err(LumenError::Plan("disponible sous Windows uniquement".into()))
-    }
-
-    #[cfg(windows)]
-    pub fn volumes() -> Vec<VolumeDto> {
-        scan::win::volumes()
-            .into_iter()
-            .map(|v| VolumeDto {
-                key: crate::timeline::store::VolumeIdentity::new(v.guid.as_deref(), v.serial, &v.file_system, &v.label, &format!("{}:", v.letter)).key,
-                letter: format!("{}:", v.letter),
-                mft_capable: v.mft_capable(),
-                label: v.label,
-                file_system: v.file_system,
-                kind: match v.kind {
-                    scan::win::VolumeKind::Fixed => "fixed",
-                    scan::win::VolumeKind::Removable => "removable",
-                    scan::win::VolumeKind::Network => "network",
-                    scan::win::VolumeKind::Other => "other",
-                },
-                total: v.total,
-                free: v.free,
-            })
-            .collect()
-    }
-
-    #[cfg(not(windows))]
-    pub fn volumes() -> Vec<VolumeDto> {
-        Vec::new()
     }
 
     #[cfg(windows)]
@@ -484,14 +570,59 @@ pub fn app_info() -> AppInfo {
     AppInfo { elevated: platform::elevated(), fast_scan_available: platform::fast_scan_available(), version: env!("CARGO_PKG_VERSION"), profile: platform::user_profile() }
 }
 
+/// Volumes présents, depuis le cache des périphériques (aucune lecture de lecteur).
+pub fn volumes_list_raw() -> Vec<VolumeDto> {
+    crate::devices::DEVICES.list()
+}
+
+/// Volumes présents, avec la date de leur dernière analyse gardée (aucune lecture de lecteur).
+pub(crate) fn volumes_with(state: &ScanState) -> Vec<VolumeDto> {
+    let mut list = crate::devices::DEVICES.list();
+    if let Ok(inner) = state.0.lock() {
+        for v in &mut list {
+            v.analyzed_at = inner.cached(&ScanTarget::Volume { letter: v.letter.clone() }).map(|(_, e)| e.finished_at);
+        }
+    }
+    list
+}
+
 #[tauri::command]
-pub fn volumes_list() -> Vec<VolumeDto> {
-    platform::volumes()
+pub fn volumes_list(state: State<'_, ScanState>) -> Vec<VolumeDto> {
+    volumes_with(&state)
+}
+
+/// Espace relu des disques internes (infobulle et alertes, si l'utilisateur les a activées),
+/// hors du fil de l'interface ; jamais un lecteur réseau ni un support amovible.
+#[tauri::command]
+pub async fn volumes_refresh(app: AppHandle) -> Result<Vec<VolumeDto>, LumenError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(src) = crate::devices::system() {
+            crate::devices::DEVICES.refresh_space(src);
+        }
+        volumes_with(&tauri::Manager::state::<ScanState>(&app))
+    })
+    .await
+    .map_err(|e| LumenError::Startup(e.to_string()))
+}
+
+/// Liste des lettres changée (branchement, débranchement) : l'analyse en cours d'un volume qui
+/// n'est plus là est arrêtée proprement (annulée, signalée « débranché »). Renvoie son id.
+pub(crate) fn volumes_changed(state: &ScanState, present: &[String]) -> Option<u32> {
+    let mut inner = state.0.lock().ok()?;
+    let (id, cancel) = inner.running.clone()?;
+    let volume = inner.running_volume.clone()?;
+    if present.iter().any(|l| l.eq_ignore_ascii_case(&volume)) {
+        return None;
+    }
+    cancel.store(true, Ordering::Relaxed);
+    inner.unplugged = Some(id);
+    Some(id)
 }
 
 #[tauri::command]
 pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarget, method: ScanMethod) -> Result<u32, LumenError> {
-    let volumes = platform::volumes();
+    // Cache des périphériques : aucune lecture de lecteur dans ce fil (celui de l'interface).
+    let volumes = crate::devices::DEVICES.list();
     let (root, volume) = match &target {
         ScanTarget::UserProfile => {
             let profile = platform::user_profile().ok_or(LumenError::NoProfile)?;
@@ -521,6 +652,8 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
         inner.next_id += 1;
         let id = inner.next_id;
         inner.running = Some((id, cancel.clone()));
+        inner.running_volume = Some(volume.clone());
+        inner.unplugged = None;
         id
     };
 
@@ -549,9 +682,16 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
                 Err(_) => return,
             };
             inner.running = None;
+            inner.running_volume = None;
+            let unplugged = inner.unplugged.take() == Some(id);
             match result {
                 Ok((scan, notice)) => {
                     drop(inner);
+                    // Sur demande (ce volume vient d'être analysé) : son nom, son espace et son
+                    // identité relus, lecteur réseau compris ; jamais les autres volumes.
+                    if let Some(src) = crate::devices::system() {
+                        crate::devices::DEVICES.refresh(src, &volume);
+                    }
                     let _ = app.emit(
                         "scan:progress",
                         ProgressDto { scan_id: id, files: scan.stats.files, dirs: scan.stats.dirs, allocated: scan.stats.allocated, errors: scan.stats.errors(), elapsed_ms: scan.stats.elapsed_ms, phase: "rules", tops: Vec::new() },
@@ -576,7 +716,7 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
                 }
                 Err(e) => {
                     drop(inner);
-                    let _ = app.emit("scan:failed", ScanFailedDto { scan_id: id, cancelled: e == ScanError::Cancelled, message: e.to_string() });
+                    let _ = app.emit("scan:failed", failed_dto(id, &e, unplugged, &volume));
                 }
             }
         })
@@ -602,7 +742,7 @@ fn restore(app: &AppHandle) -> Result<Vec<SummaryDto>, LumenError> {
         }
     }
     let saved = crate::cleanup::with_journal(app, |j| crate::persist::load_all(j.conn()).map_err(Into::into))?;
-    let volumes = platform::volumes();
+    let volumes = crate::devices::DEVICES.list();
     let profile = platform::user_profile();
     let mut out = Vec::new();
     for s in saved {
@@ -763,15 +903,24 @@ pub fn scan_summary(state: State<'_, ScanState>, scan_id: u32) -> Result<Summary
 #[tauri::command]
 pub fn scan_tree(state: State<'_, ScanState>, scan_id: u32, node: Option<i64>) -> Result<TreeSliceDto, LumenError> {
     let e = entry(&state, scan_id)?;
-    let s = &e.scan;
     let id = match node {
-        None => s.root(),
-        Some(n) => u32::try_from(n).ok().filter(|&n| (n as usize) < s.len()).ok_or(LumenError::UnknownNode)?,
+        None => e.scan.root(),
+        Some(n) => u32::try_from(n).ok().filter(|&n| (n as usize) < e.scan.len()).ok_or(LumenError::UnknownNode)?,
     };
+    tree_dto(&e, id)
+}
+
+/// Tranche de la treemap sous `id` (contenu opaque jamais détaillé) et fil d'Ariane.
+pub(crate) fn tree_dto(e: &Entry, id: NodeId) -> Result<TreeSliceDto, LumenError> {
+    let s = &e.scan;
+    let id = outside_opaque(s, e.applied.as_ref(), id);
     // Profondeur adaptative : jusqu'à 4 niveaux sous les dossiers d'au moins 1 % de la vue,
     // assez grands pour être dessinés avec leurs enfants.
     let min_expand = s.node(id).map_or(0, |n| n.allocated / 100).max(1);
-    let slice = s.slice_adaptive(id, MAX_LEVELS, TOP_N, min_expand).ok_or(LumenError::UnknownNode)?;
+    let mut slice = s.slice_adaptive(id, MAX_LEVELS, TOP_N, min_expand).ok_or(LumenError::UnknownNode)?;
+    if let Some(a) = e.applied.as_ref() {
+        collapse_opaque(&mut slice, a);
+    }
 
     // Fil d'Ariane : segments au-dessus de la racine (non cliquables), puis la racine et ses descendants.
     let mut chain = Vec::new();
@@ -796,6 +945,14 @@ pub fn scan_tree(state: State<'_, ScanState>, scan_id: u32, node: Option<i64>) -
 pub fn scan_find(state: State<'_, ScanState>, scan_id: u32, path: String) -> Result<Option<i64>, LumenError> {
     let e = entry(&state, scan_id)?;
     Ok(find_path(&e.scan, &path).map(i64::from))
+}
+
+/// Taille allouée d'un dossier s'il est dans l'une des analyses gardées (un jeu dans l'analyse
+/// en cours : pas besoin de le remesurer).
+pub(crate) fn size_in_scans(state: &ScanState, dir: &std::path::Path) -> Option<u64> {
+    let path = dir.to_str()?;
+    let inner = state.0.lock().ok()?;
+    inner.results.values().find_map(|e| find_path(&e.scan, path).and_then(|id| e.scan.node(id)).map(|n| n.allocated))
 }
 
 pub(crate) fn find_path(s: &Scan, path: &str) -> Option<NodeId> {
@@ -862,6 +1019,42 @@ mod tests {
         let v = a.aggregate(&scan, &[npm, d3d]);
         assert_eq!((v.status, v.category, v.gain, v.gain_status), ("safe", "packages", 1000, Some("safe")));
         assert_eq!(a.aggregate(&scan, &[npm]).reco, a.node(npm).reco, "recommandation commune");
+    }
+
+    #[test]
+    fn hachures_au_plus_haut_et_contenu_interne_des_caches_en_tuile_unique() {
+        let (a, scan) = crate::analysis::tests::applied();
+        let local = scan.find("AppData\\Local").unwrap();
+        let npm = scan.find("AppData\\Local\\npm-cache").unwrap();
+        let index = scan.find("AppData\\Local\\npm-cache\\index").unwrap();
+        let d3d = scan.find("AppData\\Local\\D3DSCache").unwrap();
+        let bin = scan.find("AppData\\Local\\D3DSCache\\a.bin").unwrap();
+        // Hachures au plus haut nœud couvert seulement ; ses descendants : profondeur 1, 2…
+        assert_eq!((a.node(npm).cover_depth, a.node(index).cover_depth, a.node(local).cover_depth), (Some(0), Some(1), None));
+        assert_eq!((a.node(d3d).cover_depth, a.node(bin).cover_depth), (None, Some(0)), "D3DSCache : seul son contenu est couvert");
+
+        let mut slice = scan.slice_adaptive(local, 4, 30, 1).unwrap();
+        collapse_opaque(&mut slice, &a);
+        let dto = to_dto(slice, Some(&a), &scan);
+        // Cache npm : une tuile, sans enfants ni descente possible, avec le libellé et l'explication de la règle.
+        let npm_tile = dto.children.iter().find(|c| c.id == i64::from(npm)).unwrap();
+        assert!(!npm_tile.has_children && npm_tile.children.is_empty());
+        let o = npm_tile.opaque.as_ref().unwrap();
+        assert_eq!((o.label.fr.as_str(), npm_tile.cover_depth, npm_tile.reco.as_deref()), ("Contenu interne du cache npm", Some(0), Some("cache-npm")));
+        assert!(o.explanation.fr.starts_with("Le cache npm"));
+        // D3DSCache : ses dossiers d'empreinte (ici deux fichiers) regroupés en une seule tuile.
+        let d3d_tile = dto.children.iter().find(|c| c.id == i64::from(d3d)).unwrap();
+        assert_eq!(d3d_tile.children.len(), 1);
+        let group = &d3d_tile.children[0];
+        assert!(group.id < 0 && group.others.is_none() && !group.has_children);
+        assert_eq!((group.size, group.files, group.status, group.cover_depth), (500, 2, "review", Some(0)));
+        assert_eq!(group.opaque.as_ref().unwrap().label.fr, "Contenu interne des caches de shaders");
+        // Un dossier demandé à l'intérieur : la vue s'ouvre sur le dossier qui le contient.
+        assert_eq!(outside_opaque(&scan, Some(&a), index), local);
+        assert_eq!(outside_opaque(&scan, Some(&a), npm), local);
+        assert_eq!(outside_opaque(&scan, Some(&a), bin), d3d);
+        assert_eq!(outside_opaque(&scan, Some(&a), d3d), d3d);
+        assert_eq!(outside_opaque(&scan, None, index), index);
     }
 
     #[test]
@@ -985,5 +1178,104 @@ mod cache_tests {
         assert_eq!(inner.results.len(), 5);
         assert_eq!(inner.cached(&vol("G:")).map(|(id, _)| id), Some(6));
         assert!(inner.cached(&vol("Z:")).is_none());
+    }
+}
+
+/// Échec d'une analyse : un support débranché pendant l'analyse n'est pas une annulation de
+/// l'utilisateur, c'est dit clairement (rien n'a été modifié).
+fn failed_dto(id: u32, e: &ScanError, unplugged: bool, volume: &str) -> ScanFailedDto {
+    if unplugged {
+        return ScanFailedDto { scan_id: id, cancelled: false, message: format!("le support {volume} a été débranché pendant l'analyse : rien n'a été modifié") };
+    }
+    ScanFailedDto { scan_id: id, cancelled: *e == ScanError::Cancelled, message: e.to_string() }
+}
+
+#[cfg(test)]
+mod devices_tests {
+    use super::*;
+
+    fn running(state: &ScanState, id: u32, volume: &str) -> Arc<AtomicBool> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut inner = state.0.lock().unwrap();
+        inner.running = Some((id, cancel.clone()));
+        inner.running_volume = Some(volume.into());
+        cancel
+    }
+
+    #[test]
+    fn volume_qui_apparait_ou_disparait_pendant_une_analyse() {
+        let state = ScanState::default();
+        let cancel = running(&state, 7, "C:");
+        // Une clé branchée (E:) puis retirée pendant l'analyse de C: : l'analyse continue.
+        assert_eq!(volumes_changed(&state, &["C:".into(), "E:".into()]), None);
+        assert_eq!(volumes_changed(&state, &["C:".into()]), None);
+        assert!(!cancel.load(Ordering::Relaxed));
+        assert_eq!(state.0.lock().unwrap().unplugged, None);
+        // Sans analyse en cours, un changement ne fait rien.
+        let idle = ScanState::default();
+        assert_eq!(volumes_changed(&idle, &[]), None);
+    }
+
+    #[test]
+    fn debranchement_en_cours_d_analyse_arret_propre() {
+        let state = ScanState::default();
+        let cancel = running(&state, 9, "E:");
+        assert_eq!(volumes_changed(&state, &["C:".into(), "D:".into()]), Some(9));
+        assert!(cancel.load(Ordering::Relaxed), "l'analyse est arrêtée par son drapeau d'annulation");
+        assert_eq!(state.0.lock().unwrap().unplugged, Some(9));
+        // Message clair, pas une annulation de l'utilisateur.
+        let dto = failed_dto(9, &ScanError::Cancelled, true, "E:");
+        assert!(!dto.cancelled);
+        assert_eq!(dto.message, "le support E: a été débranché pendant l'analyse : rien n'a été modifié");
+        assert!(failed_dto(9, &ScanError::Cancelled, false, "E:").cancelled);
+    }
+
+    /// Support simulé qui disparaît après quelques dossiers lus (clé retirée) : chaque lecture
+    /// suivante échoue comme un périphérique absent.
+    struct Unplugged {
+        reads: std::sync::atomic::AtomicU32,
+        after: u32,
+    }
+
+    impl scan::Source for Unplugged {
+        fn root(&self, _: &str) -> Result<scan::RawEntry, scan::DirError> {
+            Ok(scan::RawEntry { name: "E:".into(), kind: Kind::Dir, attributes: 0, file_id: 1, logical: 0, allocated: 0, modified: 0, accessed: 0 })
+        }
+        fn read_dir(&self, path: &str, out: &mut Vec<scan::RawEntry>) -> Result<(), scan::DirError> {
+            let n = self.reads.fetch_add(1, Ordering::Relaxed);
+            if n >= self.after {
+                // ERROR_DEVICE_NOT_CONNECTED (1167), ERROR_NOT_READY (21) sous Windows.
+                return Err(scan::DirError::Other(1167));
+            }
+            let id = |k: u128| u128::from(n) * 100 + k;
+            for k in 0..3 {
+                out.push(scan::RawEntry { name: format!("d{k}"), kind: Kind::Dir, attributes: 0, file_id: id(k + 10), logical: 0, allocated: 0, modified: 0, accessed: 0 });
+            }
+            out.push(scan::RawEntry { name: format!("{path}.bin").replace(['\\', ':'], "_"), kind: Kind::File, attributes: 0, file_id: id(1), logical: 4096, allocated: 4096, modified: 0, accessed: 0 });
+            Ok(())
+        }
+        fn join(&self, dir: &str, name: &str) -> String {
+            format!("{dir}\\{name}")
+        }
+        fn volume_serial(&self, _: &str) -> u64 {
+            1
+        }
+        fn last_access_reliable(&self, _: &str) -> bool {
+            false
+        }
+    }
+
+    /// Débranchement pendant le parcours : il se termine sans plantage, ce qui n'a pas pu être lu
+    /// est compté comme erreur, et le drapeau d'annulation posé par la détection l'arrête net.
+    #[test]
+    fn support_retire_pendant_le_parcours() {
+        let source = Unplugged { reads: Default::default(), after: 5 };
+        let scan = scan::walk(&source, "E:\\", &AtomicBool::new(false), &|_| {}).expect("parcours terminé");
+        assert!(scan.stats.other_errors > 0, "lectures échouées comptées : {:?}", scan.stats);
+        assert_eq!(scan.stats.files, 5);
+        // Arrêt demandé par la détection à chaud : annulation propre, aucun résultat partiel.
+        let cancel = AtomicBool::new(true);
+        let source = Unplugged { reads: Default::default(), after: 5 };
+        assert_eq!(scan::walk(&source, "E:\\", &cancel, &|_| {}).unwrap_err(), ScanError::Cancelled);
     }
 }

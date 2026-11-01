@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useStore } from "../../app/store";
+import { type CleanupTab, useStore } from "../../app/store";
+import { useCleanable } from "../../app/volumes";
 import { Button } from "../../components/Button";
 import { Segmented } from "../../components/Segmented";
 import { useT } from "../../i18n";
@@ -10,12 +10,11 @@ import { LargeTab } from "./LargeTab";
 import { SystemTab } from "./SystemTab";
 import styles from "./Advanced.module.css";
 
-type CleanupTab = "dormant" | "duplicates" | "large" | "system";
-
 /** Nettoyage avancé : dormants, doublons, gros fichiers (depuis l'analyse), gouffres système. */
 export function CleanupScreen() {
   const t = useT();
-  const [tab, setTab] = useState<CleanupTab>("dormant");
+  const tab = useStore((s) => s.cleanupTab);
+  const setTab = useStore((s) => s.setCleanupTab);
   const hasScan = useStore((s) => s.scan.summary !== null);
   const go = useStore((s) => s.go);
   const systemOn = useStore((s) => s.settings?.experimentalSystem ?? false);
@@ -27,6 +26,8 @@ export function CleanupScreen() {
     { value: "system", label: t("screen.cleanup.system") },
   ];
   const needsScan = tab !== "system" && !hasScan;
+  // Analyse affichée sur une clé USB, une carte SD ou un lecteur réseau : rien à nettoyer ici.
+  const cleanable = useCleanable();
   return (
     <section aria-label={t("screen.cleanup.title")} className={`${screens.panel} ${screens.stub}`}>
       <div className={screens.header}>
@@ -42,6 +43,10 @@ export function CleanupScreen() {
           <Button variant="primary" onClick={() => go("analyse")}>
             {t("adv.toAnalyse")}
           </Button>
+        </div>
+      ) : tab !== "system" && !cleanable ? (
+        <div className={screens.empty}>
+          <p>{t("devices.bannerRemovable")}</p>
         </div>
       ) : tab === "system" && !systemOn ? (
         <div className={screens.empty}>

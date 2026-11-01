@@ -37,14 +37,38 @@ export interface Fill {
   hatch: boolean;
   /** Fond foncé du mode Âge : le texte secondaire passe au ton fort pour garder le contraste. */
   deep: boolean;
+  /** Descendant d'un élément couvert par une règle : niveau 1 à 4 (fond uni éclairci, bord
+   * visible) ; null sinon. */
+  cover: number | null;
+  /** Bord des descendants couverts (variable CSS), selon le statut. */
+  coverBorder: string | null;
 }
+
+/** Niveaux d'éclaircissement au plus (au-delà, le fond ne change plus). */
+const COVER_LEVELS = 4;
 
 export function tileFill(node: TreeNode, mode: ColorMode, now: number): Fill {
   // Regroupement « autres » : neutre dans tous les modes.
-  if (node.othersCount !== null) return { bg: "var(--st-keep)", hatch: false, deep: false };
-  const hatch = node.status === "safe";
-  if (mode === "category") return { bg: CATEGORY_VAR[node.category], hatch, deep: false };
-  if (mode === "cleanup") return { bg: `var(--st-${node.status})`, hatch, deep: false };
-  const bucket = ageBucket(node.lastOpened, now);
-  return { bg: `var(--age-${bucket})`, hatch, deep: bucket >= 3 };
+  if (node.othersCount !== null) return { bg: "var(--st-keep)", hatch: false, deep: false, cover: null, coverBorder: null };
+  const covered = node.status !== "keep" && node.coverDepth !== null;
+  // Hachures au seul élément le plus haut couvert par la règle ; ses descendants : fond uni.
+  const hatch = node.status === "safe" && (node.coverDepth === null || node.coverDepth === 0);
+  const cover = covered && (node.coverDepth ?? 0) > 0 ? Math.min(node.coverDepth ?? 0, COVER_LEVELS) : null;
+  const coverBorder = cover !== null ? `var(--cover-border-${node.status})` : null;
+  if (mode === "age") {
+    const bucket = ageBucket(node.lastOpened, now);
+    return { bg: `var(--age-${bucket})`, hatch, deep: bucket >= 3, cover, coverBorder };
+  }
+  // Descendants couverts : couleur de statut (dans les deux modes), éclaircie par niveau en CSS.
+  if (cover !== null) return { bg: `var(--st-${node.status})`, hatch: false, deep: false, cover, coverBorder };
+  if (mode === "category") return { bg: CATEGORY_VAR[node.category], hatch, deep: false, cover, coverBorder };
+  return { bg: `var(--st-${node.status})`, hatch, deep: false, cover, coverBorder };
+}
+
+/** Écran Profondeur : zone de la denylist « Protégée », le reste par catégorie. Jamais de
+ * hachures ni de niveaux de règle : rien n'y est à cocher. */
+export function depthFill(node: TreeNode): Fill {
+  if (node.protected) return { bg: "var(--st-protected)", hatch: false, deep: false, cover: null, coverBorder: null };
+  const bg = node.othersCount !== null ? "var(--st-keep)" : CATEGORY_VAR[node.category];
+  return { bg, hatch: false, deep: false, cover: null, coverBorder: null };
 }

@@ -52,6 +52,8 @@ pub fn detect(program_data: &Path, d: &mut Detection) {
             last_played: None,
             cover: None,
             shader_cache: None,
+            modes: Vec::new(),
+            last_played_estimated: false,
         });
     }
 }

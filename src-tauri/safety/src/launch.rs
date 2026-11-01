@@ -5,6 +5,8 @@
 //! Program Files (non modifiable sans droits d'administrateur), ou celui d'un launcher installé
 //! pour l'utilisateur seul (Riot Client, CurseForge) : modifiable par l'utilisateur, il n'est
 //! jamais ouvert quand Lumen tourne en administrateur (il hériterait de ses droits).
+//! S'y ajoute une page fixe des Paramètres de Windows (« Applications installées »), d'où
+//! l'utilisateur désinstalle lui-même une application (analyse en profondeur, jalon 12).
 
 use crate::path::WinPath;
 
@@ -54,6 +56,9 @@ pub enum LauncherOpen {
     Store(StoreApp),
     /// Launcher installé pour l'utilisateur seul (Riot Client, CurseForge), hors Program Files.
     UserApp(WinPath),
+    /// Paramètres de Windows › Applications installées (adresse figée) : Lumen ne désinstalle
+    /// jamais une application lui-même.
+    AppsSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -75,6 +80,7 @@ impl LauncherOpen {
             LauncherOpen::SteamUninstall(id) => Some(format!("steam://uninstall/{id}")),
             LauncherOpen::SteamSettings => Some("steam://open/settings".into()),
             LauncherOpen::Store(app) => Some(format!("shell:AppsFolder\\{}", app.aumid())),
+            LauncherOpen::AppsSettings => Some("ms-settings:appsfeatures".into()),
             LauncherOpen::App(_) | LauncherOpen::UserApp(_) => None,
         }
     }
@@ -84,7 +90,7 @@ impl LauncherOpen {
     pub fn validate(&self, program_files: &[WinPath], elevated: bool) -> Result<(), LaunchRefusal> {
         match self {
             LauncherOpen::SteamUninstall(0) => Err(LaunchRefusal::BadAppId),
-            LauncherOpen::SteamUninstall(_) | LauncherOpen::SteamSettings | LauncherOpen::Store(_) => Ok(()),
+            LauncherOpen::SteamUninstall(_) | LauncherOpen::SteamSettings | LauncherOpen::Store(_) | LauncherOpen::AppsSettings => Ok(()),
             LauncherOpen::UserApp(exe) => {
                 let name = exe.file_name().unwrap_or_default();
                 if !USER_LAUNCHER_EXES.iter().any(|e| e.eq_ignore_ascii_case(name)) {
@@ -126,6 +132,9 @@ mod tests {
         assert_eq!(LauncherOpen::SteamUninstall(570).uri().as_deref(), Some("steam://uninstall/570"));
         assert_eq!(LauncherOpen::SteamUninstall(0).validate(&pf, false), Err(LaunchRefusal::BadAppId));
         assert_eq!(LauncherOpen::SteamSettings.validate(&pf, true), Ok(()));
+        // Paramètres de Windows › Applications installées : adresse figée, rien d'autre.
+        assert_eq!(LauncherOpen::AppsSettings.uri().as_deref(), Some("ms-settings:appsfeatures"));
+        assert_eq!(LauncherOpen::AppsSettings.validate(&pf, true), Ok(()));
         let epic = LauncherOpen::App(p("C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe"));
         assert_eq!((epic.validate(&pf, true), epic.uri()), (Ok(()), None));
         // Hors Program Files (modifiable par l'utilisateur) ou exécutable inconnu : refus.

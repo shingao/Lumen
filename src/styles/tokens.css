@@ -41,6 +41,11 @@
   --st-review-dot: #D98A1C;
   --st-keep: #EEECE9;
   --st-keep-dot: #A8A29E;
+  /* « Protégé » (écran Profondeur, jalon 12) : zone de la denylist, jamais touchée. Fond neutre
+     plus soutenu que « À garder », bord plein, jamais de hachures. */
+  --st-protected: #E3DED8;
+  --st-protected-dot: #78716C;
+  --protected-border: #A8A29E;
 
   /* Gains affichés sur les tuiles et barres de proportion (maquette) */
   --delta-safe: #166534;
@@ -72,6 +77,11 @@
   /* Tuiles */
   --tile-veil: rgba(255, 255, 255, 0.45);   /* éclaircit les sous-tuiles */
   --tile-ring: #1C1917;
+  /* Descendants d'un élément couvert par une règle (jalon 12) : fond uni de la couleur de statut,
+     un pas plus proche du fond du conteneur à chaque niveau, bord bien visible (3:1 au moins). */
+  --cover-step: 9%;
+  --cover-border-safe: #2B7A57;
+  --cover-border-review: #9A5F0E;
   --tile-dim: 0.26;                          /* opacité des tuiles estompées */
   --swatch-border: rgba(28, 25, 23, 0.08);
 
@@ -173,6 +183,9 @@
   --st-review-dot: #F0A33A;
   --st-keep: #22211F;
   --st-keep-dot: #78716C;
+  --st-protected: #2C2A27;
+  --st-protected-dot: #A8A29E;
+  --protected-border: #57534E;
 
   --delta-safe: #6FCF9E;
   --delta-review: #F0B45A;
@@ -199,6 +212,8 @@
 
   --tile-veil: rgba(22, 22, 21, 0.45);       /* assombrit les sous-tuiles vers le conteneur */
   --tile-ring: #EDEBE8;
+  --cover-border-safe: #3FBF87;
+  --cover-border-review: #F0A33A;
   --swatch-border: rgba(237, 235, 232, 0.12);
 
   --win-btn-fg: #D6D3D1;

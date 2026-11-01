@@ -41,7 +41,7 @@ fn push(d: &mut Detection, launcher: Launcher, key: &str, name: &str, dir: Optio
     if dir.as_deref().is_some_and(|p| d.has_dir(p)) || d.games.iter().any(|g| g.launcher == launcher && g.key.eq_ignore_ascii_case(key)) {
         return;
     }
-    d.games.push(Game { launcher, key: key.to_owned(), name: name.to_owned(), install_dir: dir, size, last_played: None, cover: None, shader_cache: None });
+    d.games.push(Game { launcher, key: key.to_owned(), name: name.to_owned(), install_dir: dir, size, last_played: None, cover: None, shader_cache: None, modes: Vec::new(), last_played_estimated: false });
 }
 
 /// Launcher d'une entrée Uninstall qui est un jeu (pas le launcher lui-même), d'après son
@@ -60,7 +60,13 @@ fn launcher_of(e: &Entry) -> Option<Launcher> {
         Some(Launcher::BattleNet)
     } else if p.starts_with("electronic arts") && !["ea app", "ea", "origin", "ea desktop"].contains(&n.as_str()) {
         Some(Launcher::Ea)
-    } else if (e.key.to_ascii_lowercase().starts_with("riot game ") || p.starts_with("riot games")) && !n.starts_with("riot client") && !n.starts_with("riot vanguard") {
+    } else if (e.key.to_ascii_lowercase().starts_with("riot game ") || p.starts_with("riot games"))
+        && !n.starts_with("riot client")
+        && !n.starts_with("riot vanguard")
+        // Teamfight Tactics : un mode de League of Legends, jamais un second jeu.
+        && !n.contains("teamfight tactics")
+        && !e.key.to_ascii_lowercase().contains("tft")
+    {
         Some(Launcher::Riot)
     } else {
         None

@@ -559,6 +559,8 @@ pub fn plan_create(
     mode: ModeDto,
 ) -> Result<PlanDto, LumenError> {
     let entry = crate::scanning::entry_of(&scans, scan_id)?;
+    // Clé USB, carte SD, réseau : pas de Corbeille, aucun nettoyage proposé.
+    crate::devices::ensure_cleanable(&entry.volume)?;
     let applied = entry.applied.as_ref().ok_or_else(|| LumenError::Plan("règles non appliquées".into()))?;
     refuse_games_rules(applied, &recos)?;
     let sel = select(applied, &entry.scan, &recos)?;

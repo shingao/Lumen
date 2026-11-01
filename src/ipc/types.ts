@@ -36,6 +36,13 @@ export interface TreeNode {
   gainStatus: RecoStatus | null;
   /** « jusqu'à » : le gain est un maximum (compactage). */
   gainUpTo: boolean;
+  /** Profondeur sous le plus haut élément couvert par la règle (0 : hachuré) ; null hors règle. */
+  coverDepth: number | null;
+  /** Contenu interne d'un cache (règle « opaque ») : tuile unique, jamais détaillée ; un clic
+   * ouvre la recommandation. */
+  opaque: { label: string; explanation: string } | null;
+  /** Zone de la denylist (écran Profondeur seulement : statut « Protégé », jamais touchée). */
+  protected?: boolean;
   hasChildren: boolean;
   children: TreeNode[];
 }
@@ -51,7 +58,9 @@ export interface TreeSlice {
   breadcrumb: Crumb[];
 }
 
-export type VolumeKind = "fixed" | "removable" | "network" | "other";
+/** fixed : disque interne ; usb (clé ou disque USB, même « fixe ») ; sd (carte SD) ; removable
+ * (autre amovible) ; network (lecteur réseau) ; other (optique, disque en mémoire…). */
+export type VolumeKind = "fixed" | "usb" | "sd" | "removable" | "network" | "other";
 
 export interface Volume {
   id: string;
@@ -65,6 +74,13 @@ export interface Volume {
   mftCapable: boolean;
   total: number;
   free: number;
+  /** Nettoyage proposé : disque interne seulement (ailleurs, pas de Corbeille). */
+  cleanable: boolean;
+  /** Fin de la dernière analyse gardée de ce volume (ms), ou null. */
+  analyzedAt: number | null;
+  /** Nom, espace et type lus. Faux juste après un branchement (lecture en cours) et pour un
+   * lecteur réseau tant qu'il n'a pas été analysé (jamais lu en tâche de fond). */
+  ready: boolean;
 }
 
 export type ScanTarget = { kind: "userProfile" } | { kind: "volume"; letter: string };
@@ -520,6 +536,57 @@ export interface RestorePoints {
   deletable: boolean;
   /** Pourquoi il est gardé (moins de 2 points, moins de 7 jours ou de cette session). */
   refusal: string | null;
+  /** Espace des clichés instantanés (Win32_ShadowStorage, comme `vssadmin list shadowstorage`). */
+  storage: { used: number; allocated: number; max: number } | null;
+}
+
+/** Postes de l'analyse en profondeur (où passent les Go hors du dossier utilisateur). */
+export type DepthItemId =
+  | "windows"
+  | "programFiles"
+  | "programData"
+  | "systemFiles"
+  | "restore"
+  | "profiles"
+  | "storeApps"
+  | "rootApps"
+  | "userProfile"
+  | "other"
+  | "inaccessible";
+
+/** Module de Lumen qui s'occupe déjà d'un poste ; `uninstall` : Paramètres de Windows. */
+export type DepthLink = "sinks" | "games" | "dev" | "uninstall" | "analysis";
+
+export interface DepthEntry {
+  /** Vide : « reste de Windows » (hors WinSxS, System32 et pilotes). */
+  name: string;
+  path: string;
+  size: number;
+  /** Nœud à ouvrir dans la treemap ; null pour le profil d'un autre compte (jamais détaillé). */
+  node: NodeId | null;
+}
+
+export interface DepthItem {
+  id: DepthItemId;
+  size: number;
+  files: number;
+  entries: DepthEntry[];
+  link: DepthLink | null;
+}
+
+/** Analyse en profondeur d'un volume, en lecture seule. */
+export interface DepthReport {
+  scanId: number;
+  volume: string;
+  /** walk : parcours sans droits (partiel) ; mft : lecture complète (assistant élevé). */
+  method: "walk" | "mft";
+  /** Espace occupé du volume (null : inconnu). */
+  used: number | null;
+  measured: number;
+  /** Dossiers refusés pendant le parcours. */
+  accessDenied: number;
+  items: DepthItem[];
+  finishedAt: number;
 }
 
 /** Ce que l'interface demande à safety : jamais un chemin, seulement des identifiants. */
@@ -662,11 +729,16 @@ export interface Game {
   name: string;
   installDir: string | null;
   size: number | null;
-  /** `launcher` : taille annoncée ; `measured` : mesurée sur le disque. */
-  sizeSource: "launcher" | "measured" | "unknown";
+  /** `launcher` : taille annoncée ; `analysis` : lue dans l'analyse en cours ; `measured` :
+   * mesurée sur le disque (dossier hors de l'analyse, mesure gardée en cache). */
+  sizeSource: "launcher" | "analysis" | "measured" | "unknown";
   drive: string | null;
-  /** Dernière partie (ms), seulement si le launcher la connaît : jamais une date inventée. */
+  /** Dernière partie (ms), donnée par le launcher ou estimée : jamais une date inventée. */
   lastPlayed: number | null;
+  /** Estimée d'après les journaux de parties (Riot ne la donne pas). */
+  lastPlayedEstimated: boolean;
+  /** Modes inclus, jamais comptés à part (Teamfight Tactics dans League of Legends). */
+  modes: string[];
   status: "keep" | "review";
   cover: boolean;
   /** Ce que Lumen peut ouvrir : adresse Steam ou appli du Store, le launcher, ou rien. */

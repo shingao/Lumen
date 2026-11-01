@@ -70,6 +70,8 @@ fn curseforge(env: &Env, d: &mut Detection) {
                 last_played: v.get("lastPlayed").and_then(Value::as_str).and_then(parse_iso),
                 cover: None,
                 shader_cache: None,
+                modes: Vec::new(),
+                last_played_estimated: false,
             });
         }
     }
@@ -92,7 +94,7 @@ fn vanilla(env: &Env, d: &mut Detection) {
                 match p.get("gameDir").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(win_path) {
                     Some(dir) if norm(&dir) != norm(&mc) && dir.is_dir() => {
                         let name = p.get("name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).unwrap_or(id).to_owned();
-                        extra.push(Game { launcher: Launcher::Minecraft, key: format!("profile:{id}"), name, install_dir: Some(dir), size: None, last_played: used, cover: None, shader_cache: None });
+                        extra.push(Game { launcher: Launcher::Minecraft, key: format!("profile:{id}"), name, install_dir: Some(dir), size: None, last_played: used, cover: None, shader_cache: None, modes: Vec::new(), last_played_estimated: false });
                     }
                     _ => last = last.max(used),
                 }
@@ -100,7 +102,7 @@ fn vanilla(env: &Env, d: &mut Detection) {
         }
     }
     if !d.has_dir(&mc) {
-        d.games.push(Game { launcher: Launcher::Minecraft, key: "java".into(), name: "Minecraft: Java Edition".into(), install_dir: Some(mc), size: None, last_played: last, cover: None, shader_cache: None });
+        d.games.push(Game { launcher: Launcher::Minecraft, key: "java".into(), name: "Minecraft: Java Edition".into(), install_dir: Some(mc), size: None, last_played: last, cover: None, shader_cache: None, modes: Vec::new(), last_played_estimated: false });
     }
     for g in extra {
         if g.install_dir.as_deref().is_some_and(|p| !d.has_dir(p)) {

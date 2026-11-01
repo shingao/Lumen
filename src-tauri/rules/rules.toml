@@ -7,6 +7,8 @@
 #   recrée. La liste complète est relue dans `sans-risque.txt` (un test la tient à jour).
 # - « review » (À vérifier) n'est jamais coché par défaut.
 # - Ordre important : un élément n'est couvert que par la première règle qui le revendique.
+# - `opaque` : contenu interne nommé par empreinte (npm _cacache, pip http-v2, D3DSCache…). La
+#   treemap n'y descend pas : une seule tuile avec ce libellé, un clic ouvre la recommandation.
 # - Aucune règle ne peut couvrir une zone de la denylist de `safety` (vérifié au chargement des
 #   éléments et par les tests).
 version = 1
@@ -19,6 +21,7 @@ status = "safe"
 category = "packages"
 name = { fr = "Cache npm", en = "npm cache" }
 explanation = { fr = "Le cache npm ne contient que des copies de paquets déjà publiés : npm les retélécharge à la demande.", en = "The npm cache only holds copies of published packages: npm downloads them again when needed." }
+opaque = { fr = "Contenu interne du cache npm", en = "npm cache internals" }
 regenerated-by = { fr = "npm retélécharge les paquets à la prochaine installation.", en = "npm downloads the packages again on the next install." }
 targets = ['%LOCALAPPDATA%\npm-cache']
 action = "command"
@@ -41,6 +44,7 @@ status = "safe"
 category = "packages"
 name = { fr = "Store pnpm (paquets inutilisés)", en = "pnpm store (unused packages)" }
 explanation = { fr = "pnpm store prune ne retire que les paquets qu'aucun projet ne référence : le gain réel peut être inférieur à la taille du store.", en = "pnpm store prune only removes packages no project references: the actual gain may be smaller than the store." }
+opaque = { fr = "Contenu interne du store pnpm", en = "pnpm store internals" }
 regenerated-by = { fr = "pnpm retélécharge un paquet retiré si un projet en a de nouveau besoin.", en = "pnpm downloads a removed package again if a project needs it." }
 targets = ['%LOCALAPPDATA%\pnpm\store']
 action = "command"
@@ -74,6 +78,7 @@ status = "safe"
 category = "packages"
 name = { fr = "Cache pip", en = "pip cache" }
 explanation = { fr = "Téléchargements mis en cache par pip, vidés par sa propre commande.", en = "Downloads cached by pip, cleared by its own command." }
+opaque = { fr = "Contenu interne du cache pip", en = "pip cache internals" }
 regenerated-by = { fr = "pip retélécharge les paquets à la prochaine installation.", en = "pip downloads the packages again on the next install." }
 targets = ['%LOCALAPPDATA%\pip\Cache']
 action = "command"
@@ -85,6 +90,7 @@ status = "safe"
 category = "packages"
 name = { fr = "Cache uv", en = "uv cache" }
 explanation = { fr = "Cache de paquets Python d'uv, vidé par sa propre commande.", en = "uv's Python package cache, cleared by its own command." }
+opaque = { fr = "Contenu interne du cache uv", en = "uv cache internals" }
 regenerated-by = { fr = "uv retélécharge les paquets à la prochaine installation.", en = "uv downloads the packages again on the next install." }
 targets = ['%LOCALAPPDATA%\uv\cache']
 action = "command"
@@ -235,6 +241,7 @@ category = "games"
 screen = "games"
 name = { fr = "Caches de shaders (DirectX, NVIDIA, AMD)", en = "Shader caches (DirectX, NVIDIA, AMD)" }
 explanation = { fr = "Les jeux recompileront leurs shaders : premiers lancements plus longs et saccades temporaires.", en = "Games will compile their shaders again: longer first launches and temporary stutter." }
+opaque = { fr = "Contenu interne des caches de shaders", en = "Shader cache internals" }
 tip = { fr = "La taille maximale du cache se règle dans le panneau de configuration NVIDIA (Taille du cache du shader) ou dans AMD Software (Graphismes › Cache de shaders).", en = "The maximum cache size is set in the NVIDIA Control Panel (Shader Cache Size) or in AMD Software (Graphics › Shader Cache)." }
 targets = [
   '%LOCALAPPDATA%\D3DSCache',

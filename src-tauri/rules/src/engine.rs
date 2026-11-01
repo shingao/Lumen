@@ -88,6 +88,9 @@ pub struct Analysis {
     pub gain_review: Vec<u64>,
     /// Par nœud : recommandation qui le couvre (indice dans `recos`), `u16::MAX` sinon.
     pub reco_of: Vec<u16>,
+    /// Par nœud couvert : 0 pour le plus haut couvert par la règle, 1 pour ses enfants…
+    /// (`COVER_NONE` hors de toute règle). Les hachures ne vont qu'au niveau 0.
+    pub cover_depth: Vec<u8>,
     pub recos: Vec<Reco>,
     pub disabled: Vec<Disabled>,
 }
@@ -95,7 +98,11 @@ pub struct Analysis {
 impl Analysis {
     /// Mémoire occupée (octets, estimation) : tableaux par nœud et recommandations.
     pub fn memory_bytes(&self) -> u64 {
-        let per_node = self.status.capacity() + self.category.capacity() + 8 * (self.gain_safe.capacity() + self.gain_review.capacity()) + 2 * self.reco_of.capacity();
+        let per_node = self.status.capacity()
+            + self.category.capacity()
+            + self.cover_depth.capacity()
+            + 8 * (self.gain_safe.capacity() + self.gain_review.capacity())
+            + 2 * self.reco_of.capacity();
         let recos: usize = self
             .recos
             .iter()
@@ -108,6 +115,8 @@ impl Analysis {
 pub const STATUS_KEEP: u8 = 0;
 pub const STATUS_SAFE: u8 = 1;
 pub const STATUS_REVIEW: u8 = 2;
+/// `cover_depth` d'un nœud qu'aucune règle ne couvre.
+pub const COVER_NONE: u8 = u8::MAX;
 
 fn category_index(c: Category) -> u8 {
     Category::ALL.iter().position(|x| *x == c).unwrap_or(3) as u8
@@ -519,6 +528,7 @@ pub fn analyze(set: &RuleSet, scan: &Scan, ctx: &Context) -> Analysis {
     // 4. Statuts, recommandations et catégories par nœud (parents avant enfants), puis gains.
     let mut status = vec![STATUS_KEEP; n];
     let mut reco_of = vec![NONE; n];
+    let mut cover_depth = vec![COVER_NONE; n];
     let mut category = vec![category_index(Category::Tools); n];
     let status_of = |r: &Rule| if r.status == Status::Safe { STATUS_SAFE } else { STATUS_REVIEW };
     for i in 0..n {
@@ -527,10 +537,12 @@ pub fn analyze(set: &RuleSet, scan: &Scan, ctx: &Context) -> Analysis {
         if top != NONE {
             let rule = &set.rules[recos[top as usize].rule];
             reco_of[i] = top;
+            cover_depth[i] = 0;
             status[i] = status_of(rule);
             category[i] = category_index(rule.category);
         } else if let Some(p) = parent.filter(|&p| reco_of[p] != NONE) {
             reco_of[i] = reco_of[p];
+            cover_depth[i] = cover_depth[p].saturating_add(1).min(COVER_NONE - 1);
             status[i] = status[p];
             category[i] = category[p];
         } else if assigned[i] != NONE as u8 {
@@ -559,7 +571,7 @@ pub fn analyze(set: &RuleSet, scan: &Scan, ctx: &Context) -> Analysis {
             }
         }
     }
-    Analysis { status, category, gain_safe, gain_review, reco_of, recos, disabled }
+    Analysis { status, category, gain_safe, gain_review, reco_of, cover_depth, recos, disabled }
 }
 
 /// Le dossier (ou l'un de ses parents) est-il dans une zone exclue ?

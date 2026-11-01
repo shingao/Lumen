@@ -89,6 +89,11 @@ pub struct Game {
     pub cover: Option<PathBuf>,
     /// Cache de shaders du jeu géré par le launcher (Steam), informatif.
     pub shader_cache: Option<PathBuf>,
+    /// Modes de jeu inclus dans ce jeu, jamais comptés à part (Teamfight Tactics dans League of
+    /// Legends).
+    pub modes: Vec<String>,
+    /// `last_played` estimé (date des derniers journaux de parties), pas donné par le launcher.
+    pub last_played_estimated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,6 +269,7 @@ pub fn detect(env: &Env, reg: &dyn Registry) -> Detection {
     minecraft::detect(env, &mut d);
     xbox::detect(&env.drives, &mut d);
     uninstall::detect(reg, &mut d);
+    riot::complete(&mut d);
     d.games.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.launcher.cmp(&b.launcher)));
     d
 }

@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use serde::Serialize;
 
-use rules::engine::{ActivitySource, STATUS_REVIEW, STATUS_SAFE};
+use rules::engine::{ActivitySource, COVER_NONE, STATUS_REVIEW, STATUS_SAFE};
 use rules::schema::{Action, Gain, Status, Text};
 use rules::{Analysis, RuleSet};
 use scan::{Kind, NodeId, Scan};
@@ -89,7 +89,7 @@ pub struct TextDto {
     pub en: String,
 }
 
-fn text(t: &Text) -> TextDto {
+pub(crate) fn text(t: &Text) -> TextDto {
     TextDto { fr: t.fr.clone(), en: t.en.clone() }
 }
 
@@ -169,6 +169,18 @@ pub struct NodeView {
     pub reco: Option<usize>,
     pub gain: u64,
     pub gain_status: Option<&'static str>,
+    /// Profondeur sous le plus haut nœud couvert par la règle (0 : celui-ci, hachuré) ; `None`
+    /// hors de toute règle.
+    pub cover_depth: Option<u8>,
+}
+
+/// Règle « opaque » qui couvre un nœud : libellé de la tuile unique et explication de la règle.
+#[derive(Debug, Clone, Copy)]
+pub struct Opaque {
+    pub label: &'static Text,
+    pub explanation: &'static Text,
+    /// Profondeur sous le plus haut nœud couvert (0 : la tuile unique elle-même).
+    pub depth: u8,
 }
 
 /// Tuiles à mettre en avant au survol : les éléments couverts et tous leurs dossiers parents, pour
@@ -225,6 +237,7 @@ impl Applied {
         let category = a.category.get(i).and_then(|&c| rules::Category::ALL.get(c as usize)).map_or("tools", |c| c.as_str());
         // Règle d'un autre onglet (Jeux, jalon 8) : couleur et statut seulement, pas de lien.
         let reco = a.reco_of.get(i).copied().filter(|&r| r != u16::MAX).map(usize::from).filter(|&r| self.on_analyse(r));
+        let cover_depth = a.cover_depth.get(i).copied().filter(|&d| d != COVER_NONE);
         let (safe, review) = (a.gain_safe.get(i).copied().unwrap_or(0), a.gain_review.get(i).copied().unwrap_or(0));
         let gain_status = if safe > 0 {
             Some("safe")
@@ -233,7 +246,17 @@ impl Applied {
         } else {
             None
         };
-        NodeView { status, category, reco, gain: safe + review, gain_status }
+        NodeView { status, category, reco, gain: safe + review, gain_status, cover_depth }
+    }
+
+    /// Règle « opaque » qui couvre ce nœud (quel que soit l'onglet de la règle), s'il y en a une.
+    pub fn opaque(&self, id: NodeId) -> Option<Opaque> {
+        let a = &self.analysis;
+        let i = id as usize;
+        let r = a.reco_of.get(i).copied().filter(|&r| r != u16::MAX)?;
+        let depth = a.cover_depth.get(i).copied().filter(|&d| d != COVER_NONE)?;
+        let rule = &self.set()?.rules[a.recos.get(usize::from(r))?.rule];
+        rule.opaque.as_ref().map(|label| Opaque { label, explanation: &rule.explanation, depth })
     }
 
     /// Vue d'un regroupement « autres » : statut et catégorie majoritaires (en octets) de ce qu'il
@@ -244,6 +267,7 @@ impl Applied {
         let mut category: Vec<(&'static str, u64)> = Vec::new();
         let (mut safe, mut review) = (0u64, 0u64);
         let mut reco: Option<Option<usize>> = None;
+        let mut cover_depth: Option<u8> = None;
         let add = |list: &mut Vec<(&'static str, u64)>, key: &'static str, size: u64| match list.iter_mut().find(|(k, _)| *k == key) {
             Some((_, n)) => *n += size,
             None => list.push((key, size)),
@@ -255,6 +279,10 @@ impl Applied {
             add(&mut category, v.category, size);
             safe += a.gain_safe.get(m as usize).copied().unwrap_or(0);
             review += a.gain_review.get(m as usize).copied().unwrap_or(0);
+            cover_depth = match (cover_depth, v.cover_depth) {
+                (Some(x), Some(y)) => Some(x.min(y)),
+                (x, y) => x.or(y),
+            };
             reco = match reco {
                 None => Some(v.reco),
                 Some(r) if r == v.reco => Some(r),
@@ -269,7 +297,7 @@ impl Applied {
         } else {
             None
         };
-        NodeView { status: top(&status, "keep"), category: top(&category, "tools"), reco: reco.flatten(), gain: safe + review, gain_status }
+        NodeView { status: top(&status, "keep"), category: top(&category, "tools"), reco: reco.flatten(), gain: safe + review, gain_status, cover_depth }
     }
 
     /// La recommandation `idx` est-elle proposée sur l'écran Analyse ? (sinon : onglet Jeux.)
