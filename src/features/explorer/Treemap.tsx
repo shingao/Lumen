@@ -9,7 +9,7 @@ import { formatBytes, formatCount, formatDelta, formatRelative } from "../../cor
 import { nests, SIZE_MIN_W } from "../../core/treemap/depth";
 import { squarify } from "../../core/treemap/squarify";
 import { type Translator, useT } from "../../i18n";
-import type { NodeId, TreeNode } from "../../ipc/types";
+import type { NodeId, Status, TreeNode } from "../../ipc/types";
 import pop from "../../components/Popover.module.css";
 import { tileFill } from "./tileFill";
 import styles from "./Treemap.module.css";
@@ -23,6 +23,9 @@ interface Props {
   root: TreeNode;
   /** Tuiles mises en avant (survol ou détail d'une recommandation) ; null = aucune. */
   highlight: readonly NodeId[] | null;
+  /** « ? » d'un statut : toutes les tuiles de ce statut (avec une recommandation) restent
+   * nettes, en plus de `highlight` (leurs dossiers parents), à tous les niveaux de zoom. */
+  highlightStatus?: Status | null;
   onCopyPath(node: TreeNode): void;
   onUnavailable(milestone: number): void;
 }
@@ -61,11 +64,22 @@ function fillStyle(fill: ReturnType<typeof tileFill>): Record<string, string | n
   return fill.cover === null ? { "--tile-bg": fill.bg } : { "--tile-bg": fill.bg, "--cover-level": fill.cover, "--cover-border": fill.coverBorder ?? "transparent" };
 }
 
+/** Ce qui reste net : la sélection (`keep`), et pour un statut mis en évidence, tout élément de
+ * ce statut couvert par une recommandation (l'intérieur d'une zone couverte compris). */
+interface Keep {
+  ids: readonly NodeId[];
+  status: Status | null;
+}
+
+function kept(node: TreeNode, keep: Keep): boolean {
+  return keep.ids.includes(node.id) || (keep.status !== null && node.status === keep.status && node.reco !== null);
+}
+
 /** Opacité de la maquette : estompe tout sauf les tuiles concernées (et l'intérieur des parents estompés). */
-function isDimmed(id: NodeId, parent: NodeId | null, keep: readonly NodeId[] | null): boolean {
+function isDimmed(node: TreeNode, parent: TreeNode | null, keep: Keep | null): boolean {
   if (!keep) return false;
-  if (keep.includes(id)) return false;
-  if (parent !== null && !keep.includes(parent)) return false;
+  if (kept(node, keep)) return false;
+  if (parent !== null && !kept(parent, keep)) return false;
   return true;
 }
 
@@ -80,7 +94,7 @@ function indexOf(root: TreeNode): Map<NodeId, { node: TreeNode; parent: NodeId |
   return map;
 }
 
-export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
+export function Treemap({ root, highlight, highlightStatus = null, onCopyPath, onUnavailable }: Props) {
   const t = useT();
   const mode = useStore((s) => s.colorMode);
   const setOpenReco = useStore((s) => s.setOpenReco);
@@ -92,6 +106,7 @@ export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
   const [now] = useState(() => Date.now());
 
   const index = useMemo(() => indexOf(root), [root]);
+  const keep = useMemo<Keep | null>(() => (highlight || highlightStatus ? { ids: highlight ?? [], status: highlightStatus } : null), [highlight, highlightStatus]);
 
   const tiles = useMemo(
     () => squarify(root.children, area, { x: 0, y: 0, w: size.width, h: size.height }, GAP),
@@ -153,7 +168,7 @@ export function Treemap({ root, highlight, onCopyPath, onUnavailable }: Props) {
             width={rect.w}
             height={rect.h}
             hoverId={hover?.id ?? null}
-            highlight={highlight}
+            highlight={keep}
             now={now}
             mode={mode}
             t={t}
@@ -193,7 +208,7 @@ interface TileProps {
   width: number;
   height: number;
   hoverId: NodeId | null;
-  highlight: readonly NodeId[] | null;
+  highlight: Keep | null;
   now: number;
   mode: ReturnType<typeof useStore.getState>["colorMode"];
   t: Translator;
@@ -237,7 +252,7 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
       data-opaque={node.opaque !== null || undefined}
       data-deep={fill.deep || undefined}
       data-hover={hoverId === node.id || undefined}
-      data-dim={isDimmed(node.id, null, highlight) || undefined}
+      data-dim={isDimmed(node, null, highlight) || undefined}
       data-clickable={node.hasChildren || node.reco !== null || undefined}
       style={{ ...style, ...fillStyle(fill) } as CSSProperties}
       tabIndex={0}
@@ -313,7 +328,7 @@ function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, o
             data-opaque={item.opaque !== null || undefined}
             data-deep={fill.deep || undefined}
             data-hover={hoverId === item.id || undefined}
-            data-dim={isDimmed(item.id, node.id, highlight) || undefined}
+            data-dim={isDimmed(item, node, highlight) || undefined}
             style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, ...fillStyle(fill) } as CSSProperties}
             onClick={(e) => {
               if (!item.hasChildren && !item.reco) return;

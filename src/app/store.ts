@@ -85,6 +85,10 @@ export interface State {
   checked: string[];
   openReco: string | null;
   hoverReco: string | null;
+  /** « ? » d'un KPI ou d'un en-tête de groupe : tuiles de ce statut mises en évidence dans la
+   * treemap (le reste estompé) et bulle d'explication à côté du bouton cliqué. Garde son état
+   * pendant le zoom et la navigation ← →. */
+  statusFocus: StatusFocus | null;
   toast: Toast | null;
   clean: CleanUi;
   /** Incrémenté à chaque entrée ajoutée au journal ou restauration (rechargement de l'écran). */
@@ -101,10 +105,17 @@ export interface State {
   setChecked(ids: string[]): void;
   setOpenReco(id: string | null): void;
   setHoverReco(id: string | null): void;
+  setStatusFocus(focus: StatusFocus | null): void;
   showToast(text: string): void;
   dismissToast(): void;
   setClean(patch: Partial<CleanUi>): void;
   bumpJournal(): void;
+}
+
+/** Statut mis en évidence et bouton qui l'a demandé (la bulle s'affiche à côté de lui). */
+export interface StatusFocus {
+  status: "safe" | "review";
+  from: "kpi" | "reco";
 }
 
 let toastId = 0;
@@ -125,6 +136,7 @@ export const useStore = create<State>()((set) => ({
   checked: [],
   openReco: null,
   hoverReco: null,
+  statusFocus: null,
   toast: null,
   clean: CLEAN_CLOSED,
   journalVersion: 0,
@@ -141,6 +153,7 @@ export const useStore = create<State>()((set) => ({
   setChecked: (checked) => set({ checked }),
   setOpenReco: (openReco) => set({ openReco, hoverReco: null }),
   setHoverReco: (hoverReco) => set({ hoverReco }),
+  setStatusFocus: (statusFocus) => set({ statusFocus }),
   showToast: (text) => set({ toast: { id: ++toastId, text } }),
   dismissToast: () => set({ toast: null }),
   setClean: (patch) => set((s) => ({ clean: { ...s.clean, ...patch } })),

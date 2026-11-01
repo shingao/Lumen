@@ -8,6 +8,7 @@ import { formatBytes } from "../../core/format";
 import { currentT, useT } from "../../i18n";
 import { backend } from "../../ipc/client";
 import type { Recommendation, RecoStatus } from "../../ipc/types";
+import { StatusHelp } from "../status/StatusHelp";
 import styles from "./Recommendations.module.css";
 
 function Row({ reco }: { reco: Recommendation }) {
@@ -50,6 +51,7 @@ function Group({ status, recos }: { status: RecoStatus; recos: Recommendation[] 
         <span className={styles.groupTitle}>
           <StatusDot status={status} />
           {t(`status.${status}`)}
+          <StatusHelp status={status} from="reco" />
         </span>
         <span className={styles.groupTotal}>{formatBytes(total, t.locale)}</span>
       </div>

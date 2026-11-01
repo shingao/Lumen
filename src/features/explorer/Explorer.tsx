@@ -16,6 +16,7 @@ import type { Category, TreeNode } from "../../ipc/types";
 import { FastScanConfirm } from "./FastScanConfirm";
 import { Legend } from "./Legend";
 import { ScanProgressPanel, ScanStats } from "./ScanPanel";
+import { KEEP_FOCUS } from "../status/StatusHelp";
 import { Treemap } from "./Treemap";
 import styles from "./Explorer.module.css";
 
@@ -44,6 +45,7 @@ export function Explorer() {
   const colorMode = useStore((s) => s.colorMode);
   const setColorMode = useStore((s) => s.setColorMode);
   const hoverReco = useStore((s) => s.hoverReco);
+  const statusFocus = useStore((s) => s.statusFocus);
   const openReco = useStore((s) => s.openReco);
   const showToast = useStore((s) => s.showToast);
   const tree = useTree(node);
@@ -60,7 +62,12 @@ export function Explorer() {
   }, [tree, target, scanId, node]);
 
   const focus = hoverReco ?? openReco;
-  const highlight = useMemo(() => recos?.find((r) => r.id === focus)?.highlight ?? null, [recos, focus]);
+  // Une recommandation survolée ou ouverte passe avant la mise en évidence d'un statut (« ? »).
+  const statusHighlight = focus === null ? (statusFocus?.status ?? null) : null;
+  const highlight = useMemo(() => {
+    if (statusHighlight) return (recos ?? []).filter((r) => r.status === statusHighlight).flatMap((r) => r.highlight);
+    return recos?.find((r) => r.id === focus)?.highlight ?? null;
+  }, [recos, focus, statusHighlight]);
   const categories = useMemo(() => (tree ? presentCategories(tree.root) : new Set<Category>()), [tree]);
 
   const modes: { value: ColorMode; label: string }[] = [
@@ -91,7 +98,7 @@ export function Explorer() {
   ];
 
   return (
-    <section aria-label={t("explorer.title")} className={styles.explorer}>
+    <section aria-label={t("explorer.title")} className={styles.explorer} {...{ [KEEP_FOCUS]: "" }}>
       <div className={styles.header}>
         <div className={styles.heading}>
           <h2 className={styles.title}>{t("explorer.title")}</h2>
@@ -198,6 +205,7 @@ export function Explorer() {
           <Treemap
             root={tree.root}
             highlight={highlight}
+            highlightStatus={statusHighlight}
             onCopyPath={(n) => {
               void copyText(n.path).then((ok) => ok && showToast(currentT()("preview.pathCopied")));
             }}

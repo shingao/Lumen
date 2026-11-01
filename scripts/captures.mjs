@@ -473,5 +473,14 @@ await shot("70-cache-opaque-apres", { act: async (p) => {
   await p.locator("[data-node][data-opaque]").first().hover();
   await p.waitForTimeout(400);
 } });
+// « ? » d'un statut : tuiles de ce statut mises en évidence, bulle d'explication.
+await shot("71-statut-sans-risque", { act: async (p) => {
+  await p.getByRole("button", { name: "Montrer dans la treemap ce qui est sans risque" }).first().click();
+  await p.waitForTimeout(500);
+} });
+await shot("71-statut-a-verifier-sombre", { theme: "dark", act: async (p) => {
+  await p.getByRole("button", { name: "Montrer dans la treemap ce qui est à vérifier" }).last().click();
+  await p.waitForTimeout(500);
+} });
 await browser.close();
 console.log(`captures dans ${out}`);

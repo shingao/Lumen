@@ -4,6 +4,7 @@ import { TrendIcon } from "../../components/icons";
 import { StatusDot } from "../../components/StatusDot";
 import { formatBytes, formatDelta } from "../../core/format";
 import { useT } from "../../i18n";
+import { StatusHelp } from "../status/StatusHelp";
 import styles from "./KpiBand.module.css";
 
 export function KpiBand() {
@@ -44,6 +45,7 @@ export function KpiBand() {
         <span className={styles.label}>
           <StatusDot status="safe" />
           {t("kpi.safe")}
+          {rules && <StatusHelp status="safe" from="kpi" />}
         </span>
         <span className={styles.value}>{kpis && rules ? size(kpis.safeBytes) : "—"}</span>
         <span className={styles.sub}>{kpis && (rules ? t.plural("kpi.safeSub", kpis.safeCount) : t("kpi.rulesPending"))}</span>
@@ -52,6 +54,7 @@ export function KpiBand() {
         <span className={styles.label}>
           <StatusDot status="review" />
           {t("kpi.review")}
+          {rules && <StatusHelp status="review" from="kpi" />}
         </span>
         <span className={styles.value}>{kpis && rules ? size(kpis.reviewBytes) : "—"}</span>
         <span className={styles.sub}>{kpis && (rules ? t.plural("kpi.reviewSub", kpis.reviewCount) : t("kpi.rulesPending"))}</span>
