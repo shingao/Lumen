@@ -8,6 +8,7 @@ import { CleanDialog } from "../features/cleanup/CleanDialog";
 import { ExportDialog } from "../features/export/ExportDialog";
 import { MoveDialog } from "../features/move/MoveDialog";
 import { JournalScreen } from "../features/journal/JournalScreen";
+import { DepthScreen } from "../features/depth/DepthScreen";
 import { CleanupScreen } from "../features/advanced/CleanupScreen";
 import { DevScreen } from "../features/dev/DevScreen";
 import { GamesScreen } from "../features/games/GamesScreen";
@@ -37,6 +38,7 @@ const VIEWS: Record<Screen, () => JSX.Element> = {
   dev: DevScreen,
   games: GamesScreen,
   journal: JournalScreen,
+  depth: DepthScreen,
 };
 
 export function App() {

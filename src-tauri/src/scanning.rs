@@ -150,6 +150,8 @@ pub struct TreeNodeDto {
     pub cover_depth: Option<u8>,
     /// Contenu interne d'un cache (règle « opaque ») : tuile unique, jamais détaillée.
     pub opaque: Option<OpaqueDto>,
+    /// Zone de la denylist de `safety` (analyse en profondeur : statut « Protégé »).
+    pub protected: bool,
     pub children: Vec<TreeNodeDto>,
 }
 
@@ -196,6 +198,11 @@ pub(crate) fn target_key(t: &ScanTarget) -> String {
 }
 
 impl Entry {
+    #[cfg(test)]
+    pub(crate) fn for_tests(target: ScanTarget, scan: Scan) -> Entry {
+        Entry { target, scan, volume: "C:".into(), notice: None, applied: None, finished_at: 0, restored: false, index: Default::default() }
+    }
+
     /// Mémoire occupée (octets, estimation) : arbre de l'analyse et résultats des règles.
     pub(crate) fn memory_bytes(&self) -> u64 {
         self.scan.memory_bytes() + self.applied.as_ref().map_or(0, |a| a.analysis.memory_bytes()) + self.index.get().map_or(0, |i| i.memory_bytes())
@@ -422,6 +429,7 @@ fn to_dto(n: SliceNode, applied: Option<&Applied>, scan: &Scan) -> TreeNodeDto {
         gain_up_to: reco.is_some_and(|r| applied.is_some_and(|a| a.reco_up_to(r))),
         cover_depth: view.and_then(|v| v.cover_depth),
         opaque,
+        protected: false,
         children: n.children.into_iter().map(|c| to_dto(c, applied, scan)).collect(),
     }
 }
@@ -856,11 +864,16 @@ pub fn scan_summary(state: State<'_, ScanState>, scan_id: u32) -> Result<Summary
 #[tauri::command]
 pub fn scan_tree(state: State<'_, ScanState>, scan_id: u32, node: Option<i64>) -> Result<TreeSliceDto, LumenError> {
     let e = entry(&state, scan_id)?;
-    let s = &e.scan;
     let id = match node {
-        None => s.root(),
-        Some(n) => u32::try_from(n).ok().filter(|&n| (n as usize) < s.len()).ok_or(LumenError::UnknownNode)?,
+        None => e.scan.root(),
+        Some(n) => u32::try_from(n).ok().filter(|&n| (n as usize) < e.scan.len()).ok_or(LumenError::UnknownNode)?,
     };
+    tree_dto(&e, id)
+}
+
+/// Tranche de la treemap sous `id` (contenu opaque jamais détaillé) et fil d'Ariane.
+pub(crate) fn tree_dto(e: &Entry, id: NodeId) -> Result<TreeSliceDto, LumenError> {
+    let s = &e.scan;
     let id = outside_opaque(s, e.applied.as_ref(), id);
     // Profondeur adaptative : jusqu'à 4 niveaux sous les dossiers d'au moins 1 % de la vue,
     // assez grands pour être dessinés avec leurs enfants.

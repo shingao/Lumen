@@ -12,7 +12,7 @@ mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({ executablePath });
 
 // Tutoriel et astuces (jalon 10) déjà vus, sauf pour les captures qui les montrent (`fresh`).
-const SCREENS = ["analyse", "timeline", "cleanup", "dev", "games", "journal"];
+const SCREENS = ["analyse", "timeline", "cleanup", "dev", "games", "journal", "depth"];
 async function welcomed(page, { onboarding = true, tips = SCREENS } = {}) {
   await page.addInitScript(
     ([done, seen]) => {
@@ -481,6 +481,24 @@ await shot("71-statut-sans-risque", { act: async (p) => {
 await shot("71-statut-a-verifier-sombre", { theme: "dark", act: async (p) => {
   await p.getByRole("button", { name: "Montrer dans la treemap ce qui est à vérifier" }).last().click();
   await p.waitForTimeout(500);
+} });
+// Analyse en profondeur : postes du volume, renvois vers les modules, treemap « Protégé ».
+const depthDone = async (p) => {
+  await p.getByRole("button", { name: "Analyser en profondeur" }).first().click();
+  await p.getByRole("region", { name: "Postes du volume" }).waitFor();
+  await p.waitForTimeout(400);
+};
+await shot("72-profondeur", { height: 1500, act: depthDone });
+await shot("72-profondeur-sombre", { theme: "dark", height: 1500, act: depthDone });
+await shot("72-profondeur-treemap", { act: async (p) => {
+  await depthDone(p);
+  await p.getByRole("region", { name: "Postes du volume" }).getByRole("button", { name: "WinSxS" }).click();
+  await p.waitForTimeout(600);
+  await p.locator("[data-protected]").first().hover();
+} });
+await shot("73-kpi-profondeur", { act: async (p) => {
+  await depthDone(p);
+  await nav(p, "Analyse");
 } });
 await browser.close();
 console.log(`captures dans ${out}`);

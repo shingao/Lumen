@@ -17,8 +17,11 @@ import type {
   Settings,
 } from "../ipc/types";
 
-export type Screen = "analyse" | "timeline" | "cleanup" | "dev" | "games" | "journal";
-export const SCREENS: readonly Screen[] = ["analyse", "timeline", "cleanup", "dev", "games", "journal"];
+export type Screen = "analyse" | "timeline" | "cleanup" | "dev" | "games" | "journal" | "depth";
+export const SCREENS: readonly Screen[] = ["analyse", "timeline", "cleanup", "dev", "games", "journal", "depth"];
+
+/** Onglet du Nettoyage avancé (l'écran Profondeur ouvre directement « Gouffres système »). */
+export type CleanupTab = "dormant" | "duplicates" | "large" | "system";
 
 export type ColorMode = "category" | "cleanup" | "age";
 
@@ -93,6 +96,7 @@ export interface State {
   clean: CleanUi;
   /** Incrémenté à chaque entrée ajoutée au journal ou restauration (rechargement de l'écran). */
   journalVersion: number;
+  cleanupTab: CleanupTab;
 
   go(screen: Screen): void;
   setSettingsOpen(open: boolean): void;
@@ -110,6 +114,7 @@ export interface State {
   dismissToast(): void;
   setClean(patch: Partial<CleanUi>): void;
   bumpJournal(): void;
+  setCleanupTab(tab: CleanupTab): void;
 }
 
 /** Statut mis en évidence et bouton qui l'a demandé (la bulle s'affiche à côté de lui). */
@@ -140,6 +145,7 @@ export const useStore = create<State>()((set) => ({
   toast: null,
   clean: CLEAN_CLOSED,
   journalVersion: 0,
+  cleanupTab: "dormant",
 
   go: (screen) => set({ screen, settingsOpen: false }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
@@ -158,4 +164,5 @@ export const useStore = create<State>()((set) => ({
   dismissToast: () => set({ toast: null }),
   setClean: (patch) => set((s) => ({ clean: { ...s.clean, ...patch } })),
   bumpJournal: () => set((s) => ({ journalVersion: s.journalVersion + 1 })),
+  setCleanupTab: (cleanupTab) => set({ cleanupTab }),
 }));

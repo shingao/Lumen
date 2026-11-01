@@ -341,3 +341,16 @@
 .child[data-opaque] .childName {
   white-space: normal;
 }
+
+/* Écran Profondeur : zone de la denylist « Protégée », bord plein, jamais de hachures. */
+.tile[data-protected],
+.child[data-protected] {
+  box-shadow: inset 0 0 0 1px var(--protected-border);
+}
+
+.tile[data-protected][data-hover],
+.child[data-protected][data-hover] {
+  box-shadow:
+    inset 0 0 0 1px var(--protected-border),
+    0 0 0 1.5px var(--tile-ring);
+}

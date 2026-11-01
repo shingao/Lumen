@@ -150,7 +150,7 @@ export function mockRestorePoints(now: number): RestorePoints {
     { id: "{4C1E7A90-2B3D-4E5F-8A6B-1C2D3E4F5A6B}", created: now - 45 * DAY, description: "Windows Update" },
     { id: "{9D8C7B6A-5F4E-4D3C-8B2A-0F1E2D3C4B5A}", created: now - 3 * DAY, description: "Installed Visual Studio Build Tools" },
   ];
-  return { drive: "C:", count: points.length, points, oldest: points[0] ?? null, deletable: true, refusal: null };
+  return { drive: "C:", count: points.length, points, oldest: points[0] ?? null, deletable: true, refusal: null, storage: { used: gb(7.4), allocated: gb(7.9), max: gb(23.8) } };
 }
 
 export function mockSinks(): SystemSinks {

@@ -1,0 +1,246 @@
+/* Écran Profondeur : même DA que l'Analyse (conteneurs à bord fin, chiffres et chemins en mono). */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.hint {
+  max-width: 520px;
+  font-size: var(--fs-12);
+  color: var(--text-label);
+}
+
+.error {
+  font-size: var(--fs-12-5);
+  color: var(--delta-review);
+}
+
+.progress {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  background: var(--bg-app);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+.status {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-label);
+}
+
+/* Postes : grille de cartes, comme les groupes de recommandations. */
+.items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pop);
+  background: var(--bg-container);
+}
+
+.itemHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.itemName {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.itemSize {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.bar {
+  height: 4px;
+  border-radius: var(--r-bar);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-bar);
+  background: var(--st-protected-dot);
+}
+
+.barFill[data-item="userProfile"],
+.barFill[data-item="rootApps"] {
+  background: var(--st-keep-dot);
+}
+
+.barFill[data-item="inaccessible"] {
+  background: var(--text-faint);
+}
+
+.about {
+  font-size: var(--fs-12);
+  color: var(--text-label);
+}
+
+.entries {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border-soft);
+}
+
+.entry {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.entryName,
+.entryText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  text-align: left;
+}
+
+.entryName {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.entryName:hover {
+  text-decoration: underline;
+}
+
+.entryPath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--text-label);
+}
+
+.entrySize {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.itemFoot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: auto;
+}
+
+.shadow {
+  margin-right: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11-5);
+  color: var(--text-2);
+}
+
+.link {
+  white-space: nowrap;
+}
+
+/* Treemap du volume entier, en lecture seule. */
+.map {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scroll-margin-top: 12px;
+}
+
+.mapTitle {
+  flex: none;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  font-size: var(--fs-12);
+  color: var(--text-label);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--r-swatch);
+  border: 1px solid var(--swatch-border);
+}
+
+.swatch[data-kind="protected"] {
+  background: var(--st-protected);
+  border-color: var(--protected-border);
+}
+
+.swatch[data-kind="other"] {
+  background: linear-gradient(90deg, var(--cat-media) 0 33%, var(--cat-code) 33% 66%, var(--cat-games) 66%);
+}
+
+.legendNote {
+  margin-left: auto;
+}

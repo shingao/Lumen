@@ -78,3 +78,29 @@
 .trend:hover {
   background: var(--bg-sunken);
 }
+
+/* « Non analysé » : texte et bouton « Analyser en profondeur » sur une ligne. */
+.subRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.action {
+  flex: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: var(--fs-11-5);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.action:hover {
+  color: var(--text-1);
+}

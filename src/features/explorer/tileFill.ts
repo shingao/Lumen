@@ -64,3 +64,11 @@ export function tileFill(node: TreeNode, mode: ColorMode, now: number): Fill {
   if (mode === "category") return { bg: CATEGORY_VAR[node.category], hatch, deep: false, cover, coverBorder };
   return { bg: `var(--st-${node.status})`, hatch, deep: false, cover, coverBorder };
 }
+
+/** Écran Profondeur : zone de la denylist « Protégée », le reste par catégorie. Jamais de
+ * hachures ni de niveaux de règle : rien n'y est à cocher. */
+export function depthFill(node: TreeNode): Fill {
+  if (node.protected) return { bg: "var(--st-protected)", hatch: false, deep: false, cover: null, coverBorder: null };
+  const bg = node.othersCount !== null ? "var(--st-keep)" : CATEGORY_VAR[node.category];
+  return { bg, hatch: false, deep: false, cover: null, coverBorder: null };
+}

@@ -450,7 +450,15 @@ $points = @()
 try {
   $points = @(Get-ComputerRestorePoint | ForEach-Object { [ordered]@{ description = $_.Description; created = (& $secondes ([Management.ManagementDateTimeConverter]::ToDateTime($_.CreationTime))) } })
 } catch {}
-$json = ConvertTo-Json -Depth 4 -Compress ([ordered]@{ shadows = $copies; points = $points })
+# Espace des clichés instantanés (source de `vssadmin list shadowstorage`), indépendant de la langue.
+$stockage = $null
+try {
+  $s = @(Get-CimInstance -ClassName Win32_ShadowStorage | Where-Object { $_.Volume.DeviceID -eq $volume })
+  if ($s.Count -gt 0) {
+    $stockage = [ordered]@{ used = [uint64](($s | Measure-Object -Property UsedSpace -Sum).Sum); allocated = [uint64](($s | Measure-Object -Property AllocatedSpace -Sum).Sum); max = [uint64](($s | Measure-Object -Property MaxSpace -Sum).Sum) }
+  }
+} catch {}
+$json = ConvertTo-Json -Depth 4 -Compress ([ordered]@{ shadows = $copies; points = $points; storage = $stockage })
 [IO.File]::WriteAllText($sortie, $json, (New-Object Text.UTF8Encoding $false))
 exit 0
 "#;

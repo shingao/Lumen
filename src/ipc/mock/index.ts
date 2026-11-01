@@ -29,6 +29,7 @@ import type {
 import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
 import { createMockTimeline } from "./timeline";
+import { mockDepthReport, mockDepthTree } from "./depth";
 import { createMoves } from "./moves";
 import { createIntegration, type MockIntegration } from "./integration";
 import { DEV_EXTRA_CACHES, mockCover, mockDevCaches, mockDocker, mockGames, mockProjects, mockRunning, mockShaders, mockWsl } from "./devgames";
@@ -734,6 +735,9 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     purgeSnapshots: () => resolved(timeline.purge()),
     systemSinks: () => resolved(mockSinks()),
     readRestorePoints: () => resolved(mockRestorePoints(now())),
+    depthReport: (scanId) => resolved(mockDepthReport(scanId, restoredAt.get(scanId) ?? finishedAt.get(scanId) ?? now())),
+    depthTree: (_scanId, node) => resolved(mockDepthTree(node)),
+    openAppsSettings: () => resolved(undefined),
     openSystemProtection: () => resolved(undefined),
 
     journal: () => resolved([...journalActions]),

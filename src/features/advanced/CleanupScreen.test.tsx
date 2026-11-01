@@ -33,6 +33,7 @@ const tab = (name: string) => fireEvent.click(screen.getByRole("button", { name 
 
 describe("Nettoyage avancé", () => {
   beforeEach(async () => {
+    useStore.setState({ cleanupTab: "dormant" });
     useAdvanced.setState({ systemActions: [], restorePoint: true, restorePoints: { status: "idle" }, sinks: { status: "idle" } });
     await scanned();
   });

@@ -46,6 +46,7 @@ import type {
   SystemSinks,
   DailyStatus,
   DatabaseInfo,
+  DepthReport,
   TimelineCompare,
   TimelineData,
   TimelineSeries,
@@ -90,6 +91,12 @@ export interface Backend {
   systemSinks(): Promise<SystemSinks>;
   /** Points de restauration du lecteur système (une demande UAC, lecture seule). */
   readRestorePoints(): Promise<RestorePoints>;
+  /** Analyse en profondeur : postes d'une analyse de volume entier (lecture seule). */
+  depthReport(scanId: number): Promise<DepthReport>;
+  /** Treemap du volume : denylist « Protégée », profils des autres comptes jamais détaillés. */
+  depthTree(scanId: number, node: NodeId | null): Promise<TreeSlice>;
+  /** Paramètres de Windows › Applications installées (l'utilisateur y désinstalle lui-même). */
+  openAppsSettings(): Promise<void>;
   /** Ouvre « Protection du système » de Windows. */
   openSystemProtection(): Promise<void>;
   /** Exécution réelle du plan affiché (son empreinte), avancement et bilan par `onCleanEvent`. */

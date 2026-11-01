@@ -9,6 +9,7 @@ mod analysis;
 mod cleanup;
 #[cfg(test)]
 mod e2e;
+mod depth;
 mod dev;
 mod error;
 mod games;
@@ -84,6 +85,9 @@ pub fn run() {
             scanning::scan_cancel,
             scanning::scan_summary,
             scanning::scan_tree,
+            depth::depth_report,
+            depth::depth_tree,
+            depth::open_apps_settings,
             scanning::scan_find,
             scanning::scan_cached,
             scanning::scan_restore,

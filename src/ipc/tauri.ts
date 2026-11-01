@@ -23,6 +23,7 @@ import type {
   DuplicatesResult,
   LargestResult,
   RestorePoints,
+  DepthReport,
   SystemSinks,
   JournalAction,
   JournalDetail,
@@ -81,6 +82,7 @@ interface TreeNodeDto {
   gainUpTo: boolean;
   coverDepth: number | null;
   opaque: { label: Text; explanation: Text } | null;
+  protected: boolean;
   children: TreeNodeDto[];
 }
 
@@ -162,6 +164,7 @@ function toNode(dto: TreeNodeDto, locale: Locale): TreeNode {
     gainUpTo: dto.gainUpTo,
     coverDepth: dto.coverDepth,
     opaque: dto.opaque ? { label: pick(dto.opaque.label, locale), explanation: pick(dto.opaque.explanation, locale) } : null,
+    ...(dto.protected ? { protected: true } : {}),
     hasChildren: dto.hasChildren,
     children: dto.children.map((c) => toNode(c, locale)),
   };
@@ -383,6 +386,12 @@ export function createTauriBackend(): Backend {
     purgeSnapshots: () => invoke<DatabaseInfo>("timeline_purge"),
     systemSinks: () => invoke<SystemSinks>("system_sinks"),
     readRestorePoints: () => invoke<RestorePoints>("restore_points_read"),
+    depthReport: (scanId) => invoke<DepthReport>("depth_report", { scanId }),
+    async depthTree(scanId, node) {
+      const slice = await invoke<{ root: TreeNodeDto; breadcrumb: { label: string; id: number | null }[] }>("depth_tree", { scanId, node });
+      return { root: toNode(slice.root, locale), breadcrumb: slice.breadcrumb } satisfies TreeSlice;
+    },
+    openAppsSettings: () => invoke<void>("open_apps_settings"),
     openSystemProtection: () => invoke("open_system_protection"),
     journal: () => invoke<JournalAction[]>("journal_list"),
     journalDetail: (actionId) => invoke<JournalDetail>("journal_detail", { actionId }),

@@ -80,6 +80,17 @@ pub(crate) struct RestoreFacts {
     pub shadows: Vec<ShadowCopy>,
     /// Description et date (secondes) des points de restauration.
     pub points: Vec<(String, i64)>,
+    /// Espace des clichés instantanés du lecteur (Win32_ShadowStorage), s'il a pu être lu.
+    pub storage: Option<ShadowStorage>,
+}
+
+/// Espace des clichés instantanés (octets) : utilisé, alloué, maximum (`MaxSpace`).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShadowStorage {
+    pub used: u64,
+    pub allocated: u64,
+    pub max: u64,
 }
 
 impl RestoreFacts {
@@ -104,7 +115,12 @@ impl RestoreFacts {
             .iter()
             .filter_map(|p| Some((p.get("description")?.as_str()?.to_owned(), p.get("created")?.as_i64()?)))
             .collect();
-        Ok(RestoreFacts { drive, shadows, points })
+        // Absent ou mal formé (ancienne version du script, classe indisponible) : inconnu.
+        let storage = v.get("storage").and_then(|s| {
+            let n = |k: &str| s.get(k).and_then(serde_json::Value::as_u64);
+            Some(ShadowStorage { used: n("used")?, allocated: n("allocated").unwrap_or(0), max: n("max").unwrap_or(0) })
+        });
+        Ok(RestoreFacts { drive, shadows, points, storage })
     }
 
     /// Description du point de restauration correspondant à un cliché (même date, à 10 min près).
@@ -133,6 +149,8 @@ pub struct RestorePointsDto {
     pub deletable: bool,
     /// Pourquoi il ne peut pas l'être.
     pub refusal: Option<String>,
+    /// Espace des clichés instantanés (analyse en profondeur).
+    pub storage: Option<ShadowStorage>,
 }
 
 pub(crate) fn restore_dto(f: &RestoreFacts, not_after: i64) -> RestorePointsDto {
@@ -147,6 +165,7 @@ pub(crate) fn restore_dto(f: &RestoreFacts, not_after: i64) -> RestorePointsDto 
         points,
         deletable: verdict.is_ok(),
         refusal: verdict.err().map(|e| e.to_string()),
+        storage: f.storage,
     }
 }
 
@@ -769,7 +788,7 @@ mod tests {
 
     fn facts(created: &[i64]) -> RestoreFacts {
         let shadows = created.iter().enumerate().map(|(i, &c)| ShadowCopy { id: ShadowId::parse(&format!("{{0000000{i}-0000-0000-0000-000000000000}}")).unwrap(), created: c }).collect();
-        RestoreFacts { drive: 'C', shadows, points: vec![("Lumen : avant nettoyage du système".into(), NOW - 30), ("Windows Update".into(), NOW - 40 * DAY)] }
+        RestoreFacts { drive: 'C', shadows, points: vec![("Lumen : avant nettoyage du système".into(), NOW - 30), ("Windows Update".into(), NOW - 40 * DAY)], storage: None }
     }
 
     fn ctx(restore: Option<&RestoreFacts>) -> SystemContext<'_> {
@@ -819,6 +838,10 @@ mod tests {
         let f = RestoreFacts::parse('C', json).unwrap();
         assert_eq!((f.shadows.len(), f.points.len()), (1, 1));
         assert_eq!(f.description_of(1_700_000_000).as_deref(), Some("Installé X"));
+        assert_eq!(f.storage, None, "ancienne sortie sans stockage : inconnu");
+        let with = RestoreFacts::parse('C', "{\"shadows\":[],\"points\":[],\"storage\":{\"used\":5368709120,\"allocated\":6442450944,\"max\":21474836480}}").unwrap();
+        assert_eq!(with.storage, Some(ShadowStorage { used: 5 << 30, allocated: 6 << 30, max: 20 << 30 }));
+        assert_eq!(RestoreFacts::parse('C', "{\"shadows\":[],\"storage\":null}").unwrap().storage, None);
         assert!(RestoreFacts::parse('C', "{\"shadows\":[{\"id\":\"'; rm\",\"created\":1}]}").is_err());
         assert_eq!(RestoreFacts::parse('C', "{\"shadows\":[],\"points\":[]}").unwrap().shadows.len(), 0);
         assert_eq!(stamp(1_792_929_605), "20261025-120005");

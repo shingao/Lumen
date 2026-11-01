@@ -41,6 +41,8 @@ export interface TreeNode {
   /** Contenu interne d'un cache (règle « opaque ») : tuile unique, jamais détaillée ; un clic
    * ouvre la recommandation. */
   opaque: { label: string; explanation: string } | null;
+  /** Zone de la denylist (écran Profondeur seulement : statut « Protégé », jamais touchée). */
+  protected?: boolean;
   hasChildren: boolean;
   children: TreeNode[];
 }
@@ -525,6 +527,57 @@ export interface RestorePoints {
   deletable: boolean;
   /** Pourquoi il est gardé (moins de 2 points, moins de 7 jours ou de cette session). */
   refusal: string | null;
+  /** Espace des clichés instantanés (Win32_ShadowStorage, comme `vssadmin list shadowstorage`). */
+  storage: { used: number; allocated: number; max: number } | null;
+}
+
+/** Postes de l'analyse en profondeur (où passent les Go hors du dossier utilisateur). */
+export type DepthItemId =
+  | "windows"
+  | "programFiles"
+  | "programData"
+  | "systemFiles"
+  | "restore"
+  | "profiles"
+  | "storeApps"
+  | "rootApps"
+  | "userProfile"
+  | "other"
+  | "inaccessible";
+
+/** Module de Lumen qui s'occupe déjà d'un poste ; `uninstall` : Paramètres de Windows. */
+export type DepthLink = "sinks" | "games" | "dev" | "uninstall" | "analysis";
+
+export interface DepthEntry {
+  /** Vide : « reste de Windows » (hors WinSxS, System32 et pilotes). */
+  name: string;
+  path: string;
+  size: number;
+  /** Nœud à ouvrir dans la treemap ; null pour le profil d'un autre compte (jamais détaillé). */
+  node: NodeId | null;
+}
+
+export interface DepthItem {
+  id: DepthItemId;
+  size: number;
+  files: number;
+  entries: DepthEntry[];
+  link: DepthLink | null;
+}
+
+/** Analyse en profondeur d'un volume, en lecture seule. */
+export interface DepthReport {
+  scanId: number;
+  volume: string;
+  /** walk : parcours sans droits (partiel) ; mft : lecture complète (assistant élevé). */
+  method: "walk" | "mft";
+  /** Espace occupé du volume (null : inconnu). */
+  used: number | null;
+  measured: number;
+  /** Dossiers refusés pendant le parcours. */
+  accessDenied: number;
+  items: DepthItem[];
+  finishedAt: number;
 }
 
 /** Ce que l'interface demande à safety : jamais un chemin, seulement des identifiants. */

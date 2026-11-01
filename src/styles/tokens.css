@@ -41,6 +41,11 @@
   --st-review-dot: #D98A1C;
   --st-keep: #EEECE9;
   --st-keep-dot: #A8A29E;
+  /* « Protégé » (écran Profondeur, jalon 12) : zone de la denylist, jamais touchée. Fond neutre
+     plus soutenu que « À garder », bord plein, jamais de hachures. */
+  --st-protected: #E3DED8;
+  --st-protected-dot: #78716C;
+  --protected-border: #A8A29E;
 
   /* Gains affichés sur les tuiles et barres de proportion (maquette) */
   --delta-safe: #166534;
@@ -178,6 +183,9 @@
   --st-review-dot: #F0A33A;
   --st-keep: #22211F;
   --st-keep-dot: #78716C;
+  --st-protected: #2C2A27;
+  --st-protected-dot: #A8A29E;
+  --protected-border: #57534E;
 
   --delta-safe: #6FCF9E;
   --delta-review: #F0B45A;

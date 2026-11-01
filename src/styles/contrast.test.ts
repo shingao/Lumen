@@ -19,7 +19,7 @@ const light = block(":root");
 const themes = { clair: light, sombre: new Map([...light, ...block('[data-theme="dark"]')]) };
 
 const CATS = ["--cat-media", "--cat-code", "--cat-packages", "--cat-tools", "--cat-android", "--cat-ai", "--cat-games"];
-const STATUS = ["--st-safe", "--st-review", "--st-keep"];
+const STATUS = ["--st-safe", "--st-review", "--st-keep", "--st-protected"];
 const AA = 4.5;
 
 describe.each(Object.entries(themes))("contraste AA, thème %s", (_name, tokens) => {

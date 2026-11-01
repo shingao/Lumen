@@ -17,6 +17,10 @@
   background: var(--st-keep-dot);
 }
 
+.dot[data-status="protected"] {
+  background: var(--st-protected-dot);
+}
+
 .dot[data-status="outline"] {
   border: 1px solid var(--text-faint);
 }

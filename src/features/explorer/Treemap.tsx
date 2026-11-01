@@ -11,7 +11,7 @@ import { squarify } from "../../core/treemap/squarify";
 import { type Translator, useT } from "../../i18n";
 import type { NodeId, Status, TreeNode } from "../../ipc/types";
 import pop from "../../components/Popover.module.css";
-import { tileFill } from "./tileFill";
+import { depthFill, tileFill } from "./tileFill";
 import styles from "./Treemap.module.css";
 
 const GAP = 3;
@@ -28,6 +28,10 @@ interface Props {
   highlightStatus?: Status | null;
   onCopyPath(node: TreeNode): void;
   onUnavailable(milestone: number): void;
+  /** `depth` : écran Profondeur, en lecture seule (statut « Protégé », ni gains, ni hachures, ni
+   * sélection) ; le zoom passe par `onZoom` au lieu de la navigation de l'Explorer. */
+  variant?: "analysis" | "depth";
+  onZoom?(id: NodeId): void;
 }
 
 const area = (n: TreeNode) => n.layoutSize ?? n.size;
@@ -94,7 +98,8 @@ function indexOf(root: TreeNode): Map<NodeId, { node: TreeNode; parent: NodeId |
   return map;
 }
 
-export function Treemap({ root, highlight, highlightStatus = null, onCopyPath, onUnavailable }: Props) {
+export function Treemap({ root, highlight, highlightStatus = null, onCopyPath, onUnavailable, variant = "analysis", onZoom }: Props) {
+  const depth = variant === "depth";
   const t = useT();
   const mode = useStore((s) => s.colorMode);
   const setOpenReco = useStore((s) => s.setOpenReco);
@@ -113,12 +118,13 @@ export function Treemap({ root, highlight, highlightStatus = null, onCopyPath, o
     [root, size.width, size.height],
   );
 
+  const zoom = useCallback((id: NodeId) => (onZoom ? onZoom(id) : goTo(id)), [onZoom]);
   const activate = useCallback(
     (node: TreeNode) => {
-      if (node.hasChildren) goTo(node.id);
-      else if (node.reco) setOpenReco(node.reco);
+      if (node.hasChildren) zoom(node.id);
+      else if (node.reco && !depth) setOpenReco(node.reco);
     },
-    [setOpenReco],
+    [setOpenReco, zoom, depth],
   );
 
   const openMenu = (node: TreeNode, x: number, y: number) => {
@@ -127,6 +133,7 @@ export function Treemap({ root, highlight, highlightStatus = null, onCopyPath, o
   };
 
   const menuItems = (node: TreeNode): MenuItem[] => {
+    if (depth) return [{ label: t("menu.copyPath"), onSelect: () => onCopyPath(node) }];
     const milestone = (n: number) => t("screen.milestone", { n });
     const reco = node.reco;
     return [
@@ -171,8 +178,10 @@ export function Treemap({ root, highlight, highlightStatus = null, onCopyPath, o
             highlight={keep}
             now={now}
             mode={mode}
+            depth={depth}
             t={t}
             onActivate={activate}
+            onZoom={zoom}
             onMenu={openMenu}
           />
         ))}
@@ -186,7 +195,7 @@ export function Treemap({ root, highlight, highlightStatus = null, onCopyPath, o
       )}
 
       {hover && hovered && !menu && !hover.expand && (
-        <TileTooltip node={hovered} x={hover.x} y={hover.y} width={size.width} height={size.height} now={now} t={t} />
+        <TileTooltip node={hovered} x={hover.x} y={hover.y} width={size.width} height={size.height} now={now} depth={depth} t={t} />
       )}
 
       {menu && (
@@ -211,13 +220,16 @@ interface TileProps {
   highlight: Keep | null;
   now: number;
   mode: ReturnType<typeof useStore.getState>["colorMode"];
+  /** Écran Profondeur (lecture seule). */
+  depth: boolean;
   t: Translator;
   onActivate(node: TreeNode): void;
+  onZoom(id: NodeId): void;
   onMenu(node: TreeNode, x: number, y: number): void;
 }
 
 /** « Étendre » : zoom direct sur ce dossier (au survol ; au clavier, Entrée sur la tuile). */
-function Expand({ node }: { node: TreeNode }) {
+function Expand({ node, onZoom }: { node: TreeNode; onZoom(id: NodeId): void }) {
   if (!node.hasChildren || node.othersCount !== null) return null;
   return (
     <span
@@ -226,7 +238,7 @@ function Expand({ node }: { node: TreeNode }) {
       data-expand={node.id}
       onClick={(e) => {
         e.stopPropagation();
-        goTo(node.id);
+        onZoom(node.id);
       }}
     >
       <ExpandIcon />
@@ -234,9 +246,9 @@ function Expand({ node }: { node: TreeNode }) {
   );
 }
 
-function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, onActivate, onMenu }: TileProps) {
-  const fill = tileFill(node, mode, now);
-  const delta = deltaText(node, t);
+function Tile({ node, style, width, height, hoverId, highlight, now, mode, depth, t, onActivate, onZoom, onMenu }: TileProps) {
+  const fill = depth ? depthFill(node) : tileFill(node, mode, now);
+  const delta = depth ? null : deltaText(node, t);
   const small = width < 96 || height < 64;
   const size = formatBytes(node.size, t.locale);
   // Hauteurs sur une ligne (en-tête, taille) : la taille en bas n'est jamais rognée.
@@ -250,10 +262,11 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
       data-hatch={fill.hatch || undefined}
       data-cover={fill.cover ?? undefined}
       data-opaque={node.opaque !== null || undefined}
+      data-protected={(depth && node.protected) || undefined}
       data-deep={fill.deep || undefined}
       data-hover={hoverId === node.id || undefined}
       data-dim={isDimmed(node, null, highlight) || undefined}
-      data-clickable={node.hasChildren || node.reco !== null || undefined}
+      data-clickable={node.hasChildren || (!depth && node.reco !== null) || undefined}
       style={{ ...style, ...fillStyle(fill) } as CSSProperties}
       tabIndex={0}
       role="button"
@@ -275,7 +288,7 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
         onMenu(node, e.clientX, e.clientY);
       }}
     >
-      {width >= 40 && height >= 30 && <Expand node={node} />}
+      {width >= 40 && height >= 30 && <Expand node={node} onZoom={onZoom} />}
       {showHead && (
         <div className={styles.head}>
           <span className={styles.name}>{label(node, t)}</span>
@@ -287,7 +300,19 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, t, on
         </div>
       )}
       {node.children.length > 0 && height >= 72 && width >= 48 && (
-        <Children node={node} level={1} hoverId={hoverId} highlight={highlight} now={now} mode={mode} t={t} onActivate={onActivate} onMenu={onMenu} />
+        <Children
+          node={node}
+          level={1}
+          hoverId={hoverId}
+          highlight={highlight}
+          now={now}
+          mode={mode}
+          depth={depth}
+          t={t}
+          onActivate={onActivate}
+          onZoom={onZoom}
+          onMenu={onMenu}
+        />
       )}
       {node.opaque && width >= 140 && height >= 96 && <span className={styles.opaqueNote}>{node.opaque.explanation}</span>}
       {showFoot && <span className={styles.foot}>{node.opaque ? opaqueMeta(node, t) : size}</span>}
@@ -300,7 +325,7 @@ type ChildrenProps = Omit<TileProps, "style" | "width" | "height"> & {
   level: number;
 };
 
-function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, onMenu }: ChildrenProps) {
+function Children({ node, level, hoverId, highlight, now, mode, depth, t, onActivate, onZoom, onMenu }: ChildrenProps) {
   const [ref, size] = useSize<HTMLDivElement>();
   const placed = useMemo(
     () => squarify(childItems(node), area, { x: 0, y: 0, w: size.width, h: size.height }, GAP),
@@ -310,8 +335,8 @@ function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, o
     <div ref={ref} className={styles.children}>
       {placed.map(({ item, rect }) => {
         if (item.id === PHANTOM) return null;
-        const fill = tileFill(item, mode, now);
-        const delta = deltaText(item, t);
+        const fill = depth ? depthFill(item) : tileFill(item, mode, now);
+        const delta = depth ? null : deltaText(item, t);
         const showLabel = rect.w >= 34 && rect.h >= 18;
         // Profondeur adaptative : une sous-tuile assez grande montre ses propres enfants.
         const group = nests(item.children.length, level + 1, rect.w, rect.h);
@@ -326,12 +351,13 @@ function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, o
             data-hatch={fill.hatch || undefined}
             data-cover={fill.cover ?? undefined}
             data-opaque={item.opaque !== null || undefined}
+            data-protected={(depth && item.protected) || undefined}
             data-deep={fill.deep || undefined}
             data-hover={hoverId === item.id || undefined}
             data-dim={isDimmed(item, node, highlight) || undefined}
             style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, ...fillStyle(fill) } as CSSProperties}
             onClick={(e) => {
-              if (!item.hasChildren && !item.reco) return;
+              if (!item.hasChildren && (depth || !item.reco)) return;
               e.stopPropagation();
               onActivate(item);
             }}
@@ -341,7 +367,7 @@ function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, o
               onMenu(item, e.clientX, e.clientY);
             }}
           >
-            {rect.w >= 40 && rect.h >= 24 && <Expand node={item} />}
+            {rect.w >= 40 && rect.h >= 24 && <Expand node={item} onZoom={onZoom} />}
             {showLabel && (
               <div className={styles.childHead}>
                 <span className={styles.childName}>{label(item, t)}</span>
@@ -363,8 +389,10 @@ function Children({ node, level, hoverId, highlight, now, mode, t, onActivate, o
                 highlight={highlight}
                 now={now}
                 mode={mode}
+                depth={depth}
                 t={t}
                 onActivate={onActivate}
+                onZoom={onZoom}
                 onMenu={onMenu}
               />
             )}
@@ -382,11 +410,12 @@ interface TooltipProps {
   width: number;
   height: number;
   now: number;
+  depth: boolean;
   t: Translator;
 }
 
 /** Infobulle de la maquette : chemin complet, taille, fichiers, dernière ouverture, statut. */
-function TileTooltip({ node, x, y, width, height, now, t }: TooltipProps) {
+function TileTooltip({ node, x, y, width, height, now, depth, t }: TooltipProps) {
   let left = x + 16;
   if (left + TOOLTIP_W + 4 > width) left = Math.max(0, x - TOOLTIP_W - 16);
   let top = y + 16;
@@ -414,10 +443,17 @@ function TileTooltip({ node, x, y, width, height, now, t }: TooltipProps) {
         </div>
         <div className={styles.tipCell}>
           <span className={styles.tipLabel}>{t("tooltip.status")}</span>
-          <span className={styles.tipStatus}>
-            <StatusDot status={node.status} />
-            {t(`status.${node.status}`)}
-          </span>
+          {depth ? (
+            <span className={styles.tipStatus}>
+              <StatusDot status={node.protected ? "protected" : "outline"} />
+              {t(node.protected ? "depth.protected" : "depth.readable")}
+            </span>
+          ) : (
+            <span className={styles.tipStatus}>
+              <StatusDot status={node.status} />
+              {t(`status.${node.status}`)}
+            </span>
+          )}
         </div>
       </div>
     </div>
