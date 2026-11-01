@@ -15,6 +15,80 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 9 | Persistance des analyses, recherche instantanée, déplacement intelligent, export de rapport | **fait — validé** pour la persistance, la recherche et l'export (testés sur PC, anonymisation vérifiée ; PR #7) ; déplacement intelligent **non vérifié en réel** (VM avec un second disque) et **désactivé par défaut** (réglage Expérimental) |
 | 10 | Onboarding et astuces contextuelles | **fait — validé** (testé sur PC : tutoriel, analyse en fond, Passer / Échap / flèches, astuces une seule fois, relance depuis les Paramètres ; tutoriel à la place de l'écran validé ; PR #8) |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | **fait — en attente de validation** ; builds en **0.9.x** jusqu'aux tests de la checklist de release |
+| 12 | Retours d'usage : tuiles couvertes lisibles, contenu opaque des caches, Riot (PBE, TFT), « ? » des statuts, analyse en profondeur, périphériques | **fait — en attente de validation** (PR empilée sur celle du jalon 11) |
+
+---
+
+## Jalon 12 — retours d'usage
+
+Branche `claude/jalon-12-usage`, partie de `claude/jalon-11-windows` (PR #9 pas encore mergée) : la PR vise `main` et contient donc aussi les commits du jalon 11 tant que la PR #9 n'est pas mergée ; une fois celle-ci mergée, seuls les 5 commits `milestone 12 (k/5)` restent.
+
+### Livré
+
+**1. Zones couvertes par une règle lisibles** (`rules/`, `analysis.rs`, `scanning.rs`, `Treemap`) — captures `69-hachures-{avant,apres}-gradle[-sombre]`
+- **Hachures au seul nœud le plus haut couvert par la règle** (`cover_depth` = 0). Ses descendants : **fond uni de la couleur de statut, un pas plus clair par niveau** (`color-mix` vers le fond du conteneur, `--cover-step` 9 %, 4 niveaux au plus) et **bordure de 1 px** (`--cover-border-safe` / `--cover-border-review`, ≥ 3:1 sur le fond et sur le conteneur dans les deux thèmes, vérifié par `contrast.test.ts`). L'espacement de 3 px entre tuiles est gardé à tous les niveaux.
+- **Contenu interne d'un cache** (dossiers nommés par empreinte : pip `http-v2`, npm `_cacache`, pnpm, uv, D3DSCache…) : la règle le déclare elle-même (`opaque = { fr, en }` dans `rules.toml`, schéma strict, 60 caractères). On ne descend jamais dedans : **une tuile unique « Contenu interne du cache pip · 12 340 fichiers · 7,2 Go »** avec l'explication de la règle, et **un clic ouvre le panneau de détail de la recommandation** au lieu de zoomer ; un zoom demandé à l'intérieur (historique, recherche) s'ouvre sur le dossier qui le contient. Captures `70-cache-opaque-{avant-npm,apres}`.
+
+**2. Jeux Riot** (`launchers/src/riot.rs`, `games/`)
+- `product_install_full_path` lu dans chaque `ProgramData\Riot Games\Metadata\<produit>.<branche>\*.product_settings.yaml` : `league_of_legends.live`, `league_of_legends.pbe`, `valorant.live`, `bacon.live`… **Le PBE est un jeu à part entière** (sa carte, « League of Legends PBE »).
+- **Teamfight Tactics** : jamais un second jeu (ni par Metadata ni par le repli Uninstall), affiché comme **mode rattaché à la carte LoL** (« inclut Teamfight Tactics »), taille comptée une fois.
+- **Taille** : prise dans une analyse gardée qui couvre le dossier, sinon **mesurée directement** (parcours rapide de ce seul dossier, lecture seule, en cache 1 h), au lieu de « taille inconnue ».
+- **Dernière partie** : Riot ne la fournit pas ; **estimée** par la date de modification la plus récente dans `Logs\GameLogs` (et un niveau dessous, 4 000 entrées au plus), affichée « estimée » ; sinon « inconnue ».
+- Fixtures : LoL live + PBE, et un YAML sans chemin (ignoré et compté).
+
+**3. « ? » des statuts** (`features/status/StatusHelp.tsx`) — captures `71-statut-*`
+- Sur les KPI « Sans risque » et « À vérifier » et sur les en-têtes de groupe des Recommandations. Un clic met en évidence dans la treemap **toutes les tuiles de ce statut** (le reste estompé, comme au survol d'une recommandation) et ouvre une **bulle d'une phrase**. Un second clic, Échap ou un clic ailleurs l'arrête ; elle **reste active pendant le zoom et la navigation ← →**.
+
+**4. Analyse en profondeur** (`src-tauri/src/depth.rs`, `src/app/depth.ts`, `features/depth/`) — captures `72-profondeur*`, `73-kpi-profondeur`
+- **Bouton « Analyser en profondeur »** dans le KPI « Non analysé » ; une fois faite, le KPI devient **« Analysé en profondeur il y a X »** (« Voir le détail »). Nouvel onglet **« Profondeur »** après « Journal ».
+- C'est **l'analyse du volume système entier**, en **lecture seule** : parcours sans droits (la part illisible est dite clairement : « parcours sans droits : partiel · 214 dossiers illisibles », et comptée dans « Inaccessible »), ou **mode rapide (admin)** par l'assistant MFT si l'utilisateur l'accepte. Une analyse du volume déjà gardée (cette session ou enregistrée) est reprise sans réanalyser ; une nouvelle remplace celle de l'Explorer si celui-ci affichait ce volume.
+- **Postes** (classés par taille, part du volume occupé) : **Windows** (WinSxS, System32 hors pilotes, pilotes `DriverStore`, reste ; liens physiques comptés une fois par l'analyse), **Applications** (Program Files et Program Files (x86), par taille, lien **« Désinstaller via Paramètres Windows »** = `ms-settings:appsfeatures` ouvert par `safety::win::open_launcher`, liste fermée, jamais nous-mêmes), **ProgramData**, **Fichiers système** (pagefile, hiberfil, swapfile), **Points de restauration** (System Volume Information ; **« Lire l'espace des clichés (admin) »** : `Win32_ShadowStorage`, la source de `vssadmin list shadowstorage`, ajoutée à la lecture élevée existante des points de restauration), **Autres comptes** (taille totale seulement : jamais un nœud à ouvrir, la treemap ne descend jamais dans leur profil, test), **Microsoft Store et Xbox** (WindowsApps, XboxGames), **Jeux et applis à la racine** (C:\Riot Games, bibliothèques Steam…), **Ton dossier**, **Autres** (Corbeille, fichiers à la racine), **Inaccessible** = occupé − mesuré.
+- **Renvois vers les modules existants** : Windows, fichiers système, points de restauration → Gouffres système (onglet ouvert directement) ; Store / Xbox et racine → Jeux ; ProgramData avec Docker → Dev ; ton dossier → Analyse. **Aucune nouvelle action de suppression sur cet écran.**
+- **Treemap du volume entier** dans la même DA, **zones de la denylist en statut « Protégé »** (`--st-protected`, bord plein, **sans hachures**), le reste par catégorie ; **aucune case à cocher**, menu réduit à « Copier le chemin ».
+
+**5. Périphériques** (`src-tauri/src/devices.rs`, `scan::win::bus_type`, `src/app/volumes.ts`, `features/explorer/DeviceChips.tsx`) — captures `74-peripheriques*`, `75-lecteur-reseau`
+- **Le menu déroulant C: est remplacé par une rangée de puces** : « Dossier utilisateur », puis une par volume (lettre, nom, **type : interne, USB, carte SD, réseau**, mini-jauge de l'espace utilisé, « analysé il y a X » ou espace libre). Le fil d'Ariane commence par la lettre (clic : racine).
+- **Type par le bus** (`IOCTL_STORAGE_QUERY_PROPERTY` sur le volume ouvert sans droit d'accès) : un disque USB qui se déclare « fixe » reste USB ; la lecture de la MFT n'est proposée que sur un disque interne.
+- **Détection à chaud** : le masque des lettres (`GetLogicalDrives`) est relu toutes les 1,5 s (appel immédiat, qui ne touche aucun lecteur) ; à un changement, la liste complète est relue et envoyée (`volumes:changed`), avec un toast « E: KINGSTON branché / débranché ». **Équivalent de `WM_DEVICECHANGE`** sans fenêtre de messages.
+- **Un clic sur une puce** affiche tout de suite la dernière analyse gardée du volume (« analysé il y a X »), sinon l'analyse.
+- **USB, carte SD (et réseau)** : bandeau **« Pas de Corbeille sur ce support : Lumen ne propose aucun nettoyage ici »**, analyse et export seulement : ni case, ni « Nettoyer », ni script ; Nettoyage avancé indisponible ; et **côté Rust, tout plan de nettoyage est refusé** sur un volume qui n'est pas interne (`devices::ensure_cleanable`, en plus de `safety::bin` qui refuse déjà la Corbeille hors disque fixe).
+- **Lecteurs réseau** : listés, analysés **uniquement sur clic confirmé**, avec l'avertissement de lenteur.
+- **Débranchement pendant une analyse** : la détection pose le drapeau d'annulation de l'analyse en cours si son volume a disparu ; elle s'arrête proprement, **sans résultat partiel**, avec « le support E: a été débranché pendant l'analyse : rien n'a été modifié ». Une clé branchée ou retirée pendant l'analyse d'un autre volume ne la dérange pas.
+- **La Timeline reste séparée par volume** (clé GUID, inchangé) : une clé rebranchée sous une autre lettre retrouve sa série.
+- **Téléphones en MTP non pris en charge** : sans lettre de lecteur, ils ne sont pas un système de fichiers que Windows expose aux API de fichiers (Shell / WPD seulement) ; ils n'apparaissent pas dans les puces. Pour les analyser : copier les fichiers sur le PC, ou utiliser un téléphone qui monte une carte SD en lecteur.
+- Tests : volume qui apparaît ou disparaît pendant une analyse, débranchement en cours d'analyse (drapeau posé, message, lectures en échec comptées sans plantage avec une source qui disparaît, annulation sans résultat partiel), garde des plans, type par le bus ; front : puces, branchement à chaud, analyse de la clé avec bandeau et sans nettoyage, débranchement pendant l'analyse, réseau sur confirmation, analyse en cache.
+
+### Décisions
+
+- **Hachures au plus haut, niveaux en `color-mix`** plutôt qu'un voile empilé : le bord reste net à tout niveau et le contraste se vérifie par calcul (texte AA, bord ≥ 3:1).
+- **« Opaque » déclaré par la règle**, pas deviné par le nom des dossiers : seules les règles npm, pnpm, pip, uv et caches de shaders l'ont ; le regroupement synthétique a un identifiant négatif propre (jamais un nœud de l'analyse) et garde sa recommandation.
+- **TFT exclu par son produit (`tft`, `teamfight_tactics`) et par son nom dans le repli Uninstall** ; le mode est affiché sur la carte LoL même sans ce fichier (TFT est toujours inclus dans le client LoL).
+- **Taille mesurée d'un jeu hors analyse** : parcours du seul dossier du jeu (même parcours que l'analyse, métadonnées seulement), en cache 1 h dans `GamesState`.
+- **Analyse en profondeur = analyse du volume** (même cible que « C: » dans l'Explorer) plutôt qu'une cible à part : elle profite du cache, de l'enregistrement et de la Timeline, et un retour sur C: dans l'Explorer est instantané. Elle a son propre état côté interface (elle ne change pas l'analyse affichée, sauf si c'est ce même volume).
+- **Répartition de Windows** : WinSxS, System32 (sans `DriverStore`), pilotes, reste. Le total est exact (liens physiques comptés une fois) ; la part de WinSxS dépend du nom rencontré en premier pour un fichier présent dans les deux (Windows en fait autant dans l'Explorateur).
+- **Clichés instantanés lus en CIM** (`Win32_ShadowStorage` : utilisé, alloué, maximum) plutôt qu'en analysant la sortie de `vssadmin`, traduite selon la langue de Windows : même source, une seule demande UAC (la lecture élevée des points de restauration existante), lecture seule.
+- **Profils des autres comptes** : taille totale seulement, même dans la treemap (le nœud est refermé et une demande de zoom à l'intérieur ouvre `Users`).
+- **Détection à chaud par sondage du masque des lettres** plutôt que `WM_DEVICECHANGE` : pas de fenêtre de messages ni de crochet dans la boucle de Tauri, même résultat pour les lettres (branchement, débranchement, lecteur réseau connecté) en 1,5 s au plus, et le code reste dans `devices.rs` testable hors Windows.
+- **« Pas de nettoyage » sur USB / SD / réseau**, même pour un disque USB qui se déclare fixe (où Windows a une Corbeille) : règle simple et prudente, cohérente avec `safety` ; un disque interne seulement.
+- **Puce « Dossier utilisateur » en tête** : elle remplace l'entrée correspondante de l'ancien menu (cible par défaut, avec les recommandations).
+
+### Écarts avec la maquette
+
+- La maquette n'a ni écran Profondeur ni rangée de puces : l'écran Profondeur reprend le conteneur des écrans (titre, phrase grise), les cartes de poste reprennent les cartes des recommandations (bord fin, chiffres en mono, mini-barre de part) et la treemap est celle de l'Explorer ; les puces reprennent le style de la barre du fil d'Ariane (fond de l'appli, bord fin, mono) et la puce active le bord foncé du survol des tuiles.
+- Nouveau statut **« Protégé »** (`--st-protected`, neutre plus soutenu que « À garder », bord plein) : jamais de hachures, réservées au « sans risque ».
+
+### Test manuel (jalon 12) — sur ton PC (1 à 8), clé USB et lecteur réseau pour 9 et 10
+
+1. Analyse ton dossier, zoome dans `AppData\Local\pip\cache` (ou `.gradle`) : seule la tuile du haut est hachurée, ses sous-tuiles ont un fond uni de plus en plus clair et un bord net, 3 px entre chaque. Thème sombre : idem.
+2. Dans le cache pip / npm, une seule tuile « Contenu interne du cache … · N fichiers · X Go » ; un clic ouvre le panneau de la recommandation, pas un zoom.
+3. Jeux : League of Legends et League of Legends PBE en deux cartes, « inclut Teamfight Tactics » sur LoL, aucune carte TFT ; une taille partout (même hors analyse) ; dernière partie « estimée » ou « inconnue ».
+4. « ? » du KPI Sans risque : tuiles mises en évidence et bulle ; zoome et fais ← → : la mise en évidence reste ; Échap l'arrête. Idem sur l'en-tête « À vérifier » des Recommandations.
+5. KPI « Non analysé » › **Analyser en profondeur** : l'onglet Profondeur s'ouvre et l'analyse de C: tourne ; à la fin, les postes (Windows, Applications, Fichiers système, Points de restauration, Autres comptes…) et « parcours sans droits : partiel » avec le nombre de dossiers illisibles.
+6. Applications › **Désinstaller via Paramètres Windows** ouvre « Applications installées » ; Windows › **Gouffres système** ouvre l'onglet ; Jeux / Dev renvoient vers leurs écrans. Points de restauration › **Lire l'espace des clichés (admin)** : une demande UAC, puis « X utilisés · Y au plus ».
+7. Treemap du volume : zones Windows, Program Files, ProgramData… en « Protégé » (bord plein, pas de hachures), aucun moyen de cocher ; un autre compte ne s'ouvre pas. **Mode rapide (admin)** : plus rapide, « lecture complète (MFT) ». Retour sur l'Analyse : « Analysé en profondeur il y a X ».
+8. Puces de l'Explorer : une par disque avec type et jauge ; un clic sur D: l'analyse, retour sur « Dossier utilisateur » puis D: : affichage immédiat « analysé il y a X ».
+9. **Branche une clé USB** : une puce « USB » apparaît sans redémarrer (toast). Clic : analyse, bandeau « Pas de Corbeille sur ce support… », aucune case ni « Nettoyer », « Exporter » possible. Relance l'analyse et **retire la clé pendant l'analyse** : arrêt propre, message « débranché », pas de plantage ; la puce disparaît. Rebranche-la sous une autre lettre : la Timeline retrouve sa série.
+10. Avec un lecteur réseau connecté : sa puce « réseau » demande confirmation (avertissement de lenteur) avant toute analyse ; bandeau sans nettoyage après l'analyse.
 
 ---
 
@@ -95,6 +169,8 @@ Tout ce qui est marqué **« non vérifié en réel »**, avec son environnement
 | 9 | Zone de notification, fermeture qui cache, Quitter, démarrage avec Windows (11) | **VM** (redémarrages) | infobulle juste, snapshot quotidien en fond, aucune fenêtre au démarrage avec l'icône |
 | 10 | Notifications d'espace libre et clic (11) | **VM** (petit disque virtuel presque plein) | une seule par jour et par disque, le clic ouvre l'Analyse de ce disque |
 | 11 | Signature Authenticode (11) | **CI + Windows Sandbox** | installeur, désinstalleur et `lumen.exe` signés ; SmartScreen sans « Éditeur inconnu » |
+| 12 | Type de bus (USB, carte SD), détection à chaud, débranchement pendant une analyse (12) | **PC ou VM avec passage USB** | clé et carte SD reconnues, disque USB « fixe » vu comme USB, puce qui apparaît et disparaît, arrêt propre au retrait |
+| 13 | Analyse en profondeur en mode rapide et espace des clichés (12) | **VM** (points de restauration présents) | MFT par l'assistant élevé, `Win32_ShadowStorage` égal à `vssadmin list shadowstorage` |
 
 Déjà vérifiés en CI Windows à chaque push (pas besoin de VM pour ceux-là) : suppression réelle sur faux profil (e2e), déplacement C: → D: sur disques virtuels, installation / instance unique / mise à jour / désinstallation silencieuses (`installer-test.ps1` : dont un autre compte simulé — ruches chargées nettoyées, liste de jonctions piégée de son profil lue telle quelle et jamais exécutée — et des entrées orphelines qui ne lancent rien).
 

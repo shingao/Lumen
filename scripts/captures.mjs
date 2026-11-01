@@ -40,7 +40,7 @@ async function shot(name, { theme = "light", locale = "fr-FR", width = 1440, hei
 }
 
 const hoverNpm = async (page) => {
-  const tile = page.locator("[data-node]", { hasText: "npm-cache" }).first();
+  const tile = page.locator("[data-node][data-opaque]").first();
   const box = await tile.boundingBox();
   if (box) await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.4);
 };
@@ -324,7 +324,7 @@ await shot("44-jeux-anglais", { locale: "en-US", act: async (p) => {
 await shot("45-jeux-launchers-1920", { width: 1920, height: 1080, act: async (p) => {
   await nav(p, "Jeux");
   await p.getByRole("list", { name: "Jeux installés" }).waitFor();
-  await p.getByRole("listitem", { name: "League of Legends" }).getByRole("button", { name: "Déplacer" }).hover();
+  await p.getByRole("listitem", { name: "League of Legends", exact: true }).getByRole("button", { name: "Déplacer" }).hover();
 } });
 await shot("46-parametres-memoire", { act: async (p) => {
   await p.locator("[data-level='3']").first().waitFor();
