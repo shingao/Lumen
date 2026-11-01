@@ -275,6 +275,7 @@ export function createMockBackend(now: () => number = Date.now): Backend {
         free: gb(v.free),
         cleanable: v.kind === "fixed",
         analyzedAt: done.length > 0 ? Math.max(...done) : null,
+        ready: true,
       };
     });
   const volumesChanged = () => volumeListeners.forEach((fn) => fn(volumeList()));
@@ -383,6 +384,10 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     volumes() {
+      return resolved<Volume[]>(volumeList());
+    },
+
+    refreshVolumes() {
       return resolved<Volume[]>(volumeList());
     },
 

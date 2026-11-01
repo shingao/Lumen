@@ -58,6 +58,8 @@ export interface Backend {
   setLocale(locale: Locale): void;
   appInfo(): Promise<AppInfo>;
   volumes(): Promise<Volume[]>;
+  /** Espace relu des disques internes (infobulle, alertes) ; jamais un réseau ni un amovible. */
+  refreshVolumes(): Promise<Volume[]>;
   /** Branchement ou débranchement d'un support : nouvelle liste, sans redémarrer. */
   onVolumesChanged(listener: (volumes: Volume[]) => void): () => void;
   /** Lance une analyse ; le résultat arrive par `onScanEvent`. */

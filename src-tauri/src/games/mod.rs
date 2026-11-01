@@ -251,7 +251,7 @@ mod platform {
         let vars = safety::win::rule_variables();
         let var = |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, p)| PathBuf::from(p.display_string()));
         let program_data = var("PROGRAMDATA").unwrap_or_else(|| PathBuf::from("C:\\ProgramData"));
-        let drives = scan::win::volumes().iter().filter(|v| v.kind == scan::win::VolumeKind::Fixed).map(|v| PathBuf::from(format!("{}:\\", v.letter))).collect();
+        let drives = scan::win::fixed_letters().into_iter().map(|l| PathBuf::from(format!("{l}:\\"))).collect();
         let env = launchers::Env { program_data, profile: var("USERPROFILE"), local_app_data: var("LOCALAPPDATA"), app_data: var("APPDATA"), drives };
         (env, var("DOCUMENTS"))
     }

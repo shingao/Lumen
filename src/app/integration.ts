@@ -77,9 +77,12 @@ export async function checkLowSpace(volumes: readonly Volume[], now = Date.now()
   return sent.length;
 }
 
-/** Espace libre relu : infobulle de l'icône, puis alertes. */
+/** Espace libre relu : infobulle de l'icône, puis alertes. L'espace des disques internes n'est
+ * relu que si l'icône ou les alertes sont activées (sinon, la liste en cache suffit). */
 export async function tick(now = Date.now()): Promise<void> {
-  const volumes = await backend.volumes().catch(() => []);
+  const s = useStore.getState().settings;
+  const refresh = (s?.trayIcon ?? false) || (s?.lowSpaceAlert ?? false);
+  const volumes = await (refresh ? backend.refreshVolumes() : backend.volumes()).catch(() => []);
   await applyIntegration(volumes);
   await checkLowSpace(volumes, now);
 }

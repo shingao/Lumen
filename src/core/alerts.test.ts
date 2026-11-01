@@ -9,6 +9,7 @@ const vol = (letter: string, free: number, total: number, kind: Volume["kind"] =
   label: "",
   cleanable: kind === "fixed",
   analyzedAt: null,
+  ready: true,
   kind,
   fileSystem: "NTFS",
   mftCapable: true,

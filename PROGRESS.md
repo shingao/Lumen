@@ -14,14 +14,14 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 8 | Dev et Jeux | **fait — validé en lecture seule** (jeux et projets détectés sur PC ; PR #6) ; purge des artefacts, shaders, Docker **non vérifiés en réel** (Sandbox), compactage WSL **non vérifié en réel** (VM) et désactivé par défaut |
 | 9 | Persistance des analyses, recherche instantanée, déplacement intelligent, export de rapport | **fait — validé** pour la persistance, la recherche et l'export (testés sur PC, anonymisation vérifiée ; PR #7) ; déplacement intelligent **non vérifié en réel** (VM avec un second disque) et **désactivé par défaut** (réglage Expérimental) |
 | 10 | Onboarding et astuces contextuelles | **fait — validé** (testé sur PC : tutoriel, analyse en fond, Passer / Échap / flèches, astuces une seule fois, relance depuis les Paramètres ; tutoriel à la place de l'écran validé ; PR #8) |
-| 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | **fait — en attente de validation** ; builds en **0.9.x** jusqu'aux tests de la checklist de release |
-| 12 | Retours d'usage : tuiles couvertes lisibles, contenu opaque des caches, Riot (PBE, TFT), « ? » des statuts, analyse en profondeur, périphériques | **fait — en attente de validation** (PR empilée sur celle du jalon 11) |
+| 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | **fait — validé** (tests Sandbox et VM, PR #9 mergée) ; builds en **0.9.x** jusqu'aux tests de la checklist de release |
+| 12 | Retours d'usage : tuiles couvertes lisibles, contenu opaque des caches, Riot (PBE, TFT), « ? » des statuts, analyse en profondeur, périphériques | **fait — validé** (testé sur PC ; PR #10, avec le sondage des périphériques sans lecture des volumes demandé à la validation) |
 
 ---
 
 ## Jalon 12 — retours d'usage
 
-Branche `claude/jalon-12-usage`, partie de `claude/jalon-11-windows` (PR #9 pas encore mergée) : la PR vise `main` et contient donc aussi les commits du jalon 11 tant que la PR #9 n'est pas mergée ; une fois celle-ci mergée, seuls les 5 commits `milestone 12 (k/5)` restent.
+Branche `claude/jalon-12-usage` (PR #10), partie de `claude/jalon-11-windows` ; la PR #9 est mergée, il ne reste que les commits du jalon 12.
 
 ### Livré
 
@@ -49,13 +49,15 @@ Branche `claude/jalon-12-usage`, partie de `claude/jalon-11-windows` (PR #9 pas 
 **5. Périphériques** (`src-tauri/src/devices.rs`, `scan::win::bus_type`, `src/app/volumes.ts`, `features/explorer/DeviceChips.tsx`) — captures `74-peripheriques*`, `75-lecteur-reseau`
 - **Le menu déroulant C: est remplacé par une rangée de puces** : « Dossier utilisateur », puis une par volume (lettre, nom, **type : interne, USB, carte SD, réseau**, mini-jauge de l'espace utilisé, « analysé il y a X » ou espace libre). Le fil d'Ariane commence par la lettre (clic : racine).
 - **Type par le bus** (`IOCTL_STORAGE_QUERY_PROPERTY` sur le volume ouvert sans droit d'accès) : un disque USB qui se déclare « fixe » reste USB ; la lecture de la MFT n'est proposée que sur un disque interne.
-- **Détection à chaud** : le masque des lettres (`GetLogicalDrives`) est relu toutes les 1,5 s (appel immédiat, qui ne touche aucun lecteur) ; à un changement, la liste complète est relue et envoyée (`volumes:changed`), avec un toast « E: KINGSTON branché / débranché ». **Équivalent de `WM_DEVICECHANGE`** sans fenêtre de messages.
+- **Détection à chaud** (équivalent de `WM_DEVICECHANGE`, sans fenêtre de messages), toast « E: KINGSTON branché / débranché ».
+- **Sondage sans lecture des volumes** (condition posée à la validation) : toutes les 1,5 s, **seulement `GetLogicalDrives`** (masque des lettres), et **`GetDriveType` pour une lettre qui vient d'apparaître**. Le nom (`GetVolumeInformation`), l'espace et le bus **ne sont lus qu'à l'apparition d'une lettre** (dans un fil à part : la boucle continue même si la lecture traîne) **ou sur demande** : analyse de ce volume (relu à la fin de l'analyse), ouverture du déplacement intelligent, et infobulle / alertes **si l'icône ou les alertes sont activées** (espace des disques internes seulement, toutes les 10 min). **Jamais en boucle.** Un **lecteur réseau n'est jamais touché par le sondage** : sa puce affiche « espace non lu » jusqu'à ce que tu l'analyses (sur clic confirmé). Toutes les commandes (liste des volumes, validation d'une analyse, garde des nettoyages, Timeline, profondeur, menu contextuel) **servent un cache** (`devices::DEVICES`) sans toucher aux lecteurs, et le verrou n'est jamais tenu pendant une lecture : une lecture lente ou bloquée ne bloque jamais l'interface. Le snapshot quotidien de la Timeline lit aussi ce cache (il ne touche plus que le volume qu'il analyse).
 - **Un clic sur une puce** affiche tout de suite la dernière analyse gardée du volume (« analysé il y a X »), sinon l'analyse.
 - **USB, carte SD (et réseau)** : bandeau **« Pas de Corbeille sur ce support : Lumen ne propose aucun nettoyage ici »**, analyse et export seulement : ni case, ni « Nettoyer », ni script ; Nettoyage avancé indisponible ; et **côté Rust, tout plan de nettoyage est refusé** sur un volume qui n'est pas interne (`devices::ensure_cleanable`, en plus de `safety::bin` qui refuse déjà la Corbeille hors disque fixe).
 - **Lecteurs réseau** : listés, analysés **uniquement sur clic confirmé**, avec l'avertissement de lenteur.
 - **Débranchement pendant une analyse** : la détection pose le drapeau d'annulation de l'analyse en cours si son volume a disparu ; elle s'arrête proprement, **sans résultat partiel**, avec « le support E: a été débranché pendant l'analyse : rien n'a été modifié ». Une clé branchée ou retirée pendant l'analyse d'un autre volume ne la dérange pas.
 - **La Timeline reste séparée par volume** (clé GUID, inchangé) : une clé rebranchée sous une autre lettre retrouve sa série.
 - **Téléphones en MTP non pris en charge** : sans lettre de lecteur, ils ne sont pas un système de fichiers que Windows expose aux API de fichiers (Shell / WPD seulement) ; ils n'apparaissent pas dans les puces. Pour les analyser : copier les fichiers sur le PC, ou utiliser un téléphone qui monte une carte SD en lecteur.
+- Tests du sondage : `sondage_masque_et_type_seulement` (100 tours sans changement : aucun appel au lecteur ; une clé : son type puis ses détails une seule fois ; réseau jamais lu sauf sur demande ; espace relu pour les disques internes seulement) et `source_bloquante_l_interface_reste_reactive` (lecture d'une clé bloquée : la liste, la garde des nettoyages et le sondage répondent tout de suite) ; front : liste des volumes qui ne répond jamais, l'Explorer reste utilisable, puces « lecture… » et « espace non lu ».
 - Tests : volume qui apparaît ou disparaît pendant une analyse, débranchement en cours d'analyse (drapeau posé, message, lectures en échec comptées sans plantage avec une source qui disparaît, annulation sans résultat partiel), garde des plans, type par le bus ; front : puces, branchement à chaud, analyse de la clé avec bandeau et sans nettoyage, débranchement pendant l'analyse, réseau sur confirmation, analyse en cache.
 
 ### Décisions
@@ -69,6 +71,8 @@ Branche `claude/jalon-12-usage`, partie de `claude/jalon-11-windows` (PR #9 pas 
 - **Clichés instantanés lus en CIM** (`Win32_ShadowStorage` : utilisé, alloué, maximum) plutôt qu'en analysant la sortie de `vssadmin`, traduite selon la langue de Windows : même source, une seule demande UAC (la lecture élevée des points de restauration existante), lecture seule.
 - **Profils des autres comptes** : taille totale seulement, même dans la treemap (le nœud est refermé et une demande de zoom à l'intérieur ouvre `Users`).
 - **Détection à chaud par sondage du masque des lettres** plutôt que `WM_DEVICECHANGE` : pas de fenêtre de messages ni de crochet dans la boucle de Tauri, même résultat pour les lettres (branchement, débranchement, lecteur réseau connecté) en 1,5 s au plus, et le code reste dans `devices.rs` testable hors Windows.
+- **Disques en veille** : le sondage ne touche aucun volume. Les seules lectures automatiques sont celles d'une lettre qui apparaît (une fois) et, si l'icône ou les alertes sont activées, l'espace des disques internes toutes les 10 min (`GetDiskFreeSpaceEx`, servi par NTFS depuis la mémoire pour un volume monté : pas d'accès au disque attendu, à vérifier en réel, ligne 14 de la checklist).
+- **Lecteur de cartes vide** (lettre présente, pas de support) : pas de puce ; une carte insérée plus tard sans changement de lettre n'est vue qu'au prochain changement de la liste ou à la relance (le sondage ne lit pas les volumes).
 - **« Pas de nettoyage » sur USB / SD / réseau**, même pour un disque USB qui se déclare fixe (où Windows a une Corbeille) : règle simple et prudente, cohérente avec `safety` ; un disque interne seulement.
 - **Puce « Dossier utilisateur » en tête** : elle remplace l'entrée correspondante de l'ancien menu (cible par défaut, avec les recommandations).
 
@@ -136,7 +140,7 @@ Branche `claude/jalon-12-usage`, partie de `claude/jalon-11-windows` (PR #9 pas 
 - **Modèle NSIS de Tauri copié** (`installer.nsi`, tauri-bundler 2.10.3, ajouts marqués « LUMEN ») : une page d'options ne peut pas s'ajouter par les seuls hooks. **À resynchroniser à chaque mise à jour de `@tauri-apps/cli`** (comparer avec `src/bundle/windows/nsis/installer.nsi` de la version de tauri-bundler utilisée). Compilé localement avec makensis 3.09 (0 avertissement).
 - **Raccourci Bureau** déplacé de la page de fin vers la page d'options ; la page de fin garde « Lancer Lumen ».
 - **Données gardées s'il reste des jonctions**, même si la case est cochée : sans le journal, un déplacement ne s'annule plus depuis Lumen.
-- **Licence de Lumen** : aucune n'est déclarée dans le dépôt ; À propos affiche « Tous droits réservés » (choix en attente : Tous droits réservés, MIT ou GPL-3.0). **À trancher avant la v1.0** (`about.licenseValue`, et un fichier `LICENSE` pour MIT ou GPL-3.0).
+- **Licence de Lumen : « Tous droits réservés »** (choix de l'utilisateur, pour l'instant) : aucun fichier `LICENSE` libre ; À propos l'affiche (`about.licenseValue`).
 - **Liste des jonctions en UTF-16 LE sans BOM** : lue par `FileReadUTF16LE` de NSIS, chemins accentués compris (`Déplacés`).
 
 ### Menu contextuel moderne de Windows 11 (documenté, non implémenté)
@@ -171,6 +175,7 @@ Tout ce qui est marqué **« non vérifié en réel »**, avec son environnement
 | 11 | Signature Authenticode (11) | **CI + Windows Sandbox** | installeur, désinstalleur et `lumen.exe` signés ; SmartScreen sans « Éditeur inconnu » |
 | 12 | Type de bus (USB, carte SD), détection à chaud, débranchement pendant une analyse (12) | **PC ou VM avec passage USB** | clé et carte SD reconnues, disque USB « fixe » vu comme USB, puce qui apparaît et disparaît, arrêt propre au retrait |
 | 13 | Analyse en profondeur en mode rapide et espace des clichés (12) | **VM** (points de restauration présents) | MFT par l'assistant élevé, `Win32_ShadowStorage` égal à `vssadmin list shadowstorage` |
+| 14 | Sondage des périphériques et disques en veille (12) | **PC avec un disque dur secondaire en veille** et un lecteur réseau déconnecté | le disque ne se réveille pas tant qu'on ne l'analyse pas (icône et alertes désactivées, puis activées) ; lecteur réseau déconnecté : aucune attente, puce « espace non lu » |
 
 Déjà vérifiés en CI Windows à chaque push (pas besoin de VM pour ceux-là) : suppression réelle sur faux profil (e2e), déplacement C: → D: sur disques virtuels, installation / instance unique / mise à jour / désinstallation silencieuses (`installer-test.ps1` : dont un autre compte simulé — ruches chargées nettoyées, liste de jonctions piégée de son profil lue telle quelle et jamais exécutée — et des entrées orphelines qui ne lancent rien).
 

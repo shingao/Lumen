@@ -78,6 +78,9 @@ export interface Volume {
   cleanable: boolean;
   /** Fin de la dernière analyse gardée de ce volume (ms), ou null. */
   analyzedAt: number | null;
+  /** Nom, espace et type lus. Faux juste après un branchement (lecture en cours) et pour un
+   * lecteur réseau tant qu'il n'a pas été analysé (jamais lu en tâche de fond). */
+  ready: boolean;
 }
 
 export type ScanTarget = { kind: "userProfile" } | { kind: "volume"; letter: string };

@@ -510,42 +510,58 @@ impl Volume {
     }
 }
 
-/// Lecteurs montés, avec leur espace et leur système de fichiers.
-pub fn volumes() -> Vec<Volume> {
-    // SAFETY : sans paramètre.
-    let mask = unsafe { GetLogicalDrives() };
-    let mut out = Vec::new();
-    for (i, letter) in ('A'..='Z').enumerate() {
-        if mask & (1 << i) == 0 {
-            continue;
-        }
-        let root = HSTRING::from(format!("{letter}:\\"));
-        // SAFETY : chaîne possédée.
-        let kind = match unsafe { GetDriveTypeW(&root) } {
-            2 => VolumeKind::Removable,
-            3 => VolumeKind::Fixed,
-            4 => VolumeKind::Network,
-            0 | 1 => continue,
-            _ => VolumeKind::Other,
-        };
-        let (mut free, mut total) = (0u64, 0u64);
-        // SAFETY : chaîne et entiers possédés.
-        if unsafe { GetDiskFreeSpaceExW(&root, None, Some(&mut total), Some(&mut free)) }.is_err() {
-            continue;
-        }
-        let mut label = [0u16; 261];
-        let mut fs = [0u16; 261];
-        let mut serial = 0u32;
-        // SAFETY : chaîne, tampons et entier possédés.
-        let _ = unsafe { GetVolumeInformationW(&root, Some(&mut label), Some(&mut serial), None, None, Some(&mut fs)) };
-        let text = |b: &[u16]| String::from_utf16_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]);
-        let mut name = [0u16; 64];
-        // SAFETY : chaîne et tampon possédés (50 caractères suffisent pour « \\?\Volume{GUID}\ »).
-        let guid = unsafe { GetVolumeNameForVolumeMountPointW(&root, &mut name) }.ok().map(|_| text(&name)).filter(|g| g.contains('{'));
-        let bus = if kind == VolumeKind::Network { Bus::Other } else { bus_type(letter) };
-        out.push(Volume { letter, bus, label: text(&label), file_system: text(&fs), kind, total, free, guid, serial });
+/// Type annoncé par Windows pour une lettre (`GetDriveTypeW`, gestionnaire de montage) : ne touche
+/// pas le volume. `None` : lettre absente ou sans racine.
+pub fn drive_type(letter: char) -> Option<VolumeKind> {
+    let root = HSTRING::from(format!("{letter}:\\"));
+    // SAFETY : chaîne possédée.
+    match unsafe { GetDriveTypeW(&root) } {
+        2 => Some(VolumeKind::Removable),
+        3 => Some(VolumeKind::Fixed),
+        4 => Some(VolumeKind::Network),
+        0 | 1 => None,
+        _ => Some(VolumeKind::Other),
     }
-    out
+}
+
+/// Espace d'un volume (total, libre), `GetDiskFreeSpaceExW`.
+pub fn space(letter: char) -> Option<(u64, u64)> {
+    let root = HSTRING::from(format!("{letter}:\\"));
+    let (mut free, mut total) = (0u64, 0u64);
+    // SAFETY : chaîne et entiers possédés.
+    unsafe { GetDiskFreeSpaceExW(&root, None, Some(&mut total), Some(&mut free)) }.ok()?;
+    Some((total, free))
+}
+
+/// Tout ce qu'on sait d'une lettre : touche le volume (nom, système de fichiers, espace, GUID,
+/// bus). Lu seulement à l'apparition d'une lettre ou sur demande, jamais en boucle.
+pub fn volume(letter: char, kind: VolumeKind) -> Option<Volume> {
+    let root = HSTRING::from(format!("{letter}:\\"));
+    let (total, free) = space(letter)?;
+    let mut label = [0u16; 261];
+    let mut fs = [0u16; 261];
+    let mut serial = 0u32;
+    // SAFETY : chaîne, tampons et entier possédés.
+    let _ = unsafe { GetVolumeInformationW(&root, Some(&mut label), Some(&mut serial), None, None, Some(&mut fs)) };
+    let text = |b: &[u16]| String::from_utf16_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]);
+    let mut name = [0u16; 64];
+    // SAFETY : chaîne et tampon possédés (50 caractères suffisent pour « \\?\Volume{GUID}\ »).
+    let guid = unsafe { GetVolumeNameForVolumeMountPointW(&root, &mut name) }.ok().map(|_| text(&name)).filter(|g| g.contains('{'));
+    let bus = if kind == VolumeKind::Network { Bus::Other } else { bus_type(letter) };
+    Some(Volume { letter, bus, label: text(&label), file_system: text(&fs), kind, total, free, guid, serial })
+}
+
+/// Lecteurs montés, avec leur espace et leur système de fichiers (lecture complète de chaque
+/// lettre : jamais dans une boucle de sondage).
+pub fn volumes() -> Vec<Volume> {
+    let mask = drive_mask();
+    ('A'..='Z').enumerate().filter(|(i, _)| mask & (1 << i) != 0).filter_map(|(_, l)| volume(l, drive_type(l)?)).collect()
+}
+
+/// Lettres des disques fixes (masque et type seulement : aucun volume n'est touché).
+pub fn fixed_letters() -> Vec<char> {
+    let mask = drive_mask();
+    ('A'..='Z').enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, l)| l).filter(|&l| drive_type(l) == Some(VolumeKind::Fixed)).collect()
 }
 
 /// Lettres présentes (bit 0 = A:) : appel immédiat, sans toucher aux lecteurs, d'où la détection

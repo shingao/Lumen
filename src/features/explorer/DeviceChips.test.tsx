@@ -108,4 +108,47 @@ describe("Périphériques dans la barre de l'Explorer", () => {
     expect(start).not.toHaveBeenCalled();
     expect(chip(/^D: Données/).textContent).toMatch(/analysé il y a/);
   });
+
+  it("lecture des volumes lente ou bloquée : l'interface reste utilisable, puces « lecture… » et réseau non lu", async () => {
+    // Le backend ne répond jamais à la liste (lecteur réseau ou disque qui ne répond pas).
+    const never = new Promise<never>(() => undefined);
+    vi.spyOn(backend, "volumes").mockReturnValue(never);
+    vi.spyOn(backend, "refreshVolumes").mockReturnValue(never);
+    render(
+      <>
+        <Explorer />
+        <Recommendations />
+      </>,
+    );
+    // L'Explorer s'affiche et répond : treemap, recommandations, zoom, puce du dossier utilisateur.
+    expect(await screen.findByRole("group", { name: "Carte de l'espace disque" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Nettoyer" })).toBeTruthy();
+    const user = chip(/^Dossier utilisateur/);
+    expect(user.getAttribute("aria-pressed")).toBe("true");
+    const before = useStore.getState().scan.summary?.scanId;
+    fireEvent.click(user);
+    expect(useStore.getState().scan.summary?.scanId).toBe(before);
+    // Un branchement signalé par le sondage s'affiche quand même (événement, sans relire la liste).
+    act(() => devices().plug());
+    await waitFor(() => expect(within(chips()).getByRole("button", { name: /^E: KINGSTON/ })).toBeTruthy());
+
+    // Détails pas encore lus : « lecture… » ; lecteur réseau jamais lu en tâche de fond.
+    const pending = (letter: string, kind: "usb" | "removable" | "network") => ({
+      id: letter,
+      key: `letter:${letter}`,
+      letter,
+      label: "",
+      kind,
+      fileSystem: "",
+      mftCapable: false,
+      total: 0,
+      free: 0,
+      cleanable: false,
+      analyzedAt: null,
+      ready: false,
+    });
+    act(() => useVolumeList.setState({ list: [pending("F:", "removable"), pending("Y:", "network")] }));
+    expect(chip(/^F:, amovible, pas encore lu/).textContent).toContain("lecture…");
+    expect(chip(/^Y:, réseau, pas encore lu/).textContent).toContain("espace non lu");
+  });
 });

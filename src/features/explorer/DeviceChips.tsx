@@ -52,8 +52,12 @@ export function DeviceChips() {
             className={styles.chip}
             data-kind={v.kind}
             aria-pressed={same(target, to)}
-            aria-label={t("devices.chipLabel", { letter: v.letter, name: v.label || kind, kind, free: formatBytes(v.free, t.locale) })}
-            title={t("explorer.driveFree", { free: formatBytes(v.free, t.locale), total: formatBytes(v.total, t.locale) })}
+            aria-label={
+              v.ready
+                ? t("devices.chipLabel", { letter: v.letter, name: v.label || kind, kind, free: formatBytes(v.free, t.locale) })
+                : t("devices.chipLabelPending", { letter: v.letter, kind })
+            }
+            title={v.ready ? t("explorer.driveFree", { free: formatBytes(v.free, t.locale), total: formatBytes(v.total, t.locale) }) : undefined}
             onClick={(e) => open(v, e.currentTarget)}
           >
             <span className={styles.top}>
@@ -62,10 +66,14 @@ export function DeviceChips() {
               <span className={styles.kind}>{kind}</span>
             </span>
             <span className={styles.gauge} aria-hidden="true">
-              <span className={styles.gaugeFill} style={{ width: `${Math.min(100, Math.max(0, used * 100))}%` }} data-full={used >= 0.9 || undefined} />
+              {v.ready && <span className={styles.gaugeFill} style={{ width: `${Math.min(100, Math.max(0, used * 100))}%` }} data-full={used >= 0.9 || undefined} />}
             </span>
             <span className={styles.meta}>
-              {v.analyzedAt !== null ? t("devices.analyzed", { when: formatRelative(v.analyzedAt, t.locale) }) : t("devices.free", { free: formatBytes(v.free, t.locale) })}
+              {v.analyzedAt !== null
+                ? t("devices.analyzed", { when: formatRelative(v.analyzedAt, t.locale) })
+                : !v.ready
+                  ? t(v.kind === "network" ? "devices.notRead" : "devices.reading")
+                  : t("devices.free", { free: formatBytes(v.free, t.locale) })}
             </span>
           </button>
         );

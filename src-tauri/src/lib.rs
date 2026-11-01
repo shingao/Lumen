@@ -46,13 +46,14 @@ pub fn run() {
         // Toujours le premier plugin : un second lancement transmet ses arguments et s'arrête.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| integration::on_second_instance(app, &argv)))
         .setup(|app| {
+            // Lettres présentes et leur type tout de suite (immédiat), détails dans un fil à part :
+            // le menu contextuel peut valider un chemin dès le lancement.
+            devices::start(app.handle().clone());
             let args: Vec<String> = std::env::args().skip(1).collect();
             integration::on_launch(app.handle(), &args);
             // Jonctions du déplacement intelligent, listées pour la désinstallation.
             let handle = app.handle().clone();
             std::thread::spawn(move || moves::write_junction_list(&handle));
-            // Périphériques branchés ou débranchés : liste mise à jour sans redémarrer.
-            devices::watch(app.handle().clone());
             Ok(())
         })
         .on_window_event(integration::on_window_event)
@@ -84,6 +85,7 @@ pub fn run() {
             report::report_reveal,
             scanning::app_info,
             scanning::volumes_list,
+            scanning::volumes_refresh,
             scanning::scan_start,
             scanning::scan_cancel,
             scanning::scan_summary,

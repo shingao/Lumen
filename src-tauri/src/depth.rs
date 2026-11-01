@@ -219,7 +219,7 @@ fn volume_entry(state: &ScanState, scan_id: u32) -> Result<std::sync::Arc<Entry>
 #[tauri::command]
 pub fn depth_report(state: State<'_, ScanState>, scan_id: u32) -> Result<DepthReportDto, LumenError> {
     let e = volume_entry(&state, scan_id)?;
-    let used = scanning::volumes_list_raw().into_iter().find(|v| eq(&v.letter, &e.volume)).map(|v| v.total.saturating_sub(v.free));
+    let used = crate::devices::DEVICES.get(&e.volume).filter(|v| v.ready).map(|v| v.total.saturating_sub(v.free));
     let profile = profile_name();
     Ok(DepthReportDto {
         scan_id,

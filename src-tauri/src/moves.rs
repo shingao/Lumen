@@ -565,7 +565,13 @@ mod platform {
     #[cfg(windows)]
     pub fn drives() -> Vec<DriveDto> {
         use safety::relocate::MoveProbe;
-        crate::scanning::platform::volumes()
+        // Cache des périphériques (espace des disques internes relu sur demande : ouverture du
+        // déplacement) ; jamais un lecteur réseau ni un amovible.
+        if let Some(src) = crate::devices::system() {
+            crate::devices::DEVICES.refresh_space(src);
+        }
+        crate::devices::DEVICES
+            .list()
             .into_iter()
             .filter(|v| v.kind == "fixed" && v.file_system.eq_ignore_ascii_case("NTFS"))
             .filter(|v| v.letter.chars().next().and_then(|c| safety::win::relocate::WinMover.volume(c)).is_some_and(|i| !i.subst))

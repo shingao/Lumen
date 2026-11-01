@@ -39,16 +39,21 @@ pub(crate) struct Present {
 mod platform {
     use super::*;
 
+    /// Volumes déjà lus du cache des périphériques : aucune lecture de lecteur (le snapshot
+    /// quotidien ne réveille ni ne touche un volume qu'il n'analyse pas).
     #[cfg(windows)]
     pub fn present() -> Vec<Present> {
-        scan::win::volumes()
-            .into_iter()
-            .map(|v| Present {
-                identity: VolumeIdentity::new(v.guid.as_deref(), v.serial, &v.file_system, &v.label, &format!("{}:", v.letter)),
-                total: v.total,
-                free: v.free,
-            })
-            .collect()
+        crate::devices::DEVICES.identities().into_iter().map(|(identity, total, free)| Present { identity, total, free }).collect()
+    }
+
+    #[cfg(windows)]
+    pub fn key_of(letter: &str) -> Option<String> {
+        crate::devices::DEVICES.identity(crate::devices::system(), letter).map(|i| i.key)
+    }
+
+    #[cfg(not(windows))]
+    pub fn key_of(letter: &str) -> Option<String> {
+        super::present_at(&present(), letter).map(|p| p.identity.key.clone())
     }
 
     /// Hors de Windows (développement) : un seul volume, sans lettre.
@@ -68,7 +73,7 @@ fn present_key<'a>(list: &'a [Present], key: &str) -> Option<&'a Present> {
 
 /// Clé stable du volume monté sous `letter` (« C: »), pour retenir le volume d'un nettoyage.
 pub(crate) fn volume_key(letter: &str) -> Option<String> {
-    present_at(&platform::present(), letter).map(|p| p.identity.key.clone())
+    platform::key_of(letter)
 }
 
 fn method_name(m: scan::Method) -> &'static str {

@@ -67,6 +67,9 @@ pub struct VolumeDto {
     pub cleanable: bool,
     /// Fin de la dernière analyse gardée de ce volume (ms), pour « analysé il y a X ».
     pub analyzed_at: Option<i64>,
+    /// Détails lus (nom, espace, bus). Faux pour une lettre qui vient d'apparaître, et pour un
+    /// lecteur réseau tant qu'il n'a pas été analysé (le sondage ne le touche jamais).
+    pub ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -500,47 +503,6 @@ pub(crate) mod platform {
     }
 
     #[cfg(windows)]
-    pub fn volumes() -> Vec<VolumeDto> {
-        scan::win::volumes()
-            .into_iter()
-            .map(|v| {
-                use crate::devices::{Bus, Drive};
-                let drive = match v.kind {
-                    scan::win::VolumeKind::Fixed => Drive::Fixed,
-                    scan::win::VolumeKind::Removable => Drive::Removable,
-                    scan::win::VolumeKind::Network => Drive::Network,
-                    scan::win::VolumeKind::Other => Drive::Other,
-                };
-                let bus = match v.bus {
-                    scan::win::Bus::Usb => Bus::Usb,
-                    scan::win::Bus::Sd => Bus::Sd,
-                    scan::win::Bus::Other => Bus::Other,
-                    scan::win::Bus::Unknown => Bus::Unknown,
-                };
-                let kind = crate::devices::kind(drive, bus);
-                VolumeDto {
-                    key: crate::timeline::store::VolumeIdentity::new(v.guid.as_deref(), v.serial, &v.file_system, &v.label, &format!("{}:", v.letter)).key,
-                    letter: format!("{}:", v.letter),
-                    // MFT : disque interne NTFS seulement (jamais un disque USB qui se dit fixe).
-                    mft_capable: v.mft_capable() && kind == "fixed",
-                    label: v.label,
-                    file_system: v.file_system,
-                    kind,
-                    cleanable: crate::devices::cleanable(kind),
-                    analyzed_at: None,
-                    total: v.total,
-                    free: v.free,
-                }
-            })
-            .collect()
-    }
-
-    #[cfg(not(windows))]
-    pub fn volumes() -> Vec<VolumeDto> {
-        Vec::new()
-    }
-
-    #[cfg(windows)]
     pub fn elevated() -> bool {
         scan::win::is_elevated()
     }
@@ -608,14 +570,14 @@ pub fn app_info() -> AppInfo {
     AppInfo { elevated: platform::elevated(), fast_scan_available: platform::fast_scan_available(), version: env!("CARGO_PKG_VERSION"), profile: platform::user_profile() }
 }
 
-/// Volumes présents, sans l'état des analyses.
+/// Volumes présents, depuis le cache des périphériques (aucune lecture de lecteur).
 pub fn volumes_list_raw() -> Vec<VolumeDto> {
-    platform::volumes()
+    crate::devices::DEVICES.list()
 }
 
-/// Volumes présents, avec la date de leur dernière analyse gardée.
+/// Volumes présents, avec la date de leur dernière analyse gardée (aucune lecture de lecteur).
 pub(crate) fn volumes_with(state: &ScanState) -> Vec<VolumeDto> {
-    let mut list = platform::volumes();
+    let mut list = crate::devices::DEVICES.list();
     if let Ok(inner) = state.0.lock() {
         for v in &mut list {
             v.analyzed_at = inner.cached(&ScanTarget::Volume { letter: v.letter.clone() }).map(|(_, e)| e.finished_at);
@@ -627,6 +589,20 @@ pub(crate) fn volumes_with(state: &ScanState) -> Vec<VolumeDto> {
 #[tauri::command]
 pub fn volumes_list(state: State<'_, ScanState>) -> Vec<VolumeDto> {
     volumes_with(&state)
+}
+
+/// Espace relu des disques internes (infobulle et alertes, si l'utilisateur les a activées),
+/// hors du fil de l'interface ; jamais un lecteur réseau ni un support amovible.
+#[tauri::command]
+pub async fn volumes_refresh(app: AppHandle) -> Result<Vec<VolumeDto>, LumenError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(src) = crate::devices::system() {
+            crate::devices::DEVICES.refresh_space(src);
+        }
+        volumes_with(&tauri::Manager::state::<ScanState>(&app))
+    })
+    .await
+    .map_err(|e| LumenError::Startup(e.to_string()))
 }
 
 /// Liste des lettres changée (branchement, débranchement) : l'analyse en cours d'un volume qui
@@ -645,7 +621,8 @@ pub(crate) fn volumes_changed(state: &ScanState, present: &[String]) -> Option<u
 
 #[tauri::command]
 pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarget, method: ScanMethod) -> Result<u32, LumenError> {
-    let volumes = platform::volumes();
+    // Cache des périphériques : aucune lecture de lecteur dans ce fil (celui de l'interface).
+    let volumes = crate::devices::DEVICES.list();
     let (root, volume) = match &target {
         ScanTarget::UserProfile => {
             let profile = platform::user_profile().ok_or(LumenError::NoProfile)?;
@@ -710,6 +687,11 @@ pub fn scan_start(app: AppHandle, state: State<'_, ScanState>, target: ScanTarge
             match result {
                 Ok((scan, notice)) => {
                     drop(inner);
+                    // Sur demande (ce volume vient d'être analysé) : son nom, son espace et son
+                    // identité relus, lecteur réseau compris ; jamais les autres volumes.
+                    if let Some(src) = crate::devices::system() {
+                        crate::devices::DEVICES.refresh(src, &volume);
+                    }
                     let _ = app.emit(
                         "scan:progress",
                         ProgressDto { scan_id: id, files: scan.stats.files, dirs: scan.stats.dirs, allocated: scan.stats.allocated, errors: scan.stats.errors(), elapsed_ms: scan.stats.elapsed_ms, phase: "rules", tops: Vec::new() },
@@ -760,7 +742,7 @@ fn restore(app: &AppHandle) -> Result<Vec<SummaryDto>, LumenError> {
         }
     }
     let saved = crate::cleanup::with_journal(app, |j| crate::persist::load_all(j.conn()).map_err(Into::into))?;
-    let volumes = platform::volumes();
+    let volumes = crate::devices::DEVICES.list();
     let profile = platform::user_profile();
     let mut out = Vec::new();
     for s in saved {

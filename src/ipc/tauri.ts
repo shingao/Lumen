@@ -137,6 +137,7 @@ interface VolumeDto {
   mftCapable: boolean;
   cleanable: boolean;
   analyzedAt: number | null;
+  ready: boolean;
 }
 
 /** Plan tel que le renvoie Rust : nom de règle en (fr, en). */
@@ -236,6 +237,7 @@ export function createTauriBackend(): Backend {
       free: v.free,
       cleanable: v.cleanable,
       analyzedAt: v.analyzedAt,
+      ready: v.ready,
     }));
   const loadVolumes = async (): Promise<Volume[]> => {
     volumes = toVolumes(await invoke<VolumeDto[]>("volumes_list"));
@@ -250,6 +252,11 @@ export function createTauriBackend(): Backend {
     appInfo: () => invoke<AppInfo>("app_info"),
 
     volumes: loadVolumes,
+
+    async refreshVolumes() {
+      volumes = toVolumes(await invoke<VolumeDto[]>("volumes_refresh"));
+      return volumes;
+    },
 
     onVolumesChanged(listener) {
       const off = listen<VolumeDto[]>("volumes:changed", (e) => {
