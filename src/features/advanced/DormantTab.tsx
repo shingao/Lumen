@@ -7,7 +7,8 @@ import { StatusDot } from "../../components/StatusDot";
 import { formatBytes, formatCount } from "../../core/format";
 import { useT } from "../../i18n";
 import type { DormantResult } from "../../ipc/types";
-import { Check, FileLine, SelectionBar } from "./FileRows";
+import { FileLine, SelectionBar } from "./FileRows";
+import { CollapsibleGroup, GroupsToolbar } from "./Groups";
 import styles from "./Advanced.module.css";
 
 const MONTHS = [3, 6, 12, 24] as const;
@@ -20,33 +21,29 @@ function rawValue(raw: number | null, unknown: string): string {
 function Folders({ result }: { result: DormantResult }) {
   const t = useT();
   const checked = useAdvanced((s) => s.checkedDormant);
+  const date = result.basis === "lastAccess" ? "accessed" : "modified";
   return (
     <div className={styles.groups}>
+      <GroupsToolbar tab="dormant" keys={result.folders.map((f) => f.path)} />
       {result.folders.map((f) => {
         const ids = f.files.map((x) => x.id);
         const n = ids.filter((id) => checked.has(id)).length;
+        const latest = Math.max(0, ...f.files.map((x) => (date === "accessed" ? Math.max(x.accessed, x.modified) : x.modified)));
         return (
-          <section key={f.path} className={styles.group} aria-label={f.path}>
-            <div className={styles.groupHead}>
-              <label className={styles.groupLabel}>
-                <Check checked={n === ids.length && n > 0} partial={n > 0} label={t("dormant.checkFolder", { path: f.path })} onChange={(on) => checkDormant(ids, on)} />
-                <code className={styles.groupPath}>{f.path}</code>
-              </label>
-              <span className={styles.groupMeta}>{t.plural("dormant.files", f.count, { n: formatCount(f.count, t.locale) })}</span>
-              <span className={styles.groupSize}>{formatBytes(f.size, t.locale)}</span>
-            </div>
-            <ul className={styles.rows}>
-              {f.files.map((file) => (
-                <FileLine
-                  key={file.id}
-                  file={file}
-                  date={result.basis === "lastAccess" ? "accessed" : "modified"}
-                  checked={checked.has(file.id)}
-                  onChange={(on) => checkDormant([file.id], on)}
-                />
-              ))}
-            </ul>
-          </section>
+          <CollapsibleGroup
+            key={f.path}
+            tab="dormant"
+            id={f.path}
+            title={f.path}
+            count={f.count}
+            size={f.size}
+            latest={latest}
+            check={{ checked: n === ids.length && n > 0, partial: n > 0, label: t("dormant.checkFolder", { path: f.path }), onChange: (on) => checkDormant(ids, on) }}
+          >
+            {f.files.map((file) => (
+              <FileLine key={file.id} file={file} date={date} checked={checked.has(file.id)} onChange={(on) => checkDormant([file.id], on)} />
+            ))}
+          </CollapsibleGroup>
         );
       })}
     </div>

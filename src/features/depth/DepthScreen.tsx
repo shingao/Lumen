@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { copyText } from "../../app/clipboard";
-import { cancelDepth, loadCachedDepth, openDepthNode, readShadowStorage, startDepth, systemDrive, useDepth } from "../../app/depth";
+import { cancelDepth, depthBack, depthForward, loadCachedDepth, openDepthNode, readShadowStorage, startDepth, systemDrive, useDepth } from "../../app/depth";
 import { showCachedScan, startScan } from "../../app/scanning";
 import { useStore } from "../../app/store";
 import { Button } from "../../components/Button";
@@ -14,6 +14,7 @@ import { formatBytes, formatCount, formatPercent, formatRelative } from "../../c
 import { useT } from "../../i18n";
 import { backend } from "../../ipc/client";
 import type { DepthEntry, DepthItem, DepthLink, DepthReport, NodeId } from "../../ipc/types";
+import { HistoryButtons } from "../explorer/HistoryButtons";
 import { Treemap } from "../explorer/Treemap";
 import explorer from "../explorer/Explorer.module.css";
 import screens from "../screens/Screens.module.css";
@@ -277,9 +278,12 @@ function ModuleLink({ link }: { link: DepthLink }) {
 function MapBar() {
   const t = useT();
   const slice = useDepth((s) => s.slice);
+  const back = useDepth((s) => s.back.at(-1)?.label ?? null);
+  const forward = useDepth((s) => s.forward.at(-1)?.label ?? null);
   const crumbs = slice?.breadcrumb ?? [];
   return (
     <div className={explorer.crumbBar}>
+      <HistoryButtons back={back} forward={forward} onBack={() => void depthBack()} onForward={() => void depthForward()} />
       <h3 className={styles.mapTitle}>{t("depth.treemap")}</h3>
       <nav aria-label={t("explorer.breadcrumb")} className={explorer.crumbs}>
         {crumbs.map((c, i) => {

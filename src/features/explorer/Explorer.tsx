@@ -5,7 +5,6 @@ import { goBack, goForward, goTo, setHere, useNav } from "../../app/navigation";
 import { startScan } from "../../app/scanning";
 import { type ColorMode, useStore } from "../../app/store";
 import { Button } from "../../components/Button";
-import { ArrowLeftIcon, ArrowRightIcon } from "../../components/icons";
 import { Segmented } from "../../components/Segmented";
 import { openMove } from "../../app/moves";
 import { openExport } from "../../app/report";
@@ -19,6 +18,7 @@ import { ScanProgressPanel, ScanStats } from "./ScanPanel";
 import { KEEP_FOCUS } from "../status/StatusHelp";
 import { activeSource, inView } from "../../core/highlight";
 import { HighlightChip } from "./HighlightChip";
+import { HistoryButtons } from "./HistoryButtons";
 import { Treemap } from "./Treemap";
 import styles from "./Explorer.module.css";
 
@@ -109,28 +109,7 @@ export function Explorer() {
       )}
 
       <div className={styles.crumbBar}>
-        <div className={styles.history}>
-          <button
-            type="button"
-            className={styles.historyButton}
-            disabled={!back}
-            aria-label={back ? t("explorer.back.to", { name: back.label }) : t("explorer.back")}
-            title={back ? t("explorer.back.to", { name: back.label }) : t("explorer.back")}
-            onClick={goBack}
-          >
-            <ArrowLeftIcon />
-          </button>
-          <button
-            type="button"
-            className={styles.historyButton}
-            disabled={!forward}
-            aria-label={forward ? t("explorer.forward.to", { name: forward.label }) : t("explorer.forward")}
-            title={forward ? t("explorer.forward.to", { name: forward.label }) : t("explorer.forward")}
-            onClick={goForward}
-          >
-            <ArrowRightIcon />
-          </button>
-        </div>
+        <HistoryButtons back={back?.label ?? null} forward={forward?.label ?? null} onBack={goBack} onForward={goForward} />
         <nav aria-label={t("explorer.breadcrumb")} className={styles.crumbs}>
           <button type="button" className={styles.drive} aria-label={t("explorer.drive", { drive: targetLetter })} onClick={() => goTo(null)}>
             {drive?.label ?? targetLetter}

@@ -109,7 +109,49 @@
   gap: 12px;
   padding: 8px 14px;
   background: var(--bg-sunken);
+  cursor: pointer;
+}
+
+.group[data-open] .groupHead {
   border-bottom: 1px solid var(--border-soft);
+}
+
+/* Flèche ▸ / ▾ : seul bouton du clavier (← / → replie ou déplie, Espace coche le groupe). */
+.groupToggle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -2px -6px -2px -4px;
+  border: 0;
+  border-radius: var(--r-seg-btn);
+  background: transparent;
+  color: var(--text-label-sunken);
+  cursor: pointer;
+}
+
+.groupToggle:hover {
+  color: var(--text-1);
+}
+
+.arrow {
+  font-size: var(--fs-11);
+}
+
+.groupCheck {
+  flex: none;
+  display: flex;
+}
+
+.groupExtra {
+  flex: none;
+}
+
+.groupsBar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: -4px;
 }
 
 .groupLabel {
@@ -122,6 +164,7 @@
 }
 
 .groupPath {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

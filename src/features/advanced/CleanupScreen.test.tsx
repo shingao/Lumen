@@ -74,8 +74,11 @@ describe("Nettoyage avancé", () => {
     render(<CleanupScreen />);
     tab("Doublons");
     fireEvent.click(screen.getByRole("button", { name: "Rechercher les doublons" }));
-    const group = await screen.findByRole("region", { name: /^3 exemplaires de 9,1 Go$/ }, { timeout: 3000 });
-    const boxes = within(group).getAllByRole("checkbox") as HTMLInputElement[];
+    const head = await screen.findByText("3 exemplaires de 9,1 Go", undefined, { timeout: 3000 });
+    const group = head.closest("section") as HTMLElement;
+    // Groupe replié par défaut : on le déplie.
+    fireEvent.click(within(group).getByRole("button", { name: /^Déplier / }));
+    const [groupBox, ...boxes] = within(group).getAllByRole("checkbox") as HTMLInputElement[];
     act(() => {
       fireEvent.click(boxes[0] as HTMLInputElement);
       fireEvent.click(boxes[1] as HTMLInputElement);
@@ -83,7 +86,10 @@ describe("Nettoyage avancé", () => {
     // Deux cochés sur trois : le dernier ne peut plus l'être.
     expect((boxes[2] as HTMLInputElement).disabled).toBe(true);
     expect(useAdvanced.getState().checkedDup.size).toBe(2);
-    fireEvent.click(within(group).getByRole("button", { name: "Cocher les copies" }));
+    // Case du groupe : décoche tout, puis coche les copies (l'exemplaire présélectionné gardé).
+    fireEvent.click(groupBox as HTMLInputElement);
+    expect(boxes.map((b) => b.checked)).toEqual([false, false, false]);
+    fireEvent.click(groupBox as HTMLInputElement);
     expect(boxes.map((b) => b.checked)).toEqual([false, true, true]);
     expect(within(group).getByText("gardé")).toBeTruthy();
   });
