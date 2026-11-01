@@ -591,6 +591,20 @@ pub fn volumes_list(state: State<'_, ScanState>) -> Vec<VolumeDto> {
     volumes_with(&state)
 }
 
+/// « Actualiser » des puces : détails relus des lecteurs amovibles (jamais le réseau), hors du
+/// fil de l'interface.
+#[tauri::command]
+pub async fn volumes_refresh_removable(app: AppHandle) -> Result<Vec<VolumeDto>, LumenError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(src) = crate::devices::system() {
+            crate::devices::DEVICES.refresh_removable(src);
+        }
+        volumes_with(&tauri::Manager::state::<ScanState>(&app))
+    })
+    .await
+    .map_err(|e| LumenError::Startup(e.to_string()))
+}
+
 /// Espace relu des disques internes (infobulle et alertes, si l'utilisateur les a activées),
 /// hors du fil de l'interface ; jamais un lecteur réseau ni un support amovible.
 #[tauri::command]

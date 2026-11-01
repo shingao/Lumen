@@ -918,6 +918,8 @@ export const fr = {
   "devices.chipLabelPending": "{letter}, {kind}, pas encore lu",
   "devices.reading": "lecture…",
   "devices.notRead": "espace non lu",
+  "devices.refresh": "Actualiser les lecteurs amovibles",
+  "devices.refreshHint": "Relit les clés USB, cartes SD et lecteurs de cartes (une carte insérée apparaît) ; jamais les lecteurs réseau",
   "devices.free": "{free} libres",
   "devices.analyzed": "analysé {when}",
   "devices.plugged": "{name} branché : un clic sur sa puce l'analyse.",

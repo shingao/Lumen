@@ -156,6 +156,15 @@ export function ArrowRightIcon() {
   );
 }
 
+/** « Actualiser » : flèche circulaire. */
+export function RefreshIcon() {
+  return (
+    <Svg size={13} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 8a5 5 0 1 1-1.46-3.54M13 2.5v3h-3" />
+    </Svg>
+  );
+}
+
 /** « Étendre » : flèches en diagonale (zoom sur une tuile). */
 export function ExpandIcon() {
   return (

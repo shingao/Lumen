@@ -37,7 +37,8 @@ describe("Périphériques dans la barre de l'Explorer", () => {
         <Recommendations />
       </>,
     );
-    await waitFor(() => expect(within(chips()).getAllByRole("button")).toHaveLength(4));
+    // Dossier utilisateur, C:, D:, Z: et « Actualiser ».
+    await waitFor(() => expect(within(chips()).getAllByRole("button")).toHaveLength(5));
     expect(chip(/^C: Système, interne/)).toBeTruthy();
     expect(chip(/^Z: partage/).textContent).toContain("réseau");
     // Ancien menu déroulant remplacé.
@@ -150,5 +151,33 @@ describe("Périphériques dans la barre de l'Explorer", () => {
     act(() => useVolumeList.setState({ list: [pending("F:", "removable"), pending("Y:", "network")] }));
     expect(chip(/^F:, amovible, pas encore lu/).textContent).toContain("lecture…");
     expect(chip(/^Y:, réseau, pas encore lu/).textContent).toContain("espace non lu");
+  });
+
+  it("« Actualiser » au bout des puces : relit les lecteurs amovibles, met la liste à jour", async () => {
+    render(<Explorer />);
+    await waitFor(() => expect(within(chips()).getAllByRole("button").length).toBeGreaterThan(1));
+    const card = {
+      id: "S:",
+      key: "guid:{carte}",
+      letter: "S:",
+      label: "CANON_DC",
+      kind: "sd" as const,
+      fileSystem: "exFAT",
+      mftCapable: false,
+      total: 32 * 2 ** 30,
+      free: 12 * 2 ** 30,
+      cleanable: false,
+      analyzedAt: null,
+      ready: true,
+    };
+    const refresh = vi.spyOn(backend, "refreshRemovable").mockResolvedValue([...(useVolumeList.getState().list ?? []), card]);
+    const volumes = vi.spyOn(backend, "refreshVolumes");
+    const button = within(chips()).getByRole("button", { name: "Actualiser les lecteurs amovibles" });
+    expect(button.getAttribute("title")).toContain("jamais les lecteurs réseau");
+    fireEvent.click(button);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(volumes).not.toHaveBeenCalled();
+    expect(await waitFor(() => chip(/^S: CANON_DC, carte SD/))).toBeTruthy();
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
   });
 });

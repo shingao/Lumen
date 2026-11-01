@@ -253,6 +253,11 @@ export function createTauriBackend(): Backend {
 
     volumes: loadVolumes,
 
+    async refreshRemovable() {
+      volumes = toVolumes(await invoke<VolumeDto[]>("volumes_refresh_removable"));
+      return volumes;
+    },
+
     async refreshVolumes() {
       volumes = toVolumes(await invoke<VolumeDto[]>("volumes_refresh"));
       return volumes;
