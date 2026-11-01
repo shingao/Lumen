@@ -9,6 +9,10 @@ import type { Backend } from "./backend";
 import { DEFAULT_SETTINGS } from "./mock";
 import type {
   AppInfo,
+  ApplyIntegration,
+  Integration,
+  IntegrationEvent,
+  OpenRequest,
   Category,
   CleanEvent,
   CleanPlan,
@@ -119,6 +123,7 @@ interface RuleKpisDto {
 }
 
 interface VolumeDto {
+  key: string;
   letter: string;
   label: string;
   fileSystem: string;
@@ -213,6 +218,7 @@ export function createTauriBackend(): Backend {
     const list = await invoke<VolumeDto[]>("volumes_list");
     volumes = list.map((v) => ({
       id: v.letter,
+      key: v.key,
       letter: v.letter,
       label: v.label,
       kind: v.kind,
@@ -394,6 +400,25 @@ export function createTauriBackend(): Backend {
     },
     saveReport: (format, stamp, content) => invoke<SavedReport>("report_save", { format, stamp, content }),
     revealReport: () => invoke("report_reveal"),
+
+    integration: () => invoke<Integration>("integration_state"),
+    setExplorerMenu: (on, label) => invoke<Integration>("integration_set_menu", { on, label }),
+    setAutostart: (on) => invoke<Integration>("integration_set_autostart", { on }),
+    applyIntegration: (request: ApplyIntegration) => invoke("integration_apply", { request }),
+    takeOpenRequest: () => invoke<OpenRequest | null>("open_request_take"),
+    onIntegrationEvent(listener: (event: IntegrationEvent) => void) {
+      const offs = [
+        listen("integration:open", () => listener({ type: "open" })),
+        listen<string>("integration:scan", (e) => listener({ type: "scan", letter: e.payload })),
+        listen<string>("integration:alert", (e) => listener({ type: "alert", letter: e.payload })),
+      ];
+      return () => offs.forEach((off) => void off.then((f) => f()));
+    },
+    notifyLowSpace: (letter, title, body) => invoke("notify_low_space", { letter, title, body }),
+    reportError(message) {
+      void invoke("crash_report", { message }).catch(() => undefined);
+    },
+    openLogs: () => invoke("logs_open"),
 
     settings: () => Promise.resolve({ ...settings }),
 

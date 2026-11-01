@@ -251,6 +251,12 @@ jobs:
       - name: cargo audit
         working-directory: src-tauri
         run: cargo audit
+      # THIRD_PARTY_NOTICES.txt (embarqué dans À propos) doit suivre Cargo.lock et package-lock.json.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
+      - name: Licences des composants tiers à jour
+        run: node scripts/notices.mjs --check
 
   build:
     needs: [safety, scan, front, rust]
@@ -269,23 +275,37 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Installeur NSIS
-        run: npx tauri build
-      # Signature Authenticode : placeholder. Ajouter les secrets LUMEN_SIGN_CERT (PFX en base64)
-      # et LUMEN_SIGN_PASSWORD pour l'activer ; sans eux, l'étape est sautée.
-      - name: Signature (si certificat configuré)
+      # Signature Authenticode : placeholder (docs/SIGNATURE.md). Avec les secrets LUMEN_SIGN_CERT
+      # (PFX en base64) et LUMEN_SIGN_PASSWORD, Tauri signe chaque binaire avant de l'empaqueter
+      # (lumen.exe, désinstalleur, installeur) par scripts/sign.ps1 ; sans eux, build non signé.
+      - name: Certificat de signature (si configuré)
         if: ${{ env.LUMEN_SIGN_CERT != '' }}
-        env:
-          LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
         shell: pwsh
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP "lumen.pfx"
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:LUMEN_SIGN_CERT))
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
-          Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe, src-tauri/target/release/lumen.exe | ForEach-Object {
-            & $signtool.FullName sign /f $pfx /p $env:LUMEN_SIGN_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName
-          }
-          Remove-Item $pfx
+          "LUMEN_SIGN_PFX=$pfx" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $sign = @{ bundle = @{ windows = @{ signCommand = @{ cmd = "pwsh"; args = @("-NoProfile", "-File", (Join-Path $env:GITHUB_WORKSPACE "scripts/sign.ps1"), "%1") } } } }
+          $config = Join-Path $env:RUNNER_TEMP "tauri.sign.json"
+          $sign | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 $config
+          "LUMEN_TAURI_ARGS=--config $config" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Installeur NSIS
+        shell: pwsh
+        env:
+          LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
+        run: npx tauri build $($env:LUMEN_TAURI_ARGS -split ' ' | Where-Object { $_ })
+      # Installation pour tous les utilisateurs, menu contextuel, démarrage, instance unique, mise
+      # à jour par-dessus, désinstallation propre (jonction et données intactes).
+      - name: Test de l'installeur
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          pwsh -NoProfile -File scripts/ci/installer-test.ps1 -Installer $setup.FullName
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Supprimer le certificat
+        if: ${{ always() && env.LUMEN_SIGN_PFX != '' }}
+        shell: pwsh
+        run: Remove-Item -Force $env:LUMEN_SIGN_PFX -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v4
         with:
           name: lumen-installer

@@ -4,6 +4,10 @@
 import type { Locale } from "../core/format";
 import type {
   AppInfo,
+  ApplyIntegration,
+  Integration,
+  IntegrationEvent,
+  OpenRequest,
   CleanEvent,
   CleanMode,
   CleanPlan,
@@ -144,6 +148,20 @@ export interface Backend {
   revealReport(): Promise<void>;
   settings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
+  /** Menu contextuel et démarrage, lus dans le registre de l'utilisateur. */
+  integration(): Promise<Integration>;
+  setExplorerMenu(on: boolean, label: string): Promise<Integration>;
+  setAutostart(on: boolean): Promise<Integration>;
+  /** Icône de la zone de notification (créée, mise à jour ou retirée) et libellés. */
+  applyIntegration(request: ApplyIntegration): Promise<void>;
+  /** Demande du menu contextuel en attente (premier lancement ou `open`), une seule fois. */
+  takeOpenRequest(): Promise<OpenRequest | null>;
+  onIntegrationEvent(listener: (event: IntegrationEvent) => void): () => void;
+  /** Notification Windows ; un clic arrive par `onIntegrationEvent` (`alert`). */
+  notifyLowSpace(letter: string, title: string, body: string): Promise<void>;
+  /** Erreur de l'interface, écrite dans le journal local (jamais envoyée). */
+  reportError(message: string): void;
+  openLogs(): Promise<void>;
 }
 
 /** Clé stable d'une cible d'analyse. */

@@ -30,6 +30,7 @@ import type { L10n, MockReco, MockTile, When } from "./data";
 import { D_TILES, KPI, RECOS, TILES, USER_ROOT, VOLUMES } from "./data";
 import { createMockTimeline } from "./timeline";
 import { createMoves } from "./moves";
+import { createIntegration, type MockIntegration } from "./integration";
 import { DEV_EXTRA_CACHES, mockCover, mockDevCaches, mockDocker, mockGames, mockProjects, mockRunning, mockShaders, mockWsl } from "./devgames";
 import { mockAdvancedPlan, mockDormant, mockDuplicates, mockLargest, mockNoProtection, mockProgram, mockRestorePoints, mockSinks } from "./advanced";
 
@@ -46,10 +47,9 @@ export const DEFAULT_SETTINGS: Settings = {
   permanentDelete: false,
   dailySnapshot: true,
   trayIcon: false,
-  lowSpaceAlert: true,
+  lowSpaceAlert: false,
   lowSpaceThreshold: 10,
-  explorerMenu: true,
-  logsFolder: "%LOCALAPPDATA%\\Lumen\\logs",
+  alertsSent: {},
   experimentalSystem: false,
   experimentalWsl: false,
   experimentalMove: false,
@@ -117,7 +117,15 @@ function writeSettings(s: Settings): void {
   }
 }
 
+/** Intégration Windows du dernier backend factice créé (tests : simuler l'Explorateur, l'icône). */
+let lastIntegration: MockIntegration | null = null;
+export function mockIntegration(): MockIntegration | null {
+  return lastIntegration;
+}
+
 export function createMockBackend(now: () => number = Date.now): Backend {
+  const integration = createIntegration(() => VOLUMES.filter((v) => v.kind !== "network").map((v) => v.letter));
+  lastIntegration = integration;
   let locale: Locale = "fr";
   let settings = readSettings();
   const timeline = createMockTimeline(now);
@@ -291,13 +299,14 @@ export function createMockBackend(now: () => number = Date.now): Backend {
     },
 
     appInfo() {
-      return resolved({ elevated: false, fastScanAvailable: true, version: "0.1.0", profile: "C:\\Users\\Arthur" });
+      return resolved({ elevated: false, fastScanAvailable: true, version: "0.9.0", profile: "C:\\Users\\Arthur" });
     },
 
     volumes() {
       return resolved<Volume[]>(
         VOLUMES.map((v) => ({
           id: v.id,
+          key: `mock-${v.id}`,
           letter: v.letter,
           label: l(v.label),
           kind: v.kind,
@@ -800,5 +809,15 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       writeSettings(settings);
       return resolved({ ...settings });
     },
+
+    integration: integration.integration,
+    setExplorerMenu: (on) => integration.setExplorerMenu(on),
+    setAutostart: integration.setAutostart,
+    applyIntegration: integration.applyIntegration,
+    takeOpenRequest: integration.takeOpenRequest,
+    onIntegrationEvent: integration.onIntegrationEvent,
+    notifyLowSpace: integration.notifyLowSpace,
+    reportError: integration.reportError,
+    openLogs: integration.openLogs,
   };
 }

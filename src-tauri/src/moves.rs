@@ -391,11 +391,14 @@ fn start(app: &AppHandle, plan_id: u32, fingerprint: &str) -> Result<MoveRunDto,
             (MoveRunDto { step: step_name, message, refusals, ..run_dto(id, &plan, outcome) }, None)
         }
     };
-    let mut inner = lock(&state)?;
-    inner.running = None;
-    if let Some(s) = staged {
-        inner.staged.insert(id, s);
+    {
+        let mut inner = lock(&state)?;
+        inner.running = None;
+        if let Some(s) = staged {
+            inner.staged.insert(id, s);
+        }
     }
+    write_junction_list(app);
     Ok(dto)
 }
 
@@ -428,6 +431,7 @@ fn confirm(app: &AppHandle, move_id: i64, delete: bool) -> Result<MoveFinishDto,
         Finished::RollbackFailed(m) => ("failed", Some("confirm"), "rollbackFailed", Some(m.clone()), 0),
     };
     with_journal(app, |j| store::update(j.conn(), move_id, state_name, step, message.as_deref(), Some(unix_ms())).map_err(Into::into))?;
+    write_junction_list(app);
     Ok(MoveFinishDto { outcome, message, freed })
 }
 
@@ -474,6 +478,7 @@ fn list(app: &AppHandle) -> Result<Vec<MoveRowDto>, LumenError> {
             health,
         });
     }
+    write_junction_list(app);
     Ok(out)
 }
 
@@ -508,14 +513,41 @@ fn undo(app: &AppHandle, move_id: i64) -> Result<MoveUndoDto, LumenError> {
     }
     let result = platform::undo(&row.source, &row.target, &emitter(app, move_id));
     lock(&state)?.running = None;
-    Ok(match result {
+    let dto = match result {
         Undone::Done { recycle_error } => {
             with_journal(app, |j| store::undone(j.conn(), move_id, unix_ms()).map_err(Into::into))?;
             MoveUndoDto { outcome: "done", message: recycle_error.map(|e| format!("la copie reste sur le disque cible (Corbeille : {e})")) }
         }
         Undone::Refused(m) => MoveUndoDto { outcome: "refused", message: Some(m) },
         Undone::Failed { error, .. } => MoveUndoDto { outcome: "failed", message: Some(error) },
-    })
+    };
+    write_junction_list(app);
+    Ok(dto)
+}
+
+/// Liste lue par la désinstallation (`installer/hooks.nsh`), qui prévient sans jamais y toucher.
+pub const JUNCTIONS_FILE: &str = "jonctions.txt";
+
+/// Jonctions que Lumen a pu laisser : déplacement terminé et non annulé, en attente de
+/// confirmation ou en échec. Une ligne par jonction : `dossier → cible`.
+fn junction_lines(rows: &[store::Row]) -> String {
+    rows.iter()
+        .filter(|r| r.undone_at.is_none() && matches!(r.state.as_str(), "running" | "done" | "failed"))
+        .map(|r| format!("{}  →  {}\r\n", r.source, r.target))
+        .collect()
+}
+
+/// Réécrit `%LOCALAPPDATA%\Lumen\jonctions.txt` (UTF-16 LE sans BOM, lu par NSIS) après chaque
+/// changement et au démarrage.
+pub(crate) fn write_junction_list(app: &AppHandle) {
+    let Ok(rows) = with_journal(app, |j| store::list(j.conn()).map_err(Into::into)) else {
+        return;
+    };
+    let Ok(dir) = app.path().local_data_dir() else {
+        return;
+    };
+    let bytes: Vec<u8> = junction_lines(&rows).encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let _ = std::fs::write(dir.join("Lumen").join(JUNCTIONS_FILE), bytes);
 }
 
 mod platform {
@@ -653,6 +685,24 @@ mod tests {
         assert_eq!(all[1].undone_at, Some(3000));
         // Un état hors de la liste est refusé par la base.
         assert!(update(c, id, "inconnu", None, None, None).is_err());
+    }
+
+    #[test]
+    fn jonctions_listees_pour_la_desinstallation() {
+        let j = Journal::in_memory().unwrap();
+        let c = j.conn();
+        let m = NewMove { source: "C:\\Users\\Arthur\\Vidéos", target: "D:\\Lumen\\Déplacés\\C\\Users\\Arthur\\Vidéos", source_volume_key: None, target_volume_key: None, bytes: 1, files: 1, at: 1000 };
+        let done = insert(c, &m).unwrap();
+        update(c, done, "done", None, None, Some(1100)).unwrap();
+        let back = insert(c, &NewMove { source: "C:\\Jeux", at: 2000, ..m }).unwrap();
+        update(c, back, "rolledBack", None, None, Some(2100)).unwrap();
+        let cancelled = insert(c, &NewMove { source: "C:\\Musique", at: 3000, ..m }).unwrap();
+        update(c, cancelled, "done", None, None, Some(3100)).unwrap();
+        undone(c, cancelled, 3200).unwrap();
+        // En attente de confirmation : la jonction existe déjà.
+        insert(c, &NewMove { source: "C:\\Photos", at: 4000, ..m }).unwrap();
+        let lines = junction_lines(&store::list(c).unwrap());
+        assert_eq!(lines, "C:\\Photos  →  D:\\Lumen\\Déplacés\\C\\Users\\Arthur\\Vidéos\r\nC:\\Users\\Arthur\\Vidéos  →  D:\\Lumen\\Déplacés\\C\\Users\\Arthur\\Vidéos\r\n");
     }
 
     #[test]

@@ -12,6 +12,7 @@ mod e2e;
 mod dev;
 mod error;
 mod games;
+mod integration;
 mod journal;
 mod moves;
 mod persist;
@@ -36,7 +37,22 @@ pub fn helper_entry() -> Option<i32> {
 
 pub fn run() {
     advanced::ipc::mark_session_start();
+    if let Some(dir) = integration::logs_dir() {
+        integration::crashlog::install_panic_hook(dir);
+    }
     let result = tauri::Builder::default()
+        // Toujours le premier plugin : un second lancement transmet ses arguments et s'arrête.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| integration::on_second_instance(app, &argv)))
+        .setup(|app| {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            integration::on_launch(app.handle(), &args);
+            // Jonctions du déplacement intelligent, listées pour la désinstallation.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || moves::write_junction_list(&handle));
+            Ok(())
+        })
+        .on_window_event(integration::on_window_event)
+        .manage(integration::IntegrationState::default())
         .manage(scanning::ScanState::default())
         .manage(cleanup::CleanState::default())
         .manage(cleanup::JournalState::default())
@@ -47,6 +63,14 @@ pub fn run() {
         .manage(moves::MoveState::default())
         .manage(report::ReportState::default())
         .invoke_handler(tauri::generate_handler![
+            integration::integration_state,
+            integration::integration_set_menu,
+            integration::integration_set_autostart,
+            integration::integration_apply,
+            integration::open_request_take,
+            integration::notify_low_space,
+            integration::crash_report,
+            integration::logs_open,
             moves::move_check,
             moves::move_start,
             moves::move_confirm,

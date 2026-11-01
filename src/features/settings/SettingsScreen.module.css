@@ -151,3 +151,24 @@
   height: 100%;
   background: var(--text-label);
 }
+
+/* Licences des composants tiers : texte brut, défilant dans la fenêtre modale. */
+.notices {
+  max-height: 60vh;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--r-bar);
+  background: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+}
