@@ -109,6 +109,7 @@ pub(crate) fn grant_for(applied: &Applied, scan: &Scan, rule: &Rule, n: NodeId) 
 pub fn select(applied: &Applied, scan: &Scan, ids: &[String]) -> Result<Selection, LumenError> {
     let set = applied.set().ok_or_else(|| LumenError::UnknownReco(ids.join(", ")))?;
     let mut sel = Selection { targets: Vec::new(), allow: Allowlist::new(), commands: Vec::new(), rule_names: HashMap::new(), elevated: false, guard: None, app_dirs: Vec::new() };
+    let mut guarded = Vec::new();
     for id in ids {
         let reco = applied.analysis.recos.iter().find(|r| &set.rules[r.rule].id == id).ok_or_else(|| LumenError::UnknownReco(id.clone()))?;
         let rule = &set.rules[reco.rule];
@@ -132,9 +133,25 @@ pub fn select(applied: &Applied, scan: &Scan, ids: &[String]) -> Result<Selectio
             let Some(exp) = expected(scan, n) else { continue };
             let contents = exp.directory.then(|| tree(scan, n));
             sel.targets.push(Target { path: scan.path(n), authority: Authority::Rule(rule.id.clone()), expected: exp, bytes: bytes_of(scan, n), contents, hash: None });
+            if rule.guard == Some(rules::schema::Guard::OwnerApp) {
+                guarded.extend(WinPath::parse(&scan.path(n)));
+            }
         }
     }
+    if !guarded.is_empty() {
+        sel.guard = Some(owner_app_guard(&applied.env, &guarded));
+    }
     Ok(sel)
+}
+
+/// Garde `owner-app` : les applis à qui appartiennent ces caches doivent être fermées (nom de
+/// l'appli lu dans le chemin sous AppData, voir `ProcessGuard::app_caches`).
+fn owner_app_guard(env: &rules::Env, caches: &[WinPath]) -> safety::guard::ProcessGuard {
+    use rules::schema::Var;
+    let roots: Vec<WinPath> = [Var::AppData, Var::LocalAppData].iter().filter_map(|v| env.get(*v).cloned()).collect();
+    let mut programs: Vec<WinPath> = [Var::ProgramFiles, Var::ProgramFilesX86].iter().filter_map(|v| env.get(*v).cloned()).collect();
+    programs.extend(env.get(Var::LocalAppData).and_then(|l| l.join("Programs").ok()));
+    safety::guard::ProcessGuard::app_caches(caches, &roots, &programs)
 }
 
 // --- DTO -------------------------------------------------------------------------------------
@@ -789,6 +806,53 @@ mod tests {
         let rule = a.set().unwrap().rules.iter().find(|r| r.id == "caches-shaders").unwrap();
         let g = grant_for(&a, &scan, rule, scan.find("AppData\\Local\\D3DSCache\\a.bin").unwrap()).unwrap();
         assert_eq!((g.root.display_string().as_str(), g.scope), ("C:\\Users\\Arthur\\AppData\\Local\\D3DSCache", Scope::Contents));
+    }
+
+    /// Caches d'applications : jamais cochés d'office, refusés tant que l'appli tourne.
+    #[test]
+    fn caches_d_applications_gardes_par_l_appli() {
+        use rules::schema::Var;
+        use safety::guard::RunningProcess;
+        use scan::model::Builder;
+        use scan::{Kind, Method, RawEntry, Stats};
+        let wp = |s: &str| WinPath::parse(s).unwrap();
+        let e = |name: &str, kind: Kind, size: u64| RawEntry { name: name.into(), kind, attributes: 0, file_id: 0, logical: size, allocated: size, modified: 1, accessed: 1 };
+        let mut b = Builder::new(&e("Arthur", Kind::Dir, 0));
+        let appdata = b.add_children(0, &[e("AppData", Kind::Dir, 0)]).start;
+        let roaming = b.add_children(appdata, &[e("Roaming", Kind::Dir, 0)]).start;
+        let discord = b.add_children(roaming, &[e("discord", Kind::Dir, 0)]).start;
+        let d = b.add_children(discord, &[e("Cache", Kind::Dir, 0), e("Local Storage", Kind::Dir, 0)]);
+        let cache = b.add_children(d.start, &[e("Cache_Data", Kind::Dir, 0)]).start;
+        b.add_children(cache, &[e("f_000001", Kind::File, 4000)]);
+        b.add_children(d.start + 1, &[e("leveldb", Kind::File, 100)]);
+        let scan = b.finish("C:\\Users\\Arthur".into(), 1, Method::Walk, false, Stats::default());
+        let layout = safety::denylist::SystemLayout {
+            windows: wp("C:\\Windows"),
+            program_files: vec![wp("C:\\Program Files")],
+            program_data: wp("C:\\ProgramData"),
+            users: wp("C:\\Users"),
+            profile: wp("C:\\Users\\Arthur"),
+            public: wp("C:\\Users\\Public"),
+            other_profiles: Vec::new(),
+        };
+        let mut env = rules::Env::new();
+        env.set(Var::UserProfile, wp("C:\\Users\\Arthur"))
+            .set(Var::AppData, wp("C:\\Users\\Arthur\\AppData\\Roaming"))
+            .set(Var::LocalAppData, wp("C:\\Users\\Arthur\\AppData\\Local"))
+            .set(Var::ProgramFiles, wp("C:\\Program Files"));
+        let deny = safety::denylist::DenyList::new(&layout);
+        let ctx = rules::Context { env: &env, deny: &deny, now: 2, read_disk: false };
+        let analysis = rules::analyze(crate::analysis::builtin().as_ref().unwrap(), &scan, &ctx);
+        let a = crate::analysis::Applied { analysis, env, profile: Some("C:\\Users\\Arthur".into()) };
+        let reco = a.recommendations(&scan).into_iter().find(|r| r.id == "caches-applications").unwrap();
+        assert!(!reco.precheck, "jamais coché d'office");
+        let sel = select(&a, &scan, &["caches-applications".into()]).unwrap();
+        let paths: Vec<&str> = sel.targets.iter().map(|t| t.path.as_str()).collect();
+        assert_eq!(paths, ["C:\\Users\\Arthur\\AppData\\Roaming\\discord\\Cache\\Cache_Data\\f_000001"], "jamais Local Storage");
+        let guard = sel.guard.expect("garde de l'appli");
+        let run = |name: &str, path: &str| RunningProcess { name: name.into(), path: WinPath::parse(path).ok() };
+        assert!(guard.blocking(&[run("Discord.exe", "C:\\Users\\Arthur\\AppData\\Local\\Discord\\app-1.0.9\\Discord.exe")]).is_some());
+        assert!(guard.blocking(&[run("explorer.exe", "C:\\Windows\\explorer.exe")]).is_none());
     }
 
     #[test]

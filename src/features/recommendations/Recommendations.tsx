@@ -1,3 +1,4 @@
+import { defaultChecked } from "../../core/precheck";
 import { useEffect } from "react";
 import { openCleanup } from "../../app/cleaning";
 import { useCopyFlash } from "../../app/clipboard";
@@ -130,7 +131,7 @@ export function Recommendations() {
           <div className={styles.actions}>
             <Button
               variant="link"
-              onClick={() => setChecked([...new Set([...checked, ...safe.map((r) => r.id)])])}
+              onClick={() => setChecked([...new Set([...checked, ...defaultChecked(safe)])])}
             >
               {t("reco.selectSafe")}
             </Button>

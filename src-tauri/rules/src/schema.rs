@@ -147,6 +147,16 @@ pub enum Screen {
     Games,
 }
 
+/// Garde de processus d'une règle (`safety::guard`) : nettoyage refusé tant que le programme
+/// concerné tourne.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Guard {
+    /// L'appli à qui appartient chaque cache, lue dans son chemin sous AppData
+    /// (`ProcessGuard::app_caches`).
+    OwnerApp,
+}
+
 /// Suppression (par `safety`, jalon 5) ou commande officielle seule (les cibles sont alors
 /// seulement mesurées : Windows.old, par exemple, n'est jamais supprimé directement).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -241,6 +251,10 @@ pub struct Rule {
     /// Contenu « opaque » (dossiers nommés par empreinte : pip http-v2, npm _cacache,
     /// D3DSCache…) : la treemap n'y descend pas et montre une seule tuile avec ce libellé.
     pub opaque: Option<Text>,
+    /// « Sans risque » coché d'office (par défaut). `false` : proposé, jamais précoché.
+    pub precheck: bool,
+    /// Programmes qui doivent être fermés pendant le nettoyage.
+    pub guard: Option<Guard>,
     pub screen: Screen,
     pub targets: Vec<Target>,
     pub scope: Scope,
@@ -314,6 +328,9 @@ struct RuleRaw {
     regenerated_by: Option<Text>,
     tip: Option<Text>,
     opaque: Option<Text>,
+    #[serde(default = "yes")]
+    precheck: bool,
+    guard: Option<Guard>,
     #[serde(default)]
     screen: Screen,
     #[serde(default)]
@@ -338,6 +355,10 @@ struct AreaRaw {
     targets: Vec<String>,
     #[serde(default)]
     project_markers: Vec<String>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn valid_id(id: &str) -> bool {
@@ -442,6 +463,12 @@ pub fn load(source: &str) -> Result<RuleSet, LoadError> {
         if let Some(t) = &r.opaque {
             check_text(&mut errors, &id, "opaque", t, 60);
         }
+        if !r.precheck && r.status != Status::Safe {
+            errors.push(format!("{id} : precheck n'a de sens que pour une règle « safe » (un « review » n'est jamais coché d'office)"));
+        }
+        if r.guard.is_some() && (r.action != Action::Delete || r.project.is_some()) {
+            errors.push(format!("{id} : une garde de processus accompagne une suppression directe (action delete, sans projet)"));
+        }
         if r.screen == Screen::Games && (r.status == Status::Safe || r.category != Category::Games) {
             errors.push(format!("{id} : une règle de l'onglet Jeux est « review » et de catégorie « games »"));
         }
@@ -534,6 +561,8 @@ pub fn load(source: &str) -> Result<RuleSet, LoadError> {
             regenerated_by: r.regenerated_by,
             tip: r.tip,
             opaque: r.opaque,
+            precheck: r.precheck,
+            guard: r.guard,
             screen: r.screen,
             targets,
             scope,

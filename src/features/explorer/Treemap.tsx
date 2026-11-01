@@ -290,7 +290,7 @@ function Tile({ node, style, width, height, hoverId, highlight, now, mode, depth
     >
       {width >= 40 && height >= 30 && <Expand node={node} onZoom={onZoom} />}
       {showHead && (
-        <div className={styles.head}>
+        <div className={styles.head} data-stacked={node.opaque !== null || undefined}>
           <span className={styles.name}>{label(node, t)}</span>
           {delta && (
             <span className={styles.delta} data-status={node.gainStatus}>
@@ -369,7 +369,7 @@ function Children({ node, level, hoverId, highlight, now, mode, depth, t, onActi
           >
             {rect.w >= 40 && rect.h >= 24 && <Expand node={item} onZoom={onZoom} />}
             {showLabel && (
-              <div className={styles.childHead}>
+              <div className={styles.childHead} data-stacked={(item.opaque !== null && rect.h >= 40) || undefined}>
                 <span className={styles.childName}>{label(item, t)}</span>
                 {delta ? (
                   <span className={styles.delta} data-status={item.gainStatus}>

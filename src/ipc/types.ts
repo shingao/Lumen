@@ -169,6 +169,8 @@ export interface Recommendation {
   size: number;
   /** Tuiles mises en avant au survol. */
   highlight: NodeId[];
+  /** `false` : « Sans risque » mais jamais coché d'office (caches d'applications). */
+  precheck?: boolean;
 }
 
 export interface RecoFile {

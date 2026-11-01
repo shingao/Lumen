@@ -21,6 +21,9 @@ describe("Treemap", () => {
     expect(npmTile.dataset.opaque).toBeDefined();
     expect(npmTile.dataset.dim).toBeUndefined();
     expect(npmTile.querySelector("[data-node]")).toBeNull();
+    // Libellé long : le gain passe sur sa propre ligne sous le titre, jamais tronqué.
+    const head = npmTile.querySelector("[data-stacked]");
+    expect(head?.textContent).toMatch(/^Contenu interne du cache npm−/);
     const projects = screen.getByRole("button", { name: /^Projets,/ });
     expect(projects.dataset.hatch).toBeUndefined();
     expect(projects.dataset.dim).toBeDefined();
