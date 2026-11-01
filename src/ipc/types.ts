@@ -667,11 +667,16 @@ export interface Game {
   name: string;
   installDir: string | null;
   size: number | null;
-  /** `launcher` : taille annoncée ; `measured` : mesurée sur le disque. */
-  sizeSource: "launcher" | "measured" | "unknown";
+  /** `launcher` : taille annoncée ; `analysis` : lue dans l'analyse en cours ; `measured` :
+   * mesurée sur le disque (dossier hors de l'analyse, mesure gardée en cache). */
+  sizeSource: "launcher" | "analysis" | "measured" | "unknown";
   drive: string | null;
-  /** Dernière partie (ms), seulement si le launcher la connaît : jamais une date inventée. */
+  /** Dernière partie (ms), donnée par le launcher ou estimée : jamais une date inventée. */
   lastPlayed: number | null;
+  /** Estimée d'après les journaux de parties (Riot ne la donne pas). */
+  lastPlayedEstimated: boolean;
+  /** Modes inclus, jamais comptés à part (Teamfight Tactics dans League of Legends). */
+  modes: string[];
   status: "keep" | "review";
   cover: boolean;
   /** Ce que Lumen peut ouvrir : adresse Steam ou appli du Store, le launcher, ou rien. */

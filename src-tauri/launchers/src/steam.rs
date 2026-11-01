@@ -131,6 +131,8 @@ pub fn detect(reg: &dyn Registry, d: &mut Detection) {
                 last_played: last,
                 cover: cover(&root, appid),
                 shader_cache: shader.is_dir().then_some(shader),
+                modes: Vec::new(),
+                last_played_estimated: false,
             });
         }
     }

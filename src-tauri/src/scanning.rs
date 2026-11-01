@@ -895,6 +895,14 @@ pub fn scan_find(state: State<'_, ScanState>, scan_id: u32, path: String) -> Res
     Ok(find_path(&e.scan, &path).map(i64::from))
 }
 
+/// Taille allouée d'un dossier s'il est dans l'une des analyses gardées (un jeu dans l'analyse
+/// en cours : pas besoin de le remesurer).
+pub(crate) fn size_in_scans(state: &ScanState, dir: &std::path::Path) -> Option<u64> {
+    let path = dir.to_str()?;
+    let inner = state.0.lock().ok()?;
+    inner.results.values().find_map(|e| find_path(&e.scan, path).and_then(|id| e.scan.node(id)).map(|n| n.allocated))
+}
+
 pub(crate) fn find_path(s: &Scan, path: &str) -> Option<NodeId> {
     let root = s.root_path.trim_end_matches('\\');
     let path = path.trim_end_matches('\\');

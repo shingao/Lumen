@@ -26,9 +26,12 @@ function dockerState(): "on" | "off" | "absent" {
   }
 }
 
-type MockGame = Omit<Game, "lastPlayed" | "status" | "size" | "canMove" | "data"> & {
+type MockGame = Omit<Game, "lastPlayed" | "lastPlayedEstimated" | "modes" | "status" | "size" | "canMove" | "data"> & {
   size: number | null;
   daysAgo: number | null;
+  /** Dernière partie estimée (journaux de parties Riot). */
+  estimated?: boolean;
+  modes?: string[];
   hue: number;
   /** Données et sauvegardes hors du dossier du jeu (Go) et leurs dossiers. */
   data?: [number, string[]];
@@ -48,7 +51,10 @@ const GAMES: MockGame[] = [
   { id: "epic:Fortnite", launcher: "epic", name: "Fortnite", installDir: "D:\\Epic Games\\Fortnite", size: 38.6, sizeSource: "launcher", drive: "D:", daysAgo: null, cover: false, open: "app", hue: 280 },
   { id: "gog:1207664663", launcher: "gog", name: "The Witcher 3: Wild Hunt", installDir: "C:\\GOG Games\\The Witcher 3 Wild Hunt GOTY", size: null, sizeSource: "measured", drive: "C:", daysAgo: null, cover: false, open: "app", hue: 0 },
   { id: "battlenet:Fen", launcher: "battlenet", name: "Diablo IV", installDir: "D:\\Battle.net\\Diablo IV", size: null, sizeSource: "measured", drive: "D:", daysAgo: null, cover: false, open: "app", hue: 0 },
-  { id: "riot:league_of_legends.live", launcher: "riot", name: "League of Legends", installDir: "C:\\Riot Games\\League of Legends", size: null, sizeSource: "measured", drive: "C:", daysAgo: null, cover: false, open: "app", hue: 0 },
+  // League of Legends : Teamfight Tactics inclus (mode, jamais un second jeu), taille lue dans
+  // l'analyse, dernière partie estimée par les journaux de parties ; le PBE est un jeu à part.
+  { id: "riot:league_of_legends.live", launcher: "riot", name: "League of Legends", installDir: "C:\\Riot Games\\League of Legends", size: null, sizeSource: "analysis", drive: "C:", daysAgo: 3, estimated: true, modes: ["Teamfight Tactics"], cover: false, open: "app", hue: 0 },
+  { id: "riot:league_of_legends.pbe", launcher: "riot", name: "League of Legends PBE", installDir: "C:\\Riot Games\\League of Legends (PBE)", size: null, sizeSource: "measured", drive: "C:", daysAgo: null, modes: ["Teamfight Tactics"], cover: false, open: "app", hue: 0 },
   { id: "riot:valorant.live", launcher: "riot", name: "VALORANT", installDir: "C:\\Riot Games\\VALORANT", size: null, sizeSource: "measured", drive: "C:", daysAgo: null, cover: false, open: "app", hue: 0 },
   {
     id: "curseforge:All the Mods 9", launcher: "curseforge", name: "All the Mods 9", installDir: "C:\\Users\\Arthur\\curseforge\\minecraft\\Instances\\All the Mods 9", size: null, sizeSource: "measured", drive: "C:", daysAgo: 4, cover: false, open: "app", hue: 0,
@@ -62,6 +68,7 @@ const MEASURED: Record<string, number> = {
   "gog:1207664663": 46.3,
   "battlenet:Fen": 88.9,
   "riot:league_of_legends.live": 22.6,
+  "riot:league_of_legends.pbe": 19.8,
   "riot:valorant.live": 35.4,
   "curseforge:All the Mods 9": 3.1,
   "curseforge:Vanilla+": 0.6,
@@ -69,10 +76,12 @@ const MEASURED: Record<string, number> = {
 };
 
 export function mockGames(now: number): GamesResult {
-  const games: Game[] = GAMES.map(({ daysAgo, hue: _hue, size, data, ...g }) => {
+  const games: Game[] = GAMES.map(({ daysAgo, hue: _hue, size, data, estimated, modes, ...g }) => {
     const lastPlayed = daysAgo === null ? null : now - daysAgo * DAY;
     return {
       ...g,
+      lastPlayedEstimated: lastPlayed !== null && (estimated ?? false),
+      modes: modes ?? [],
       size: gb(size ?? MEASURED[g.id] ?? 0),
       lastPlayed,
       status: lastPlayed !== null && now - lastPlayed > 183 * DAY ? "review" : "keep",

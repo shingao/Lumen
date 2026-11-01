@@ -54,12 +54,15 @@ function GameCard({ game }: { game: Game }) {
           {launcher}
           {game.drive ? ` · ${game.drive}` : ""}
         </span>
-        <span className={styles.size} title={game.sizeSource === "measured" ? t("games.size.measured") : undefined}>
+        {game.modes.length > 0 && <span className={styles.modes}>{t("games.modes", { modes: game.modes.join(", ") })}</span>}
+        <span className={styles.size} title={game.sizeSource === "measured" ? t("games.size.measured") : game.sizeSource === "analysis" ? t("games.size.analysis") : undefined}>
           {game.size === null ? t("games.size.unknown") : formatBytes(game.size, t.locale)}
           {game.sizeSource === "measured" && <span className={styles.measured}>{t("games.size.measuredShort")}</span>}
         </span>
-        <span className={styles.meta}>
-          {game.lastPlayed === null ? t("games.lastPlayed.unknown") : t("games.lastPlayed", { when: formatRelative(game.lastPlayed, t.locale) })}
+        <span className={styles.meta} title={game.lastPlayedEstimated ? t("games.lastPlayed.estimatedHint") : undefined}>
+          {game.lastPlayed === null
+            ? t("games.lastPlayed.unknown")
+            : t(game.lastPlayedEstimated ? "games.lastPlayed.estimated" : "games.lastPlayed", { when: formatRelative(game.lastPlayed, t.locale) })}
         </span>
         <span className={`${adv.status} ${game.status === "keep" ? styles.keep : ""}`}>
           <StatusDot status={game.status} />

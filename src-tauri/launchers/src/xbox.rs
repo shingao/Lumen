@@ -58,7 +58,7 @@ fn game(dir: &Path, d: &mut Detection) {
     if d.has_dir(dir) {
         return;
     }
-    d.games.push(Game { launcher: Launcher::Xbox, key, name, install_dir: Some(dir.to_path_buf()), size: None, last_played: None, cover, shader_cache: None });
+    d.games.push(Game { launcher: Launcher::Xbox, key, name, install_dir: Some(dir.to_path_buf()), size: None, last_played: None, cover, shader_cache: None, modes: Vec::new(), last_played_estimated: false });
 }
 
 pub fn detect(drives: &[PathBuf], d: &mut Detection) {

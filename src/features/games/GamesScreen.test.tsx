@@ -44,7 +44,7 @@ describe("Jeux", () => {
     render(<GamesScreen />);
     const list = await screen.findByRole("list", { name: "Jeux installés" });
     const cards = within(list).getAllByRole("listitem");
-    expect(cards.length).toBe(12);
+    expect(cards.length).toBe(13);
     // Trié par taille : Baldur's Gate 3 d'abord.
     expect(cards[0]?.getAttribute("aria-label")).toBe("Baldur's Gate 3");
     expect(within(list).queryAllByRole("checkbox")).toHaveLength(0);
@@ -78,6 +78,15 @@ describe("Jeux", () => {
     render(<GamesScreen />);
     const lol = await screen.findByRole("listitem", { name: "League of Legends" });
     expect(within(lol).getByText(/Riot Client · C:/)).toBeTruthy();
+    // Teamfight Tactics : un mode de la carte League of Legends, jamais une carte à part ;
+    // dernière partie estimée (Riot ne la donne pas), taille comptée une fois.
+    expect(within(lol).getByText("inclut Teamfight Tactics")).toBeTruthy();
+    expect(within(lol).getByText(/Dernière partie il y a 3 jours \(estimée\)/)).toBeTruthy();
+    expect(screen.queryByRole("listitem", { name: /Teamfight/ })).toBeNull();
+    // Le PBE : un jeu à part entière, sa propre carte et son propre dossier.
+    const pbe = screen.getByRole("listitem", { name: "League of Legends PBE" });
+    expect(within(pbe).getByText("inclut Teamfight Tactics")).toBeTruthy();
+    expect(within(pbe).getByText("Dernière partie inconnue")).toBeTruthy();
     const move = within(lol).getByRole("button", { name: "Déplacer" }) as HTMLButtonElement;
     expect(move.disabled).toBe(true);
     expect(move.title).toMatch(/Riot Client ne déplace pas les jeux/);
@@ -113,7 +122,7 @@ describe("Jeux", () => {
       .getAllByRole("listitem")
       .map((c) => c.getAttribute("aria-label"));
     expect(names.slice(0, 3)).toEqual(["Elden Ring", "Cyberpunk 2077", "Vanilla+"]);
-    expect(names.slice(-7)).toEqual(expect.arrayContaining(["Fortnite", "Diablo IV", "League of Legends", "Forza Horizon 5"]));
+    expect(names.slice(-7)).toEqual(expect.arrayContaining(["Fortnite", "Diablo IV", "League of Legends PBE", "Forza Horizon 5"]));
   });
 
   it("shaders : À vérifier, jamais cochés, explication et conseil, shadercache Steam informatif", async () => {
