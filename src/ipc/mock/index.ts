@@ -387,6 +387,10 @@ export function createMockBackend(now: () => number = Date.now): Backend {
       return resolved<Volume[]>(volumeList());
     },
 
+    refreshRemovable() {
+      return resolved<Volume[]>(volumeList());
+    },
+
     refreshVolumes() {
       return resolved<Volume[]>(volumeList());
     },

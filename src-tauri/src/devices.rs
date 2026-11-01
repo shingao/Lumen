@@ -226,6 +226,25 @@ impl Devices {
         }
     }
 
+    /// « Actualiser » (bouton au bout des puces) : relit les détails des lecteurs amovibles (clé,
+    /// carte SD, lecteur de cartes, y compris vide : une carte insérée sans nouvelle lettre
+    /// apparaît), hors du verrou ; jamais un lecteur réseau, jamais un disque interne.
+    pub fn refresh_removable(&self, src: &dyn DriveSource) {
+        let removable: Vec<(char, Drive)> = self
+            .lock()
+            .slots
+            .iter()
+            .filter(|(_, s)| {
+                s.drive != Drive::Network
+                    && (s.drive == Drive::Removable || matches!(&s.read, Read::Ready(d) if matches!(kind(s.drive, d.bus), "usb" | "sd" | "removable")))
+            })
+            .map(|(l, s)| (*l, s.drive))
+            .collect();
+        for (l, drive) in removable {
+            self.store(l, drive, src.details(l, drive));
+        }
+    }
+
     /// Infobulle et alertes (si l'utilisateur les a activées) : espace des disques internes
     /// déjà lus, jamais un lecteur réseau ni un support amovible.
     pub fn refresh_space(&self, src: &dyn DriveSource) {
@@ -474,6 +493,8 @@ mod tests {
         calls: Mutex<Vec<(&'static str, char)>>,
         gate: Arc<(Mutex<bool>, Condvar)>,
         block: Mutex<Vec<char>>,
+        /// Lettres sans support lisible (lecteur de cartes vide).
+        empty: Mutex<Vec<char>>,
     }
 
     impl Fake {
@@ -511,7 +532,14 @@ mod tests {
                     open = cv.wait(open).unwrap();
                 }
             }
-            let bus = if l == 'E' { Bus::Usb } else { Bus::Other };
+            if self.empty.lock().unwrap().contains(&l) {
+                return None;
+            }
+            let bus = match l {
+                'E' | 'H' => Bus::Usb,
+                'S' => Bus::Sd,
+                _ => Bus::Other,
+            };
             let _ = drive;
             Some(Details { label: format!("Disque {l}"), file_system: "NTFS".into(), total: 100, free: 40, guid: Some(format!("\\\\?\\Volume{{{l}}}\\")), serial: 1, bus, mft_capable: true })
         }
@@ -598,5 +626,31 @@ mod tests {
         src.open();
         reader.join().unwrap();
         assert!(dev.get("E:").unwrap().ready);
+    }
+
+    #[test]
+    fn actualiser_relit_les_amovibles_seulement() {
+        let src = Fake::default();
+        let dev = Devices::new();
+        src.plug('C', Drive::Fixed);
+        src.plug('H', Drive::Fixed); // disque USB qui se déclare fixe
+        src.plug('S', Drive::Removable); // lecteur de cartes, vide au départ
+        src.plug('Z', Drive::Network);
+        src.empty.lock().unwrap().push('S');
+        dev.fill(&src, &dev.poll(&src).unwrap().to_read());
+        assert!(dev.get("S:").is_none(), "lecteur de cartes vide : pas de puce");
+        // Carte insérée : la lettre ne change pas, le sondage ne voit rien.
+        src.empty.lock().unwrap().clear();
+        assert_eq!(dev.poll(&src), None);
+        assert!(dev.get("S:").is_none());
+        // « Actualiser » : la carte apparaît ; disque USB relu ; ni C: ni le réseau.
+        dev.refresh_removable(&src);
+        assert_eq!(dev.get("S:").map(|v| v.kind), Some("sd"));
+        assert_eq!((src.count("details", 'S'), src.count("details", 'H')), (2, 2));
+        assert_eq!((src.count("details", 'C'), src.count("details", 'Z')), (1, 0));
+        // Carte retirée : la puce disparaît au prochain « Actualiser ».
+        src.empty.lock().unwrap().push('S');
+        dev.refresh_removable(&src);
+        assert!(dev.get("S:").is_none());
     }
 }

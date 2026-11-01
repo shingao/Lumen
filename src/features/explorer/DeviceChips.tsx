@@ -7,6 +7,8 @@ import { useState } from "react";
 import { useVolumes } from "../../app/data";
 import { selectTarget } from "../../app/navigation";
 import { useStore } from "../../app/store";
+import { refreshRemovable } from "../../app/volumes";
+import { RefreshIcon } from "../../components/icons";
 import { formatBytes, formatRelative } from "../../core/format";
 import { useT } from "../../i18n";
 import type { ScanTarget, Volume } from "../../ipc/types";
@@ -20,6 +22,7 @@ export function DeviceChips() {
   const target = useStore((s) => s.target);
   const volumes = useVolumes() ?? [];
   const [network, setNetwork] = useState<{ volume: Volume; x: number; y: number } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const user: ScanTarget = { kind: "userProfile" };
 
   const open = (v: Volume, el: HTMLElement) => {
@@ -78,6 +81,20 @@ export function DeviceChips() {
           </button>
         );
       })}
+      <button
+        type="button"
+        className={styles.refresh}
+        aria-label={t("devices.refresh")}
+        title={t("devices.refreshHint")}
+        aria-busy={refreshing || undefined}
+        disabled={refreshing}
+        onClick={() => {
+          setRefreshing(true);
+          void refreshRemovable().finally(() => setRefreshing(false));
+        }}
+      >
+        <RefreshIcon />
+      </button>
       {network && (
         <FastScanConfirm
           x={network.x}

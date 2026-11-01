@@ -43,6 +43,17 @@ export async function loadVolumes(): Promise<Volume[]> {
   }
 }
 
+/** « Actualiser » : relit les lecteurs amovibles (carte insérée dans un lecteur déjà présent),
+ * jamais les lecteurs réseau. */
+export async function refreshRemovable(): Promise<void> {
+  subscribe();
+  try {
+    useVolumeList.setState({ list: await backend.refreshRemovable() });
+  } catch (err) {
+    console.error("actualiser :", err);
+  }
+}
+
 /** Volume d'une cible (le dossier utilisateur est sur son disque système). */
 export function volumeOf(target: ScanTarget, list: readonly Volume[] | null, summaryVolume: string | null): Volume | undefined {
   const letter = target.kind === "volume" ? target.letter : (summaryVolume ?? "C:");

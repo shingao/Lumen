@@ -106,3 +106,28 @@
   font-size: var(--fs-10-5);
   color: var(--text-label);
 }
+
+/* « Actualiser » : discret, au bout de la rangée (lecteurs amovibles seulement). */
+.refresh {
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--r-seg-btn);
+  background: transparent;
+  color: var(--text-label);
+  cursor: pointer;
+}
+
+.refresh:hover {
+  background: var(--bg-sunken);
+  color: var(--text-1);
+}
+
+.refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

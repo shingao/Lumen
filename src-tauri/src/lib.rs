@@ -86,6 +86,7 @@ pub fn run() {
             scanning::app_info,
             scanning::volumes_list,
             scanning::volumes_refresh,
+            scanning::volumes_refresh_removable,
             scanning::scan_start,
             scanning::scan_cancel,
             scanning::scan_summary,

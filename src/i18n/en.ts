@@ -917,6 +917,8 @@ export const en: Record<MessageKey, string> = {
   "devices.chipLabelPending": "{letter}, {kind}, not read yet",
   "devices.reading": "reading…",
   "devices.notRead": "space not read",
+  "devices.refresh": "Refresh removable drives",
+  "devices.refreshHint": "Re-reads USB keys, SD cards and card readers (an inserted card shows up); never network drives",
   "devices.free": "{free} free",
   "devices.analyzed": "analysed {when}",
   "devices.plugged": "{name} plugged in: click its chip to analyse it.",

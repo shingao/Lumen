@@ -14,8 +14,8 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 8 | Dev et Jeux | **fait — validé en lecture seule** (jeux et projets détectés sur PC ; PR #6) ; purge des artefacts, shaders, Docker **non vérifiés en réel** (Sandbox), compactage WSL **non vérifié en réel** (VM) et désactivé par défaut |
 | 9 | Persistance des analyses, recherche instantanée, déplacement intelligent, export de rapport | **fait — validé** pour la persistance, la recherche et l'export (testés sur PC, anonymisation vérifiée ; PR #7) ; déplacement intelligent **non vérifié en réel** (VM avec un second disque) et **désactivé par défaut** (réglage Expérimental) |
 | 10 | Onboarding et astuces contextuelles | **fait — validé** (testé sur PC : tutoriel, analyse en fond, Passer / Échap / flèches, astuces une seule fois, relance depuis les Paramètres ; tutoriel à la place de l'écran validé ; PR #8) |
-| 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | **fait — validé** (tests Sandbox et VM, PR #9 mergée) ; builds en **0.9.x** jusqu'aux tests de la checklist de release |
-| 12 | Retours d'usage : tuiles couvertes lisibles, contenu opaque des caches, Riot (PBE, TFT), « ? » des statuts, analyse en profondeur, périphériques | **fait — validé** (testé sur PC ; PR #10, avec le sondage des périphériques sans lecture des volumes demandé à la validation) |
+| 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | **fait — mergé** (PR #9) ; testé sur PC en usage normal seulement : installeur, désinstalleur, menu contextuel, zone de notification, démarrage et notifications **non vérifiés en réel** (Sandbox / VM, checklist 6 à 11) ; builds en **0.9.x** jusqu'aux tests de la checklist de release |
+| 12 | Retours d'usage : tuiles couvertes lisibles, contenu opaque des caches, Riot (PBE, TFT), « ? » des statuts, analyse en profondeur, périphériques | **fait — validé en usage normal sur PC** (analyse, navigation, Timeline, Jeux, Dev, recherche, export, tutoriel, clé USB ; PR #10, sondage des périphériques sans lecture des volumes) ; mode rapide de l'onglet Profondeur, espace des clichés, carte SD, retrait pendant une analyse **non vérifiés en réel** ; bouton « Actualiser » des lecteurs amovibles ajouté ensuite (PR suivante) |
 
 ---
 
@@ -72,7 +72,7 @@ Branche `claude/jalon-12-usage` (PR #10), partie de `claude/jalon-11-windows` ; 
 - **Profils des autres comptes** : taille totale seulement, même dans la treemap (le nœud est refermé et une demande de zoom à l'intérieur ouvre `Users`).
 - **Détection à chaud par sondage du masque des lettres** plutôt que `WM_DEVICECHANGE` : pas de fenêtre de messages ni de crochet dans la boucle de Tauri, même résultat pour les lettres (branchement, débranchement, lecteur réseau connecté) en 1,5 s au plus, et le code reste dans `devices.rs` testable hors Windows.
 - **Disques en veille** : le sondage ne touche aucun volume. Les seules lectures automatiques sont celles d'une lettre qui apparaît (une fois) et, si l'icône ou les alertes sont activées, l'espace des disques internes toutes les 10 min (`GetDiskFreeSpaceEx`, servi par NTFS depuis la mémoire pour un volume monté : pas d'accès au disque attendu, à vérifier en réel, ligne 14 de la checklist).
-- **Lecteur de cartes vide** (lettre présente, pas de support) : pas de puce ; une carte insérée plus tard sans changement de lettre n'est vue qu'au prochain changement de la liste ou à la relance (le sondage ne lit pas les volumes).
+- **Lecteur de cartes vide** (lettre présente, pas de support) : pas de puce. Une carte insérée plus tard ne change pas la lettre, donc le sondage (qui ne lit pas les volumes) ne la voit pas : le bouton discret **« Actualiser »** au bout de la rangée de puces (ajouté après la validation, `volumes_refresh_removable`) relit les détails des **lecteurs amovibles seulement** (clé, carte SD, lecteur de cartes, disque USB qui se dit fixe), **jamais un lecteur réseau ni un disque interne** ; une carte retirée disparaît au prochain « Actualiser ». Test `actualiser_relit_les_amovibles_seulement` (Rust) et test de la puce (front).
 - **« Pas de nettoyage » sur USB / SD / réseau**, même pour un disque USB qui se déclare fixe (où Windows a une Corbeille) : règle simple et prudente, cohérente avec `safety` ; un disque interne seulement.
 - **Puce « Dossier utilisateur » en tête** : elle remplace l'entrée correspondante de l'ancien menu (cible par défaut, avec les recommandations).
 
@@ -160,22 +160,26 @@ Coût : une DLL COM, un manifeste, la signature obligatoire et un test sur Windo
 
 Tout ce qui est marqué **« non vérifié en réel »**, avec son environnement de test. **La v1.0 n'est étiquetée qu'après ces tests** ; d'ici là, les builds sont en **0.9.x** (non signés).
 
-| # | Fonction (jalon) | Environnement | Ce qu'il faut vérifier |
-|---|---|---|---|
-| 1 | Nettoyage réel des fichiers dormants, doublons, gros fichiers (6) | **Windows Sandbox** | Corbeille, restauration depuis le Journal, un exemplaire de chaque doublon gardé |
-| 2 | Gouffres système : DISM, hibernation, points de restauration, Windows.old (6) — *Expérimental* | **VM Hyper-V** avec checkpoint | une demande UAC par commande, point de restauration avant, le plus ancien gardé s'il en reste moins de 2 |
-| 3 | Purge des artefacts de projets, caches de shaders, `docker image prune` (8) | **Windows Sandbox** | source et `.git` intacts ; rien si Steam tourne ; images étiquetées gardées |
-| 4 | Compactage WSL / Docker (8) — *Expérimental* | **VM** (WSL installé) | `wsl --shutdown`, gain mesuré, `.vhdx` toujours là, distribution qui démarre |
-| 5 | Déplacement intelligent (9) — *Expérimental* | **VM avec un second disque NTFS** | copie vérifiée, jonction, suppression après confirmation, « Annuler le déplacement », reprise après coupure |
-| 6 | Installeur : page Options, mise à jour par-dessus une 0.9.x, désinstallation avec et sans « Supprimer les données » (11) | **Windows Sandbox** | cases appliquées, réglages gardés à la mise à jour, tout retiré à la désinstallation |
-| 7 | Désinstallation avec une jonction du déplacement intelligent, et depuis un autre compte administrateur (11) | **VM avec un second disque** (après le point 5) | liste affichée (jonctions de tous les profils), Annuler arrête tout, OK : jonction, cible et données intactes ; menu et démarrage retirés du compte connecté |
-| 8 | Menu contextuel Windows 10 et Windows 11 (« Afficher plus d'options »), dossier / lecteur / fond (11) | **Windows Sandbox** (Windows 11) | Lumen s'ouvre sur le bon dossier, une seule instance ; partage réseau refusé |
-| 9 | Zone de notification, fermeture qui cache, Quitter, démarrage avec Windows (11) | **VM** (redémarrages) | infobulle juste, snapshot quotidien en fond, aucune fenêtre au démarrage avec l'icône |
-| 10 | Notifications d'espace libre et clic (11) | **VM** (petit disque virtuel presque plein) | une seule par jour et par disque, le clic ouvre l'Analyse de ce disque |
-| 11 | Signature Authenticode (11) | **CI + Windows Sandbox** | installeur, désinstalleur et `lumen.exe` signés ; SmartScreen sans « Éditeur inconnu » |
-| 12 | Type de bus (USB, carte SD), détection à chaud, débranchement pendant une analyse (12) | **PC ou VM avec passage USB** | clé et carte SD reconnues, disque USB « fixe » vu comme USB, puce qui apparaît et disparaît, arrêt propre au retrait |
-| 13 | Analyse en profondeur en mode rapide et espace des clichés (12) | **VM** (points de restauration présents) | MFT par l'assistant élevé, `Win32_ShadowStorage` égal à `vssadmin list shadowstorage` |
-| 14 | Sondage des périphériques et disques en veille (12) | **PC avec un disque dur secondaire en veille** et un lecteur réseau déconnecté | le disque ne se réveille pas tant qu'on ne l'analyse pas (icône et alertes désactivées, puis activées) ; lecteur réseau déconnecté : aucune attente, puce « espace non lu » |
+**Vérifié en réel sur le PC de l'utilisateur, en usage normal (après le jalon 12)** : analyse, navigation de l'Explorer, Timeline, Jeux et Dev (lecture seule), recherche, export de rapport, tutoriel, clé USB. Ces fonctions ne demandaient ni Sandbox ni VM ; elles ne figuraient donc pas dans la liste ci-dessous, sauf la clé USB (ligne 12a).
+
+| # | Fonction (jalon) | Environnement | Ce qu'il faut vérifier | État |
+|---|---|---|---|---|
+| 1 | Nettoyage réel des fichiers dormants, doublons, gros fichiers (6) | **Windows Sandbox** | Corbeille, restauration depuis le Journal, un exemplaire de chaque doublon gardé | non vérifié |
+| 2 | Gouffres système : DISM, hibernation, points de restauration, Windows.old (6) — *Expérimental* | **VM Hyper-V** avec checkpoint | une demande UAC par commande, point de restauration avant, le plus ancien gardé s'il en reste moins de 2 | non vérifié |
+| 3 | Purge des artefacts de projets, caches de shaders, `docker image prune` (8) | **Windows Sandbox** | source et `.git` intacts ; rien si Steam tourne ; images étiquetées gardées | non vérifié |
+| 4 | Compactage WSL / Docker (8) — *Expérimental* | **VM** (WSL installé) | `wsl --shutdown`, gain mesuré, `.vhdx` toujours là, distribution qui démarre | non vérifié |
+| 5 | Déplacement intelligent (9) — *Expérimental* | **VM avec un second disque NTFS** | copie vérifiée, jonction, suppression après confirmation, « Annuler le déplacement », reprise après coupure | non vérifié |
+| 6 | Installeur : page Options, mise à jour par-dessus une 0.9.x, désinstallation avec et sans « Supprimer les données » (11) | **Windows Sandbox** | cases appliquées, réglages gardés à la mise à jour, tout retiré à la désinstallation | non vérifié |
+| 7 | Désinstallation avec une jonction du déplacement intelligent, et depuis un autre compte administrateur (11) | **VM avec un second disque** (après le point 5) | liste affichée (jonctions de tous les profils), Annuler arrête tout, OK : jonction, cible et données intactes ; menu et démarrage retirés du compte connecté | non vérifié |
+| 8 | Menu contextuel Windows 10 et Windows 11 (« Afficher plus d'options »), dossier / lecteur / fond (11) | **Windows Sandbox** (Windows 11) | Lumen s'ouvre sur le bon dossier, une seule instance ; partage réseau refusé | non vérifié |
+| 9 | Zone de notification, fermeture qui cache, Quitter, démarrage avec Windows (11) | **VM** (redémarrages) | infobulle juste, snapshot quotidien en fond, aucune fenêtre au démarrage avec l'icône | non vérifié |
+| 10 | Notifications d'espace libre et clic (11) | **VM** (petit disque virtuel presque plein) | une seule par jour et par disque, le clic ouvre l'Analyse de ce disque | non vérifié |
+| 11 | Signature Authenticode (11) | **CI + Windows Sandbox** | installeur, désinstalleur et `lumen.exe` signés ; SmartScreen sans « Éditeur inconnu » | non vérifié |
+| 12a | Clé USB : puce « USB », apparition et disparition à chaud, bandeau « Pas de Corbeille », analyse et export (12) | **PC** | reconnue sans redémarrer, aucun nettoyage proposé | **vérifié en réel (PC)** |
+| 12b | Carte SD, disque USB qui se déclare « fixe », retrait pendant une analyse (12) | **PC ou VM avec passage USB** | carte SD reconnue « carte SD », disque USB vu comme USB, arrêt propre au retrait | non vérifié |
+| 13 | Analyse en profondeur en mode rapide et espace des clichés (12) | **VM** (points de restauration présents) | MFT par l'assistant élevé, `Win32_ShadowStorage` égal à `vssadmin list shadowstorage` | non vérifié |
+| 14 | Sondage des périphériques et disques en veille (12) | **PC avec un disque dur secondaire en veille** et un lecteur réseau déconnecté | le disque ne se réveille pas tant qu'on ne l'analyse pas (icône et alertes désactivées, puis activées) ; lecteur réseau déconnecté : aucune attente, puce « espace non lu » | non vérifié |
+| 15 | Bouton « Actualiser » des lecteurs amovibles (12) | **PC avec un lecteur de cartes** | carte insérée dans un lecteur déjà présent : la puce apparaît après « Actualiser » ; lecteur réseau jamais relu | non vérifié |
 
 Déjà vérifiés en CI Windows à chaque push (pas besoin de VM pour ceux-là) : suppression réelle sur faux profil (e2e), déplacement C: → D: sur disques virtuels, installation / instance unique / mise à jour / désinstallation silencieuses (`installer-test.ps1` : dont un autre compte simulé — ruches chargées nettoyées, liste de jonctions piégée de son profil lue telle quelle et jamais exécutée — et des entrées orphelines qui ne lancent rien).
 
