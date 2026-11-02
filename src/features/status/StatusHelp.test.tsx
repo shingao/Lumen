@@ -22,7 +22,7 @@ function Harness() {
 describe("« ? » d'un statut", () => {
   beforeEach(() => useStore.setState({ locale: "fr", statusFocus: null, node: null }));
 
-  it("un clic met en évidence et explique ; second clic, Échap ou clic ailleurs arrête", () => {
+  it("un clic met en évidence et explique ; second clic ou Échap arrête ; un clic ailleurs ne ferme que la bulle", () => {
     render(<Harness />);
     const safe = screen.getByRole("button", { name: "Montrer dans la treemap ce qui est sans risque" });
     fireEvent.click(safe);
@@ -37,11 +37,14 @@ describe("« ? » d'un statut", () => {
     fireEvent.click(safe);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(useStore.getState().statusFocus).toBeNull();
-    // Clic ailleurs : fin ; dans la treemap ou sa navigation : rien ne change.
+    // Clic ailleurs : la bulle se ferme, la mise en évidence reste (puce ✕, Échap ou « ? »).
     fireEvent.click(safe);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Zoom" }));
-    expect(useStore.getState().statusFocus?.status).toBe("safe");
+    expect(screen.getByRole("note")).toBeTruthy();
     fireEvent.pointerDown(screen.getByRole("button", { name: "Ailleurs" }));
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(useStore.getState().statusFocus?.status).toBe("safe");
+    fireEvent.click(safe);
     expect(useStore.getState().statusFocus).toBeNull();
   });
 

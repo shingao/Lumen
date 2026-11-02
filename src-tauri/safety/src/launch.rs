@@ -26,6 +26,17 @@ pub const LAUNCHER_EXES: [&str; 9] = [
 /// Launchers installés pour l'utilisateur seul, hors de Program Files (casse ignorée).
 pub const USER_LAUNCHER_EXES: [&str; 2] = ["RiotClientServices.exe", "CurseForge.exe"];
 
+/// Launchers dont l'exécutable a un nom générique : permis seulement dans un dossier de ce nom
+/// (dossier, exécutable ; casse ignorée). HoYoPlay : `HoYoPlay\launcher.exe`.
+pub const FOLDER_LAUNCHERS: [(&str, &str); 1] = [("HoYoPlay", "launcher.exe")];
+
+fn folder_launcher(exe: &WinPath) -> bool {
+    let parent = exe.parent();
+    let folder = parent.as_ref().and_then(|p| p.file_name()).unwrap_or_default();
+    let name = exe.file_name().unwrap_or_default();
+    FOLDER_LAUNCHERS.iter().any(|(d, e)| d.eq_ignore_ascii_case(folder) && e.eq_ignore_ascii_case(name))
+}
+
 /// Applis du Microsoft Store ouvertes par leur identifiant (AUMID), figé.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreApp {
@@ -93,7 +104,7 @@ impl LauncherOpen {
             LauncherOpen::SteamUninstall(_) | LauncherOpen::SteamSettings | LauncherOpen::Store(_) | LauncherOpen::AppsSettings => Ok(()),
             LauncherOpen::UserApp(exe) => {
                 let name = exe.file_name().unwrap_or_default();
-                if !USER_LAUNCHER_EXES.iter().any(|e| e.eq_ignore_ascii_case(name)) {
+                if !USER_LAUNCHER_EXES.iter().any(|e| e.eq_ignore_ascii_case(name)) && !folder_launcher(exe) {
                     return Err(LaunchRefusal::UnknownExe);
                 }
                 if !matches!(exe.prefix(), crate::path::Prefix::Drive(_)) {
@@ -106,7 +117,7 @@ impl LauncherOpen {
             }
             LauncherOpen::App(exe) => {
                 let name = exe.file_name().unwrap_or_default();
-                if !LAUNCHER_EXES.iter().any(|e| e.eq_ignore_ascii_case(name)) {
+                if !LAUNCHER_EXES.iter().any(|e| e.eq_ignore_ascii_case(name)) && !folder_launcher(exe) {
                     return Err(LaunchRefusal::UnknownExe);
                 }
                 if !program_files.iter().any(|pf| exe.is_strictly_under(pf)) {
@@ -161,5 +172,12 @@ mod tests {
         // Autre exécutable, ou sur un partage réseau : refus.
         assert_eq!(LauncherOpen::UserApp(p("C:\\Riot Games\\Riot Client\\cmd.exe")).validate(&pf, false), Err(LaunchRefusal::UnknownExe));
         assert_eq!(LauncherOpen::UserApp(p("\\\\serveur\\partage\\CurseForge.exe")).validate(&pf, false), Err(LaunchRefusal::UnknownExe));
+        // HoYoPlay : `launcher.exe` seulement dans un dossier HoYoPlay (sous Program Files, ou
+        // ailleurs pour l'utilisateur, jamais élevé) ; un autre `launcher.exe` est refusé.
+        assert_eq!(LauncherOpen::App(p("C:\\Program Files\\HoYoPlay\\launcher.exe")).validate(&pf, true), Ok(()));
+        assert_eq!(LauncherOpen::App(p("C:\\Program Files\\Autre\\launcher.exe")).validate(&pf, false), Err(LaunchRefusal::UnknownExe));
+        let hoyo = LauncherOpen::UserApp(p("D:\\Jeux\\HoYoPlay\\launcher.exe"));
+        assert_eq!((hoyo.validate(&pf, false), hoyo.validate(&pf, true)), (Ok(()), Err(LaunchRefusal::Elevated)));
+        assert_eq!(LauncherOpen::UserApp(p("D:\\Jeux\\Piege\\launcher.exe")).validate(&pf, false), Err(LaunchRefusal::UnknownExe));
     }
 }

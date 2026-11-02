@@ -255,6 +255,46 @@ targets = [
 ]
 scope = "contents"
 
+# Caches d'applications Electron / Chromium (Discord, Riot Client, CurseForge, Vortex, Opera,
+# VS Code…) et cache de calcul NVIDIA. Sans risque mais jamais coché d'office ; refusé tant que
+# l'appli tourne (garde `owner-app`). Seuls ces sous-dossiers de cache sont visés : jamais Local
+# Storage, IndexedDB, Session Storage, Cookies, WebStorage ni Service Worker (denylist en plus).
+[[rule]]
+id = "caches-applications"
+status = "safe"
+category = "tools"
+precheck = false
+guard = "owner-app"
+name = { fr = "Caches d'applications", en = "App caches" }
+explanation = { fr = "Caches web et graphiques des applis Electron et Chromium (Discord, Riot Client, VS Code, Opera…) : chaque appli les reconstruit, au prix d'un démarrage un peu plus lent. Ferme l'appli avant de nettoyer.", en = "Web and graphics caches of Electron and Chromium apps (Discord, Riot Client, VS Code, Opera…): each app rebuilds them, at the cost of a slightly slower start. Close the app before cleaning." }
+regenerated-by = { fr = "L'appli recrée ses caches web, de code et de shaders à son prochain lancement ; connexions, réglages et données locales ne sont pas touchés.", en = "The app recreates its web, code and shader caches on its next start; sign-ins, settings and local data are not touched." }
+opaque = { fr = "Contenu interne du cache de l'appli", en = "App cache internals" }
+targets = [
+  '%APPDATA%\*\Cache\Cache_Data',
+  '%APPDATA%\*\Code Cache',
+  '%APPDATA%\*\GPUCache',
+  '%APPDATA%\*\Dawn*Cache',
+  '%APPDATA%\*\ShaderCache',
+  '%APPDATA%\*\*\Cache\Cache_Data',
+  '%APPDATA%\*\*\Code Cache',
+  '%APPDATA%\*\*\GPUCache',
+  '%APPDATA%\*\*\Dawn*Cache',
+  '%APPDATA%\*\*\ShaderCache',
+  '%LOCALAPPDATA%\*\Cache\Cache_Data',
+  '%LOCALAPPDATA%\*\Code Cache',
+  '%LOCALAPPDATA%\*\GPUCache',
+  '%LOCALAPPDATA%\*\Dawn*Cache',
+  '%LOCALAPPDATA%\*\ShaderCache',
+  '%LOCALAPPDATA%\*\*\Cache\Cache_Data',
+  '%LOCALAPPDATA%\*\*\Code Cache',
+  '%LOCALAPPDATA%\*\*\GPUCache',
+  '%LOCALAPPDATA%\*\*\Dawn*Cache',
+  '%LOCALAPPDATA%\*\*\ShaderCache',
+  '%APPDATA%\NVIDIA\ComputeCache',
+  '%LOCALAPPDATA%\NVIDIA\ComputeCache',
+]
+scope = "contents"
+
 # --- Classement (couleur de la légende, aucune action) ----------------------------------------
 
 [[area]]

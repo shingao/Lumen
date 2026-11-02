@@ -1,5 +1,6 @@
 // Analyse : lancement, annulation, suivi des événements du backend.
 
+import { defaultChecked } from "../core/precheck";
 import { backend, isTauri } from "../ipc/client";
 import { onScanDone, openFolder } from "./navigation";
 import type { ScanMethod, ScanSummary, ScanTarget } from "../ipc/types";
@@ -31,11 +32,12 @@ function subscribe(): void {
 function show(summary: ScanSummary): void {
   useStore.setState({ node: null });
   useStore.getState().setScan({ id: summary.scanId, status: "done", summary, progress: null, message: null });
-  // Cochés par défaut : les éléments sans risque seulement (un « À vérifier » ne l'est jamais).
+  // Cochés par défaut : les éléments sans risque seulement (un « À vérifier » ne l'est jamais,
+  // une règle « precheck = false » non plus).
   if (isTauri) {
     void backend
       .recommendations(summary.scanId)
-      .then((recos) => useStore.getState().setChecked(recos.filter((r) => r.status === "safe").map((r) => r.id)))
+      .then((recos) => useStore.getState().setChecked(defaultChecked(recos)))
       .catch((err: unknown) => console.error("recommandations :", err));
   }
 }

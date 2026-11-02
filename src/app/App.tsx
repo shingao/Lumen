@@ -21,6 +21,7 @@ import { useOnboarding } from "./onboarding";
 import { screenLabel } from "./commands";
 import { backend } from "../ipc/client";
 import { goBack, goForward } from "./navigation";
+import { depthBack, depthForward } from "./depth";
 import { dailyTick, loadTimeline, useTimeline } from "./timeline";
 import { matchShortcut, navigationButton, navigationKey } from "./shortcuts";
 import { SCREENS, type Screen, useStore } from "./store";
@@ -50,14 +51,18 @@ export function App() {
   const onboarding = useOnboarding((s) => s.open);
 
   useEffect(() => {
-    // Précédent / suivant : seulement sur l'écran Analyse, sans fenêtre ouverte par-dessus.
-    const canNavigate = () => {
+    // Précédent / suivant : écrans Analyse (Explorer) et Profondeur (treemap du volume), sans
+    // fenêtre ouverte par-dessus.
+    const where = () => {
       const s = useStore.getState();
-      return s.screen === "analyse" && !s.settingsOpen && !s.paletteOpen && s.clean.step === "closed" && s.openReco === null;
+      if (s.settingsOpen || s.paletteOpen || s.clean.step !== "closed") return null;
+      return s.screen === "analyse" || s.screen === "depth" ? s.screen : null;
     };
     const navigate = (to: "back" | "forward" | null) => {
-      if (to === null || !canNavigate()) return false;
-      if (to === "back") goBack();
+      const screen = where();
+      if (to === null || screen === null) return false;
+      if (screen === "depth") void (to === "back" ? depthBack() : depthForward());
+      else if (to === "back") goBack();
       else goForward();
       return true;
     };
@@ -76,6 +81,7 @@ export function App() {
       else if (matchShortcut(e, "settings")) s.setSettingsOpen(!s.settingsOpen);
       else if (matchShortcut(e, "theme")) void toggleTheme();
       else if (e.key === "Escape" && !s.paletteOpen && s.openReco) s.setOpenReco(null);
+      else if (e.key === "Escape" && !s.paletteOpen && s.statusFocus) s.setStatusFocus(null);
       else if (e.key === "Escape" && !s.paletteOpen && s.settingsOpen) s.setSettingsOpen(false);
       else return;
       e.preventDefault();

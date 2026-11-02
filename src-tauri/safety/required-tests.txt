@@ -13,6 +13,7 @@ all check::tests::age_minimum_de_la_regle
 all check::tests::attribut_system_et_dossier_git
 all check::tests::chemins_relatifs_et_invalides_refuses
 all check::tests::denylist_prioritaire_sur_une_regle
+all check::tests::dossier_d_application_refuse_aux_selections
 all check::tests::element_autorise_accepte
 all check::tests::fichier_verrouille_ignore_sans_erreur
 all check::tests::hors_liste_blanche_refuse
@@ -37,6 +38,7 @@ all commands::tests::points_de_restauration_jamais_tous
 all commands::tests::un_seul_point_qui_vient_d_etre_cree_jamais_supprime
 all denylist::tests::autres_profils_du_registre_quel_que_soit_leur_nom
 all denylist::tests::chaque_entree_de_la_denylist
+all denylist::tests::dossiers_d_installation
 all denylist::tests::faits_du_fichier
 all denylist::tests::parents_des_zones_protegees
 all denylist::tests::prefixe_verbatim_et_point_point
@@ -68,6 +70,7 @@ all exec::tests::secret_dans_un_cache_jamais_supprime
 all exec::tests::temp_seuls_les_anciens_partent
 all exec::tests::verrouille_laisse_et_signale
 all guard::tests::launcher_ou_jeu_ouvert_bloque
+all guard::tests::appli_d_un_cache_ouverte_bloque
 all launch::tests::launchers_de_l_utilisateur_et_applis_du_store
 all launch::tests::liste_fermee_des_launchers
 all open::tests::jamais_un_programme_lance
@@ -118,7 +121,6 @@ all script::tests::dossier_mesure_sans_suivre_les_liens
 all script::tests::simulation_par_defaut_et_garde_fous
 all script::tests::tailles_francaises
 all script::tests::titre_sans_saut_de_ligne
-
 windows win::relocate_tests::annulation_en_echec_ne_perd_rien
 windows win::relocate_tests::cible_pleine_refusee
 windows win::relocate_tests::confirmation_refusee_et_suppression_ratee

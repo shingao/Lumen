@@ -38,7 +38,8 @@ pub fn find(scan: &Scan, deny: Option<&DenyList>, kind: Option<FileKind>, displa
         if top.len() >= TOP && by_kind.iter().map(|(_, n)| n).sum::<usize>() >= TOP {
             break;
         }
-        if denied(deny, scan, id) {
+        // Fichiers d'un jeu ou d'une application installés : jamais proposés (jalon 13).
+        if zones.in_app(id) || denied(deny, scan, id) {
             continue;
         }
         let k = FileKind::of(scan.name(id));

@@ -1,12 +1,13 @@
 //! Jeux installés, détectés en lecture seule dans les fichiers et les clés de registre de leurs
 //! launchers (Steam, Epic, GOG, Battle.net, EA app, Ubisoft Connect, Riot Client, CurseForge et
-//! Minecraft, jeux Xbox / Microsoft Store de Gaming Services, avec repli sur les clés Uninstall de
+//! Minecraft, HoYoPlay, jeux Xbox / Microsoft Store de Gaming Services, avec repli sur les clés Uninstall de
 //! Windows). Toute lecture est tolérante : un fichier absent, illisible, verrouillé,
 //! trop gros ou mal formé est ignoré et compté (`Ignored`), jamais une erreur qui arrête tout.
 //! Aucun accès réseau : les jaquettes ne viennent que du cache local des launchers.
 
 pub mod data;
 pub mod epic;
+pub mod hoyoplay;
 pub mod minecraft;
 pub mod registry;
 pub mod riot;
@@ -37,10 +38,12 @@ pub enum Launcher {
     Minecraft,
     /// Jeux du Microsoft Store / Xbox (Gaming Services) : affichés seulement.
     Xbox,
+    /// HoYoPlay : Genshin Impact, Honkai: Star Rail, Zenless Zone Zero…
+    HoYoPlay,
 }
 
 impl Launcher {
-    pub const ALL: [Launcher; 10] = [
+    pub const ALL: [Launcher; 11] = [
         Launcher::Steam,
         Launcher::Epic,
         Launcher::Gog,
@@ -51,6 +54,7 @@ impl Launcher {
         Launcher::CurseForge,
         Launcher::Minecraft,
         Launcher::Xbox,
+        Launcher::HoYoPlay,
     ];
 
     pub fn id(self) -> &'static str {
@@ -65,12 +69,13 @@ impl Launcher {
             Launcher::CurseForge => "curseforge",
             Launcher::Minecraft => "minecraft",
             Launcher::Xbox => "xbox",
+            Launcher::HoYoPlay => "hoyoplay",
         }
     }
 
-    /// Le launcher sait-il déplacer un jeu ? (Riot Client et CurseForge : non.)
+    /// Le launcher sait-il déplacer un jeu ? (Riot Client, CurseForge et HoYoPlay : non.)
     pub fn can_move(self) -> bool {
-        !matches!(self, Launcher::Riot | Launcher::CurseForge)
+        !matches!(self, Launcher::Riot | Launcher::CurseForge | Launcher::HoYoPlay)
     }
 }
 
@@ -268,6 +273,7 @@ pub fn detect(env: &Env, reg: &dyn Registry) -> Detection {
     riot::detect(&env.program_data, &mut d);
     minecraft::detect(env, &mut d);
     xbox::detect(&env.drives, &mut d);
+    hoyoplay::detect(reg, &mut d);
     uninstall::detect(reg, &mut d);
     riot::complete(&mut d);
     d.games.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.launcher.cmp(&b.launcher)));

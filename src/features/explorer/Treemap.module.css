@@ -354,3 +354,22 @@
     inset 0 0 0 1px var(--protected-border),
     0 0 0 1.5px var(--tile-ring);
 }
+
+/* Contenu opaque d'un cache : libellé long, gain sur sa propre ligne, jamais tronqué. */
+.head[data-stacked],
+.childHead[data-stacked] {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.head[data-stacked] > *,
+.childHead[data-stacked] > * {
+  max-width: 100%;
+}
+
+.head[data-stacked] > .delta,
+.childHead[data-stacked] > .delta {
+  flex: none;
+  overflow: visible;
+}

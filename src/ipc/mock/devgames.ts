@@ -61,6 +61,7 @@ const GAMES: MockGame[] = [
     data: [0.9, ["C:\\Users\\Arthur\\curseforge\\minecraft\\Instances\\All the Mods 9\\saves"]],
   },
   { id: "curseforge:Vanilla+", launcher: "curseforge", name: "Vanilla+", installDir: "C:\\Users\\Arthur\\curseforge\\minecraft\\Instances\\Vanilla+", size: null, sizeSource: "measured", drive: "C:", daysAgo: 240, cover: false, open: "app", hue: 0 },
+  { id: "hoyoplay:hk4e_global", launcher: "hoyoplay", name: "Genshin Impact", installDir: "C:\\Program Files\\HoYoPlay\\games\\Genshin Impact game", size: null, sizeSource: "measured", drive: "C:", daysAgo: null, cover: false, open: "app", hue: 0 },
   { id: "xbox:Microsoft.624F8B84B80", launcher: "xbox", name: "Forza Horizon 5", installDir: "D:\\XboxGames\\Forza Horizon 5", size: null, sizeSource: "measured", drive: "D:", daysAgo: null, cover: false, open: "uri", hue: 0 },
 ];
 
@@ -72,6 +73,7 @@ const MEASURED: Record<string, number> = {
   "riot:valorant.live": 35.4,
   "curseforge:All the Mods 9": 3.1,
   "curseforge:Vanilla+": 0.6,
+  "hoyoplay:hk4e_global": 92.4,
   "xbox:Microsoft.624F8B84B80": 118.2,
 };
 
@@ -85,7 +87,7 @@ export function mockGames(now: number): GamesResult {
       size: gb(size ?? MEASURED[g.id] ?? 0),
       lastPlayed,
       status: lastPlayed !== null && now - lastPlayed > 183 * DAY ? "review" : "keep",
-      canMove: g.launcher !== "riot" && g.launcher !== "curseforge",
+      canMove: g.launcher !== "riot" && g.launcher !== "curseforge" && g.launcher !== "hoyoplay",
       data: data ? { size: gb(data[0]), paths: data[1] } : null,
     };
   });
@@ -96,7 +98,7 @@ export function mockGames(now: number): GamesResult {
       { launcher: "epic", file: "C:\\ProgramData\\Epic\\EpicGamesLauncher\\Data\\Manifests\\A1B2C3.item", reason: "incomplete" },
       { launcher: "curseforge", file: "C:\\Users\\Arthur\\curseforge\\minecraft\\Instances\\Test\\minecraftinstance.json", reason: "malformed" },
     ],
-    launchers: ["steam", "epic", "gog", "battlenet", "riot", "curseforge", "xbox"],
+    launchers: ["steam", "epic", "gog", "battlenet", "riot", "curseforge", "xbox", "hoyoplay"],
     steamShaderCaches: [
       { path: "C:\\Program Files (x86)\\Steam\\steamapps\\shadercache", size: gb(2.4) },
       { path: "D:\\SteamLibrary\\steamapps\\shadercache", size: gb(0.9) },

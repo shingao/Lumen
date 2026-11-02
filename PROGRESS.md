@@ -15,7 +15,66 @@ Architecture : `docs/PLAN.md` (validée le 20/10/2026). Un jalon à la fois, arr
 | 9 | Persistance des analyses, recherche instantanée, déplacement intelligent, export de rapport | **fait — validé** pour la persistance, la recherche et l'export (testés sur PC, anonymisation vérifiée ; PR #7) ; déplacement intelligent **non vérifié en réel** (VM avec un second disque) et **désactivé par défaut** (réglage Expérimental) |
 | 10 | Onboarding et astuces contextuelles | **fait — validé** (testé sur PC : tutoriel, analyse en fond, Passer / Échap / flèches, astuces une seule fois, relance depuis les Paramètres ; tutoriel à la place de l'écran validé ; PR #8) |
 | 11 | Intégration Windows (menu contextuel, zone de notification, alertes) et installeur | **fait — mergé** (PR #9) ; testé sur PC en usage normal seulement : installeur, désinstalleur, menu contextuel, zone de notification, démarrage et notifications **non vérifiés en réel** (Sandbox / VM, checklist 6 à 11) ; builds en **0.9.x** jusqu'aux tests de la checklist de release |
-| 12 | Retours d'usage : tuiles couvertes lisibles, contenu opaque des caches, Riot (PBE, TFT), « ? » des statuts, analyse en profondeur, périphériques | **fait — validé en usage normal sur PC** (analyse, navigation, Timeline, Jeux, Dev, recherche, export, tutoriel, clé USB ; PR #10, sondage des périphériques sans lecture des volumes) ; mode rapide de l'onglet Profondeur, espace des clichés, carte SD, retrait pendant une analyse **non vérifiés en réel** ; bouton « Actualiser » des lecteurs amovibles ajouté ensuite (PR suivante) |
+| 12 | Retours d'usage : tuiles couvertes lisibles, contenu opaque des caches, Riot (PBE, TFT), « ? » des statuts, analyse en profondeur, périphériques | **fait — validé en usage normal sur PC** (analyse, navigation, Timeline, Jeux, Dev, recherche, export, tutoriel, clé USB ; PR #10, sondage des périphériques sans lecture des volumes) ; mode rapide de l'onglet Profondeur, espace des clichés, carte SD, retrait pendant une analyse **non vérifiés en réel** ; bouton « Actualiser » des lecteurs amovibles ajouté ensuite (PR #11) |
+| 13 | Sécurité des dossiers d'applis et de jeux, HoYoPlay, estompage de la treemap, navigation de l'onglet Profondeur, groupes repliés du Nettoyage, caches d'applications | **fait — à tester** (branche `claude/jalon-13-securite`) |
+
+---
+
+## Jalon 13 — sécurité des dossiers d'applis, estompage, navigation, groupes
+
+Branche `claude/jalon-13-securite`, partie de `main` (PR #11 mergée). Quatre commits : `milestone 13 (1/4)` à `(4/4)`.
+
+### Livré
+
+**Priorité 1 — dossiers d'installation jamais nettoyés par une sélection** (`safety`, `apps.rs`, `advanced/`, `launchers/`)
+- `safety::denylist` : raison **`AppInstall`** et zones `AppZone::{Inside, Parent}` (`DenyList::with_apps`, `app_install`). Le checker refuse une **sélection** (Dormants, Gros fichiers) ou un **doublon** à l'intérieur d'un dossier d'application, et **toute** autorité (règle comprise) sur un dossier qui en contient un. Seules les règles explicites (caches de shaders, artefacts…) et le module Jeux (par le launcher) agissent dedans.
+- Dossiers protégés : dossiers des jeux détectés par les launchers ∪ `InstallLocation` des clés Uninstall HKLM / HKCU (`apps::installed`, cache 10 min, chemins plausibles seulement : jamais un volume, jamais le profil ni ses dossiers connus). **Repli** sans détection : dossier contenant un `.exe` et un désinstalleur (`unins*.exe`, `*uninstall*`), et **dossiers de premier niveau d'un volume hors `Users`** (`D:\Riot Games`, `C:\Jeux`…).
+- Dormants, Doublons et Gros fichiers excluent ces dossiers à la recherche (`files::Zones`), et `safety` les refuse de toute façon au plan et à l'exécution (`Selection.app_dirs` → `Prepared.app_dirs`).
+- **HoYoPlay** (Genshin Impact, Honkai: Star Rail, Zenless Zone Zero, Honkai Impact 3rd) : `launchers/src/hoyoplay.rs`, lecture seule du registre HKCU (`Cognosphere\HYP`, `miHoYo\HYP`, `GameInstallPath`) et des entrées Uninstall ; désinstallation **par le launcher** (`safety::launch`, `launcher.exe` de HoYoPlay seulement).
+- Tests : fixture `C:\Riot Games\League of Legends\Game\DATA\FINAL\*.wad.client` anciens et volumineux + Genshin installé par HoYoPlay + outil portable (exe + `unins000.exe`) : **absents des Dormants, des Doublons et des Gros fichiers** (`apps_tests.rs`), **refusés par `safety`** (`dossier_d_application_refuse_aux_selections`, `dossiers_d_installation`), détection HoYoPlay (`hoyoplay_jeux_et_launcher`).
+
+**Priorité 2 — estompage de la treemap** (`core/highlight.ts`, `store.ts`, `Explorer`, `HighlightChip`) — captures `80-estompage-*`
+- **Cause exacte** : un clic sur une tuile couverte par une recommandation ouvre le panneau de détail (`openReco`) ; l'Explorer estompait tout sauf les tuiles de cette recommandation, mais **`zoom()` ne remettait jamais `openReco` à zéro** : dans un dossier sans ces tuiles, **tout** était estompé, et ← → étaient bloqués tant que le panneau restait ouvert.
+- Trois sources, **une seule active** (`activeSource`) : survol d'une recommandation (pendant le survol), « ? » d'un statut (jusqu'au second clic, Échap ou ✕), panneau de détail (tant qu'il est ouvert). Ouvrir l'une arrête l'autre.
+- Puce **« Mise en évidence : Cache pip ✕ »** au-dessus de la treemap pour les sources persistantes ; ✕ l'arrête.
+- Fermer le panneau, cliquer une autre tuile, zoomer, naviguer (fil d'Ariane, ← →, Étendre), changer de volume ou d'onglet arrête la mise en évidence du panneau.
+- Mise en évidence sans tuile dans la vue : **rien n'est estompé**, la puce dit « aucun élément ici ».
+- Tests : `highlight.test.ts` (source, présence dans la vue), `Highlight.test.tsx` (chaque cas : survol, « ? » puis Échap / ✕ / second clic, panneau puis zoom / ← / autre tuile / fermeture, « aucun élément ici »), `StatusHelp.test.tsx`.
+
+**Priorité 3 — navigation de l'onglet Profondeur et groupes du Nettoyage** — captures `81-*`, `82-*`
+- Profondeur : **même barre que l'Explorer** (`HistoryButtons` partagé, fil d'Ariane cliquable, Étendre) et **même historique** (`depthBack` / `depthForward`, 100 emplacements) ; Alt+← / Alt+→, Retour arrière et boutons 4 / 5 de la souris sur cet onglet. Test `DepthScreen.test.tsx` sur `<App />`.
+- Nettoyage (Dormants, Gros fichiers, Doublons) : **un groupe = une ligne principale repliée par défaut** (`CollapsibleGroup`) : ▸/▾, case de groupe tri-état, dossier (ou nom du fichier pour un ensemble de doublons), nombre de fichiers, taille totale, date la plus récente. Clic sur la flèche ou la ligne : déplie ; « Tout déplier / Tout replier » en haut ; ← / → replie / déplie, Espace coche. Doublons : un groupe par ensemble d'exemplaires identiques ; la case de groupe coche les copies en gardant le plus ancien. État mémorisé pendant la session, **tout replié à chaque nouvelle analyse**. Tests `Groups.test.tsx` (repli par défaut, case partielle, dépliage, sélection gardée au repli) et `CleanupScreen.test.tsx`.
+
+**Retouches** (commit 4/4)
+- Tuile « Contenu interne du cache … » : **le gain passe sur sa propre ligne sous le titre**, jamais tronqué (`data-stacked`) — capture `83-cache-opaque-gain`.
+- Règle **« Caches d'applications »** (`caches-applications`) : `Cache\Cache_Data`, `Code Cache`, `GPUCache`, `Dawn*Cache`, `ShaderCache` des applis sous `AppData\Roaming` et `AppData\Local` (un ou deux niveaux : `discord`, `Opera Software\Opera Stable`, `Riot Games\Riot Client`…) et `NVIDIA\ComputeCache`. **Sans risque, jamais précochée** (champ `precheck = false` du schéma, ignorée aussi par « Tout sélectionner (sans risque) »), contenu opaque, contenu seulement (le dossier reste).
+- **Refus si l'appli tourne** : champ `guard = "owner-app"` → `safety::guard::ProcessGuard::app_caches` déduit l'appli du chemin du cache (nom de l'exécutable : `discord.exe`, `Opera Stable.exe`, premier mot `opera.exe` ; ou tout programme lancé depuis son dossier sous AppData, Program Files, `AppData\Local\Programs`). La garde est dans le plan et son empreinte ; `exec` n'agit pas si l'appli est ouverte. Tests `appli_d_un_cache_ouverte_bloque` (safety), `caches_d_applications_gardes_par_l_appli` (cleanup).
+- **Jamais Local Storage, IndexedDB, Session Storage, Cookies, WebStorage, Service Worker** (ni `Preferences`, réglages) : test de non-couverture `caches_d_applications_sans_les_donnees` (rules) ; ces noms sont aussi dans la denylist de `safety` (`WebStorage` et `Service Worker` ajoutés à ce jalon). `sans-risque.txt` régénéré et relu.
+
+### Décisions
+
+- **Repli « racine de volume hors Users »** appliqué tel que demandé : **tout dossier de premier niveau d'un volume** (sauf `Users`) est traité comme un dossier d'application. Conséquence : `D:\Vidéos`, `D:\Photos`, `E:\Archives`… sont exclus des Dormants, Doublons et Gros fichiers, et `safety` y refuse les sélections. Les **fichiers posés directement à la racine** d'un volume ne sont pas concernés. Si c'est trop large, piste : ne garder ce repli que pour les dossiers sans fichiers « personnels » (vidéos, photos, documents) ou contenant au moins un exécutable.
+- Un dossier qui **contient** un dossier d'application est refusé à toute autorité (même une règle) : supprimer `D:\Jeux` emporterait un jeu.
+- **Estompage = état dérivé** (`activeSource` dans `core/`, logique pure), jamais stocké à part : impossible qu'il survive à la source qui l'a créé.
+- **`precheck` et `guard` déclarés par la règle** dans `rules.toml` (schéma strict, testés), comme `opaque` : aucune liste de règles codée côté front.
+- **Appli déduite du chemin du cache** plutôt qu'une liste figée d'applis : couvre les applis Electron inconnues ; le nom de l'exécutable n'a pas à être exact puisque tout programme lancé depuis le dossier de l'appli bloque aussi. `NVIDIA\ComputeCache` (CUDA, n'importe quel programme) : seul `nvidia*` est gardé ; un fichier en cours d'utilisation est de toute façon sauté et compté par `safety`.
+
+### Écarts avec la maquette
+
+- La puce « Mise en évidence » reprend le style des puces de volume (fond de l'appli, bord fin) et le ✕ des fermetures de panneau.
+- Les lignes de groupe reprennent l'en-tête des groupes de doublons (fond enfoncé, chiffres en mono) ; ▸/▾ en icône SVG maison.
+
+### Test manuel (jalon 13) — sur ton PC (1 à 8), Windows Sandbox pour 9
+
+1. Avec League of Legends (Riot) ou un jeu HoYoPlay installé : Nettoyage › Dormants, Doublons et Gros fichiers ne montrent **aucun fichier** de `C:\Riot Games\…` ni du dossier du jeu, ni d'un dossier sous Program Files.
+2. Jeux : Genshin Impact / Star Rail / ZZZ apparaissent avec le launcher **HoYoPlay** ; « Désinstaller » ouvre HoYoPlay, rien n'est supprimé par Lumen.
+3. Analyse : clique la tuile du cache npm / pip (panneau ouvert), puis zoome dans un autre dossier : **rien n'est estompé**, le panneau est fermé. ← → et le fil d'Ariane marchent panneau ouvert.
+4. « ? » de Sans risque : puce « Mise en évidence : Sans risque ✕ » ; zoome dans un dossier sans élément sans risque : « aucun élément ici », rien d'estompé ; ✕ (ou Échap, ou second clic sur « ? ») arrête tout.
+5. Survole une recommandation : estompage pendant le survol seulement.
+6. Profondeur : analyse, ouvre WinSxS puis un sous-dossier ; ←, Alt+→, Retour arrière, boutons 4/5 de la souris, fil d'Ariane, Étendre.
+7. Nettoyage : chaque groupe est replié ; ▸ ou clic sur la ligne déplie ; « Tout déplier » ; case de groupe partielle quand un seul fichier est coché ; coche, replie : la sélection reste ; ← / → et Espace au clavier ; relance l'analyse : tout est replié.
+8. Analyse de ton dossier : recommandation **« Caches d'applications »** (Discord, VS Code, Riot Client…) **non cochée** ; la tuile « Contenu interne du cache de l'appli » montre son gain sur sa propre ligne ; le détail ne liste que `Cache_Data`, `Code Cache`, `GPUCache`… jamais `Local Storage`, `IndexedDB`, `Cookies`.
+9. **Sandbox** : Discord (ou VS Code) ouvert, coche « Caches d'applications » et nettoie : « Discord.exe est ouvert : ferme-le avant de nettoyer, rien n'a été fait » ; ferme-le, recommence : caches à la Corbeille, Discord redémarre connecté.
 
 ---
 
@@ -180,6 +239,8 @@ Tout ce qui est marqué **« non vérifié en réel »**, avec son environnement
 | 13 | Analyse en profondeur en mode rapide et espace des clichés (12) | **VM** (points de restauration présents) | MFT par l'assistant élevé, `Win32_ShadowStorage` égal à `vssadmin list shadowstorage` | non vérifié |
 | 14 | Sondage des périphériques et disques en veille (12) | **PC avec un disque dur secondaire en veille** et un lecteur réseau déconnecté | le disque ne se réveille pas tant qu'on ne l'analyse pas (icône et alertes désactivées, puis activées) ; lecteur réseau déconnecté : aucune attente, puce « espace non lu » | non vérifié |
 | 15 | Bouton « Actualiser » des lecteurs amovibles (12) | **PC avec un lecteur de cartes** | carte insérée dans un lecteur déjà présent : la puce apparaît après « Actualiser » ; lecteur réseau jamais relu | non vérifié |
+| 16 | Caches d'applications : refus si l'appli tourne, nettoyage appli fermée (13) | **Windows Sandbox** (Discord ou VS Code installé) | rien n'est fait tant que l'appli est ouverte ; appli fermée : caches à la Corbeille, connexion et réglages gardés au redémarrage | non vérifié |
+| 17 | Dossiers d'applis et de jeux jamais proposés ni supprimés par une sélection, HoYoPlay (13) | **PC** (lecture seule) puis **Windows Sandbox** pour une tentative de suppression | aucun fichier de `Riot Games`, d'un jeu HoYoPlay ou de Program Files dans Dormants / Doublons / Gros fichiers | non vérifié |
 
 Déjà vérifiés en CI Windows à chaque push (pas besoin de VM pour ceux-là) : suppression réelle sur faux profil (e2e), déplacement C: → D: sur disques virtuels, installation / instance unique / mise à jour / désinstallation silencieuses (`installer-test.ps1` : dont un autre compte simulé — ruches chargées nettoyées, liste de jonctions piégée de son profil lue telle quelle et jamais exécutée — et des entrées orphelines qui ne lancent rien).
 

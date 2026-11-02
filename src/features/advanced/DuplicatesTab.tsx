@@ -1,4 +1,4 @@
-import { cancelDuplicates, checkAllCopies, clearDuplicates, startDuplicates, toggleDuplicate, useAdvanced } from "../../app/advanced";
+import { cancelDuplicates, checkAllCopies, clearDuplicates, startDuplicates, toggleDuplicate, uncheckGroup, useAdvanced } from "../../app/advanced";
 import { openRequest } from "../../app/cleaning";
 import { useStore } from "../../app/store";
 import { Button } from "../../components/Button";
@@ -8,38 +8,48 @@ import { formatBytes, formatCount, MIB } from "../../core/format";
 import { useT } from "../../i18n";
 import type { DuplicateGroup } from "../../ipc/types";
 import { FileLine, SelectionBar } from "./FileRows";
+import { CollapsibleGroup, GroupsToolbar } from "./Groups";
 import styles from "./Advanced.module.css";
 
 function Group({ group }: { group: DuplicateGroup }) {
   const t = useT();
   const checked = useAdvanced((s) => s.checkedDup);
   const any = group.members.some((m) => checked.has(m.id));
+  const n = group.members.filter((m) => checked.has(m.id)).length;
+  const name = group.members[0]?.name ?? "";
   return (
-    <section className={styles.group} aria-label={t("dup.group", { count: group.members.length, size: formatBytes(group.size, t.locale) })}>
-      <div className={styles.groupHead}>
-        <span className={styles.groupTitle}>{t("dup.group", { count: group.members.length, size: formatBytes(group.size, t.locale) })}</span>
-        <Button variant="link" onClick={() => checkAllCopies(group.id)}>
-          {t("dup.checkGroup")}
-        </Button>
-        <span className={styles.groupSize}>{t("dup.wasted", { size: formatBytes(group.wasted, t.locale) })}</span>
-      </div>
-      <ul className={styles.rows}>
-        {group.members.map((m) => {
-          const on = checked.has(m.id);
-          return (
-            <FileLine
-              key={m.id}
-              file={m}
-              checked={on}
-              disabled={!canCheck(group, checked, m.id)}
-              disabledTitle={t("dup.lastCopy")}
-              onChange={() => toggleDuplicate(group.id, m.id)}
-              badge={any && !on ? <span className={styles.keep}>{t("dup.keep")}</span> : null}
-            />
-          );
-        })}
-      </ul>
-    </section>
+    <CollapsibleGroup
+      tab="duplicates"
+      id={String(group.id)}
+      title={name}
+      meta={t("dup.group", { count: group.members.length, size: formatBytes(group.size, t.locale) })}
+      count={group.members.length}
+      size={group.size * group.members.length}
+      latest={Math.max(0, ...group.members.map((m) => m.modified))}
+      // Case du groupe : toutes les copies sauf l'exemplaire gardé (jamais tous les exemplaires).
+      check={{
+        checked: n >= group.members.length - 1 && n > 0,
+        partial: n > 0,
+        label: t("dup.checkGroupOf", { name }),
+        onChange: (on) => (on ? checkAllCopies(group.id) : uncheckGroup(group.id)),
+      }}
+      extra={<span className={styles.groupMeta}>{t("dup.wasted", { size: formatBytes(group.wasted, t.locale) })}</span>}
+    >
+      {group.members.map((m) => {
+        const on = checked.has(m.id);
+        return (
+          <FileLine
+            key={m.id}
+            file={m}
+            checked={on}
+            disabled={!canCheck(group, checked, m.id)}
+            disabledTitle={t("dup.lastCopy")}
+            onChange={() => toggleDuplicate(group.id, m.id)}
+            badge={any && !on ? <span className={styles.keep}>{t("dup.keep")}</span> : null}
+          />
+        );
+      })}
+    </CollapsibleGroup>
   );
 }
 
@@ -111,6 +121,7 @@ export function DuplicatesTab() {
             <p className={styles.empty}>{t("dup.empty")}</p>
           ) : (
             <div className={styles.groups}>
+              <GroupsToolbar tab="duplicates" keys={groups.map((g) => String(g.id))} />
               {groups.map((g) => (
                 <Group key={g.id} group={g} />
               ))}

@@ -231,6 +231,12 @@ fn liste_des_regles_sans_risque_a_relire() {
             Action::Command => "commande officielle",
         };
         out.push_str(&format!("  action : {action}\n"));
+        if !r.precheck {
+            out.push_str("  jamais cochée d'office\n");
+        }
+        if r.guard == Some(crate::schema::Guard::OwnerApp) {
+            out.push_str("  refusée tant que l'appli à qui appartient le cache tourne\n");
+        }
         if !r.commands.is_empty() {
             let cmds: Vec<String> = r
                 .commands
@@ -586,4 +592,75 @@ fn donnees_de_jeux_a_garder_jamais_proposees() {
     assert!(covered.iter().any(|p| p.ends_with("vieux.tmp")), "{covered:?}");
     assert!(!covered.iter().any(|p| p.ends_with("partie.sav") || p.ends_with("\\installeur")), "{covered:?}");
     assert_never_denied(&a, &scan, &set, &deny);
+}
+
+/// Caches d'applications Electron / Chromium : seuls les sous-dossiers de cache sont couverts,
+/// jamais les données de l'appli (Local Storage, IndexedDB, Session Storage, Cookies,
+/// WebStorage, Service Worker\Database…), et la règle n'est jamais cochée d'office.
+#[test]
+fn caches_d_applications_sans_les_donnees() {
+    let set = builtin().unwrap();
+    let rule = set.rules.iter().find(|r| r.id == "caches-applications").unwrap();
+    assert_eq!(rule.status, Status::Safe);
+    assert!(!rule.precheck, "jamais précoché");
+    assert_eq!(rule.guard, Some(crate::schema::Guard::OwnerApp));
+    assert!(rule.opaque.is_some() && rule.scope == Scope::Contents);
+    let p = "Users\\Arthur";
+    let roaming = format!("{p}\\AppData\\Roaming");
+    let local = format!("{p}\\AppData\\Local");
+    let caches = [
+        format!("{roaming}\\discord\\Cache\\Cache_Data\\f_000001"),
+        format!("{roaming}\\discord\\Code Cache\\js\\index"),
+        format!("{roaming}\\discord\\GPUCache\\data_1"),
+        format!("{roaming}\\discord\\DawnCache\\data_0"),
+        format!("{roaming}\\discord\\DawnGraphiteCache\\data_0"),
+        format!("{roaming}\\Code\\ShaderCache\\data_1"),
+        format!("{roaming}\\CurseForge\\Cache\\Cache_Data\\f_1"),
+        format!("{roaming}\\Vortex\\GPUCache\\data_1"),
+        format!("{roaming}\\Opera Software\\Opera Stable\\Code Cache\\wasm\\x"),
+        format!("{local}\\Riot Games\\Riot Client\\Cache\\Cache_Data\\f_2"),
+        format!("{roaming}\\NVIDIA\\ComputeCache\\0\\1\\abc"),
+    ];
+    let data = [
+        "Local Storage\\leveldb\\000003.log",
+        "IndexedDB\\https_discord.com_0.indexeddb.leveldb\\1.log",
+        "Session Storage\\000004.log",
+        "Cookies",
+        "Network\\Cookies",
+        "WebStorage\\QuotaManager",
+        "Service Worker\\Database\\000001.log",
+        "Service Worker\\CacheStorage\\x\\index",
+        "Preferences",
+        "settings.json",
+    ];
+    let mut t = machine();
+    for c in &caches {
+        t.file(c, 3 << 20, 30);
+    }
+    for app in [format!("{roaming}\\discord"), format!("{roaming}\\Code"), format!("{roaming}\\Opera Software\\Opera Stable"), format!("{local}\\Riot Games\\Riot Client")] {
+        for d in data {
+            t.file(&format!("{app}\\{d}"), 4 << 10, 400);
+        }
+    }
+    let scan = t.build("C:\\");
+    let (a, deny) = run(&set, &scan, &format!("C:\\{p}"), &format!("C:\\{local}\\Temp"));
+    assert_never_denied(&a, &scan, &set, &deny);
+    let covered = covered_paths(&a, &scan, &set, "caches-applications");
+    // Chaque cache est couvert (contenu du dossier, le dossier reste).
+    for c in &caches {
+        let rel = c.rsplit_once("Cache").map_or(c.as_str(), |(head, _)| head);
+        assert!(covered.iter().any(|x| x.starts_with(&format!("C:\\{rel}"))), "{c} non couvert : {covered:?}");
+    }
+    for keep in ["Cache_Data", "Code Cache", "GPUCache", "DawnCache", "ShaderCache", "ComputeCache"] {
+        assert!(!covered.iter().any(|x| x.ends_with(&format!("\\{keep}"))), "dossier {keep} pris entier : {covered:?}");
+    }
+    // Rien des données de l'appli, à aucune profondeur.
+    let mut stack: Vec<NodeId> = a.recos.iter().flat_map(|r| r.covered.clone()).collect();
+    while let Some(n) = stack.pop() {
+        let path = scan.path(n);
+        for d in ["Local Storage", "IndexedDB", "Session Storage", "Cookies", "WebStorage", "Service Worker", "Preferences", "settings.json"] {
+            assert!(!path.split('\\').any(|c| c.eq_ignore_ascii_case(d)), "une règle couvre {path}");
+        }
+        stack.extend(scan.children(n));
+    }
 }

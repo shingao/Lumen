@@ -109,6 +109,8 @@ interface RecoDto {
   /** Éléments couverts. */
   covered: number;
   highlight: number[];
+  /** Faux : « Sans risque » proposé, jamais coché d'office. */
+  precheck: boolean;
 }
 
 interface RecoDetailDto extends RecoDto {
@@ -176,7 +178,7 @@ function toNode(dto: TreeNodeDto, locale: Locale): TreeNode {
 const pick = (text: Text, locale: Locale) => (locale === "en" ? text.en : text.fr);
 
 function toReco(dto: RecoDto, locale: Locale): Recommendation {
-  return { id: dto.id, status: dto.status, name: pick(dto.name, locale), path: dto.path, size: dto.size, highlight: dto.highlight };
+  return { id: dto.id, status: dto.status, name: pick(dto.name, locale), path: dto.path, size: dto.size, highlight: dto.highlight, precheck: dto.precheck };
 }
 
 /** « 412 380 fichiers · 3 dossiers · dernière utilisation il y a 2 jours ». */

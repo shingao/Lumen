@@ -8,3 +8,5 @@ pub mod ipc;
 
 #[cfg(test)]
 mod saves_tests;
+#[cfg(test)]
+mod apps_tests;

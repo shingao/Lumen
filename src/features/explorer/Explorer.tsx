@@ -5,7 +5,6 @@ import { goBack, goForward, goTo, setHere, useNav } from "../../app/navigation";
 import { startScan } from "../../app/scanning";
 import { type ColorMode, useStore } from "../../app/store";
 import { Button } from "../../components/Button";
-import { ArrowLeftIcon, ArrowRightIcon } from "../../components/icons";
 import { Segmented } from "../../components/Segmented";
 import { openMove } from "../../app/moves";
 import { openExport } from "../../app/report";
@@ -17,6 +16,9 @@ import { FastScanConfirm } from "./FastScanConfirm";
 import { Legend } from "./Legend";
 import { ScanProgressPanel, ScanStats } from "./ScanPanel";
 import { KEEP_FOCUS } from "../status/StatusHelp";
+import { activeSource, inView } from "../../core/highlight";
+import { HighlightChip } from "./HighlightChip";
+import { HistoryButtons } from "./HistoryButtons";
 import { Treemap } from "./Treemap";
 import styles from "./Explorer.module.css";
 
@@ -60,13 +62,13 @@ export function Explorer() {
     setHere({ target, scanId, node, path: node === null ? null : tree.root.path, label });
   }, [tree, target, scanId, node]);
 
-  const focus = hoverReco ?? openReco;
-  // Une recommandation survolée ou ouverte passe avant la mise en évidence d'un statut (« ? »).
-  const statusHighlight = focus === null ? (statusFocus?.status ?? null) : null;
-  const highlight = useMemo(() => {
-    if (statusHighlight) return (recos ?? []).filter((r) => r.status === statusHighlight).flatMap((r) => r.highlight);
-    return recos?.find((r) => r.id === focus)?.highlight ?? null;
-  }, [recos, focus, statusHighlight]);
+  // Une seule source d'estompage : survol d'une recommandation, sinon panneau de détail ouvert,
+  // sinon « ? » d'un statut ; rien d'estompé si elle ne concerne aucune tuile de la vue.
+  const source = useMemo(() => activeSource(hoverReco, openReco, statusFocus?.status ?? null, recos ?? []), [hoverReco, openReco, statusFocus, recos]);
+  const view = useMemo(
+    () => (tree ? inView(source, tree.root, tree.breadcrumb.flatMap((c) => (c.id === null ? [] : [c.id]))) : { keep: null, present: false }),
+    [source, tree],
+  );
   const categories = useMemo(() => (tree ? presentCategories(tree.root) : new Set<Category>()), [tree]);
 
   const modes: { value: ColorMode; label: string }[] = [
@@ -107,28 +109,7 @@ export function Explorer() {
       )}
 
       <div className={styles.crumbBar}>
-        <div className={styles.history}>
-          <button
-            type="button"
-            className={styles.historyButton}
-            disabled={!back}
-            aria-label={back ? t("explorer.back.to", { name: back.label }) : t("explorer.back")}
-            title={back ? t("explorer.back.to", { name: back.label }) : t("explorer.back")}
-            onClick={goBack}
-          >
-            <ArrowLeftIcon />
-          </button>
-          <button
-            type="button"
-            className={styles.historyButton}
-            disabled={!forward}
-            aria-label={forward ? t("explorer.forward.to", { name: forward.label }) : t("explorer.forward")}
-            title={forward ? t("explorer.forward.to", { name: forward.label }) : t("explorer.forward")}
-            onClick={goForward}
-          >
-            <ArrowRightIcon />
-          </button>
-        </div>
+        <HistoryButtons back={back?.label ?? null} forward={forward?.label ?? null} onBack={goBack} onForward={goForward} />
         <nav aria-label={t("explorer.breadcrumb")} className={styles.crumbs}>
           <button type="button" className={styles.drive} aria-label={t("explorer.drive", { drive: targetLetter })} onClick={() => goTo(null)}>
             {drive?.label ?? targetLetter}
@@ -188,12 +169,20 @@ export function Explorer() {
         </div>
       </div>
 
+      {source && source.kind !== "hover" && (
+        <HighlightChip
+          label={source.kind === "panel" ? source.label : t(`status.${source.status}`)}
+          present={view.present}
+          onClear={() => (source.kind === "panel" ? useStore.getState().setOpenReco(null) : useStore.getState().setStatusFocus(null))}
+        />
+      )}
+
       <div className={styles.mapArea}>
         {tree && (
           <Treemap
             root={tree.root}
-            highlight={highlight}
-            highlightStatus={statusHighlight}
+            highlight={view.keep ? view.keep.ids : null}
+            highlightStatus={view.keep?.status ?? null}
             onCopyPath={(n) => {
               void copyText(n.path).then((ok) => ok && showToast(currentT()("preview.pathCopied")));
             }}

@@ -68,3 +68,31 @@
   action : suppression (Corbeille par défaut, via safety)
   cible : %TEMP% (son contenu inchangé depuis 48 h)
   régénéré par : Les applis recréent leurs fichiers temporaires à la demande ; rien n'est compté s'il a changé depuis 48 h.
+
+[caches-applications] Caches d'applications
+  action : suppression (Corbeille par défaut, via safety)
+  jamais cochée d'office
+  refusée tant que l'appli à qui appartient le cache tourne
+  cible : %APPDATA%\*\Cache\Cache_Data (son contenu)
+  cible : %APPDATA%\*\Code Cache (son contenu)
+  cible : %APPDATA%\*\GPUCache (son contenu)
+  cible : %APPDATA%\*\Dawn*Cache (son contenu)
+  cible : %APPDATA%\*\ShaderCache (son contenu)
+  cible : %APPDATA%\*\*\Cache\Cache_Data (son contenu)
+  cible : %APPDATA%\*\*\Code Cache (son contenu)
+  cible : %APPDATA%\*\*\GPUCache (son contenu)
+  cible : %APPDATA%\*\*\Dawn*Cache (son contenu)
+  cible : %APPDATA%\*\*\ShaderCache (son contenu)
+  cible : %LOCALAPPDATA%\*\Cache\Cache_Data (son contenu)
+  cible : %LOCALAPPDATA%\*\Code Cache (son contenu)
+  cible : %LOCALAPPDATA%\*\GPUCache (son contenu)
+  cible : %LOCALAPPDATA%\*\Dawn*Cache (son contenu)
+  cible : %LOCALAPPDATA%\*\ShaderCache (son contenu)
+  cible : %LOCALAPPDATA%\*\*\Cache\Cache_Data (son contenu)
+  cible : %LOCALAPPDATA%\*\*\Code Cache (son contenu)
+  cible : %LOCALAPPDATA%\*\*\GPUCache (son contenu)
+  cible : %LOCALAPPDATA%\*\*\Dawn*Cache (son contenu)
+  cible : %LOCALAPPDATA%\*\*\ShaderCache (son contenu)
+  cible : %APPDATA%\NVIDIA\ComputeCache (son contenu)
+  cible : %LOCALAPPDATA%\NVIDIA\ComputeCache (son contenu)
+  régénéré par : L'appli recrée ses caches web, de code et de shaders à son prochain lancement ; connexions, réglages et données locales ne sont pas touchés.

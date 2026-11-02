@@ -32,11 +32,17 @@ export interface AdvancedState {
   checkedDormant: Set<number>;
   checkedLargest: Set<number>;
   checkedDup: Set<number>;
+  /** Groupes dépliés par onglet (repliés par défaut ; mémorisés pendant la session, repliés à
+   * chaque nouvelle analyse). */
+  expanded: Record<GroupTab, Set<string>>;
   systemActions: SystemAction[];
   restorePoint: boolean;
   /** Points de restauration lus en administrateur : seule base de « supprimer le plus ancien ». */
   restorePoints: Load<RestorePoints>;
 }
+
+/** Onglets du Nettoyage en liste de groupes. */
+export type GroupTab = "dormant" | "largest" | "duplicates";
 
 const EMPTY = (): Omit<AdvancedState, "sinks" | "systemActions" | "restorePoint" | "restorePoints"> => ({
   scanId: null,
@@ -50,6 +56,7 @@ const EMPTY = (): Omit<AdvancedState, "sinks" | "systemActions" | "restorePoint"
   checkedDormant: new Set(),
   checkedLargest: new Set(),
   checkedDup: new Set(),
+  expanded: { dormant: new Set(), largest: new Set(), duplicates: new Set() },
 });
 
 export const useAdvanced = create<AdvancedState>()(() => ({
@@ -177,6 +184,33 @@ export function checkAllCopies(groupId?: number): void {
 
 export function clearDuplicates(): void {
   set({ checkedDup: new Set() });
+}
+
+/** Décoche tous les exemplaires d'un groupe de doublons. */
+export function uncheckGroup(groupId: number): void {
+  const { duplicates, checkedDup } = useAdvanced.getState();
+  if (duplicates.status !== "done") return;
+  const g = duplicates.value.groups.find((x) => x.id === groupId);
+  if (!g) return;
+  const next = new Set(checkedDup);
+  for (const m of g.members) next.delete(m.id);
+  set({ checkedDup: next });
+}
+
+/** Déplie ou replie un groupe (`open` absent : inverse). */
+export function toggleGroup(tab: GroupTab, key: string, open?: boolean): void {
+  const { expanded } = useAdvanced.getState();
+  const next = new Set(expanded[tab]);
+  const wanted = open ?? !next.has(key);
+  if (wanted) next.add(key);
+  else next.delete(key);
+  set({ expanded: { ...expanded, [tab]: next } });
+}
+
+/** « Tout déplier » / « Tout replier ». */
+export function setAllGroups(tab: GroupTab, keys: readonly string[], open: boolean): void {
+  const { expanded } = useAdvanced.getState();
+  set({ expanded: { ...expanded, [tab]: open ? new Set(keys) : new Set() } });
 }
 
 export function toggleSystemAction(action: SystemAction, on: boolean): void {

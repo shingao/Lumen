@@ -20,7 +20,19 @@ export interface DepthState {
   message: string | null;
   /** Espace des clichés instantanés, lu en administrateur sur demande (une demande UAC). */
   restore: { status: "idle" | "loading" | "done" | "failed"; data: RestorePoints | null; message: string | null };
+  /** Historique de la treemap, comme celui de l'Explorer : précédent / suivant. */
+  back: DepthPlace[];
+  forward: DepthPlace[];
 }
+
+/** Emplacement de la treemap du volume : nœud (null : racine) et nom affiché. */
+export interface DepthPlace {
+  node: NodeId | null;
+  label: string;
+}
+
+/** Au-delà, les plus anciens emplacements sont oubliés (comme l'Explorer). */
+const MAX_HISTORY = 100;
 
 const INITIAL: DepthState = {
   status: "idle",
@@ -32,6 +44,8 @@ const INITIAL: DepthState = {
   slice: null,
   message: null,
   restore: { status: "idle", data: null, message: null },
+  back: [],
+  forward: [],
 };
 
 export const useDepth = create<DepthState>()(() => INITIAL);
@@ -70,7 +84,7 @@ function subscribe(): void {
 async function load(scanId: number): Promise<void> {
   try {
     const [report, slice] = await Promise.all([backend.depthReport(scanId), backend.depthTree(scanId, null)]);
-    useDepth.setState({ status: "done", scanId, report, slice, node: null, progress: null, message: null });
+    useDepth.setState({ status: "done", scanId, report, slice, node: null, progress: null, message: null, back: [], forward: [] });
   } catch (err) {
     useDepth.setState({ status: "failed", progress: null, message: String(err) });
   }
@@ -104,16 +118,49 @@ export async function cancelDepth(): Promise<void> {
   if (status === "running" && scanId !== null) await backend.cancelScan(scanId);
 }
 
-/** Zoom dans la treemap du volume (null : racine). */
-export async function openDepthNode(node: NodeId | null): Promise<void> {
+function here(s: DepthState): DepthPlace {
+  return { node: s.node, label: s.slice?.breadcrumb.at(-1)?.label ?? s.report?.volume ?? "" };
+}
+
+async function show(node: NodeId | null): Promise<boolean> {
   const { scanId } = useDepth.getState();
-  if (scanId === null) return;
+  if (scanId === null) return false;
   try {
     const slice = await backend.depthTree(scanId, node);
     useDepth.setState({ slice, node: slice.root.id === 0 ? null : slice.root.id });
+    return true;
   } catch (err) {
     console.error("profondeur :", err);
+    return false;
   }
+}
+
+/** Zoom dans la treemap du volume (null : racine) : nouvel emplacement dans l'historique. */
+export async function openDepthNode(node: NodeId | null): Promise<void> {
+  const s = useDepth.getState();
+  if (s.scanId === null || node === s.node) return;
+  const from = here(s);
+  if (await show(node)) useDepth.setState((st) => ({ back: [...st.back, from].slice(-MAX_HISTORY), forward: [] }));
+}
+
+/** Précédent (Alt+←, Retour arrière, bouton 4 de la souris). */
+export async function depthBack(): Promise<void> {
+  const s = useDepth.getState();
+  const place = s.back.at(-1);
+  if (!place) return;
+  const from = here(s);
+  useDepth.setState({ back: s.back.slice(0, -1), forward: [...s.forward, from].slice(-MAX_HISTORY) });
+  await show(place.node);
+}
+
+/** Suivant (Alt+→, bouton 5 de la souris). */
+export async function depthForward(): Promise<void> {
+  const s = useDepth.getState();
+  const place = s.forward.at(-1);
+  if (!place) return;
+  const from = here(s);
+  useDepth.setState({ forward: s.forward.slice(0, -1), back: [...s.back, from].slice(-MAX_HISTORY) });
+  await show(place.node);
 }
 
 /** Espace des clichés instantanés (lecture seule, une demande UAC). */

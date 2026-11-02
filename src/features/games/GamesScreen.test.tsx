@@ -44,7 +44,7 @@ describe("Jeux", () => {
     render(<GamesScreen />);
     const list = await screen.findByRole("list", { name: "Jeux installés" });
     const cards = within(list).getAllByRole("listitem");
-    expect(cards.length).toBe(13);
+    expect(cards.length).toBe(14);
     // Trié par taille : Baldur's Gate 3 d'abord.
     expect(cards[0]?.getAttribute("aria-label")).toBe("Baldur's Gate 3");
     expect(within(list).queryAllByRole("checkbox")).toHaveLength(0);
@@ -57,6 +57,10 @@ describe("Jeux", () => {
     const witcher = within(list).getByRole("listitem", { name: "The Witcher 3: Wild Hunt" });
     expect(within(witcher).getByText("mesurée")).toBeTruthy();
     expect(screen.getByText(/3 fichiers de launchers ignorés/)).toBeTruthy();
+    // HoYoPlay : sa carte, désinstallation par le launcher, dernière partie inconnue.
+    const genshin = within(list).getByRole("listitem", { name: "Genshin Impact" });
+    expect(within(genshin).getByText(/HoYoPlay · C:/)).toBeTruthy();
+    expect(within(genshin).getByText("Dernière partie inconnue")).toBeTruthy();
   });
 
   it("Désinstaller et Déplacer ouvrent le launcher, jamais une suppression", async () => {

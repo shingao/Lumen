@@ -179,7 +179,7 @@ pub(crate) fn game_dto(g: &Game, known: Option<Known>, data: Option<GameDataDto>
 
 /// Exécutables des launchers aux emplacements d'installation habituels (Program Files).
 fn launcher_apps(program_files: &[PathBuf]) -> Vec<(Launcher, PathBuf)> {
-    let candidates: [(Launcher, &str); 11] = [
+    let candidates: [(Launcher, &str); 12] = [
         (Launcher::Epic, "Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe"),
         (Launcher::Epic, "Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe"),
         (Launcher::Gog, "GOG Galaxy\\GalaxyClient.exe"),
@@ -191,6 +191,7 @@ fn launcher_apps(program_files: &[PathBuf]) -> Vec<(Launcher, PathBuf)> {
         (Launcher::Ubisoft, "Ubisoft\\Ubisoft Game Launcher\\upc.exe"),
         (Launcher::Gog, "GOG Galaxy\\GalaxyClient.exe"),
         (Launcher::Minecraft, "Minecraft Launcher\\MinecraftLauncher.exe"),
+        (Launcher::HoYoPlay, "HoYoPlay\\launcher.exe"),
     ];
     let mut out: Vec<(Launcher, PathBuf)> = Vec::new();
     for (l, rel) in candidates {
@@ -264,6 +265,17 @@ mod platform {
     #[cfg(windows)]
     pub fn detect(env: &launchers::Env) -> Detection {
         launchers::detect(env, &WinRegistry)
+    }
+
+    /// `InstallLocation` de toutes les entrées Uninstall (HKLM et HKCU, vues 64 et 32 bits).
+    #[cfg(windows)]
+    pub fn install_locations() -> Vec<PathBuf> {
+        launchers::uninstall::entries(&WinRegistry).into_iter().filter_map(|e| e.location).map(|l| launchers::win_path(&l)).collect()
+    }
+
+    #[cfg(not(windows))]
+    pub fn install_locations() -> Vec<PathBuf> {
+        Vec::new()
     }
 
     #[cfg(not(windows))]
@@ -455,6 +467,8 @@ pub(crate) fn open_target(found: &Found, game: &Game, action: &str) -> Result<sa
     Ok(match game.launcher {
         // Installés pour l'utilisateur seul, hors de Program Files.
         Launcher::Riot | Launcher::CurseForge => LauncherOpen::UserApp(path),
+        // HoYoPlay : sous Program Files le plus souvent, parfois ailleurs (choisi à l'installation).
+        Launcher::HoYoPlay if !platform::program_files().iter().any(|pf| exe.starts_with(pf)) => LauncherOpen::UserApp(path),
         _ => LauncherOpen::App(path),
     })
 }
@@ -488,6 +502,11 @@ pub(crate) fn game_dirs_now(state: &GamesState) -> Vec<safety::path::WinPath> {
         }
     }
     game_dirs(state)
+}
+
+/// Dossiers d'installation de toutes les applications (`InstallLocation` des clés Uninstall).
+pub(crate) fn install_locations() -> Vec<PathBuf> {
+    platform::install_locations()
 }
 
 /// Jeux et launchers ouverts maintenant (avertissement avant de préparer le nettoyage ; le

@@ -1,0 +1,48 @@
+/* Puce de mise en évidence : discrète, au-dessus de la treemap (même DA que les puces de volume). */
+.chip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--bg-container);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.absent {
+  margin-left: 6px;
+  color: var(--text-label);
+}
+
+.absent::before {
+  content: "· ";
+}
+
+.clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-label);
+  cursor: pointer;
+}
+
+.clear:hover {
+  background: var(--bg-sunken);
+  color: var(--text-1);
+}

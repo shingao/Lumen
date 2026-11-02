@@ -116,6 +116,8 @@ pub struct RecoDto {
     /// Éléments couverts (les plus hauts).
     pub covered: usize,
     pub highlight: Vec<i64>,
+    /// « Sans risque » coché d'office (faux : proposé, jamais précoché).
+    pub precheck: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -352,6 +354,7 @@ impl Applied {
             last_activity: r.projects.iter().map(|p| epoch_ms(p.last_activity)).max().unwrap_or(0),
             covered: r.covered.len(),
             highlight: highlight(scan, &r.covered),
+            precheck: rule.precheck,
         })
     }
 

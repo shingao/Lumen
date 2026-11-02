@@ -441,3 +441,46 @@ fn donnees_et_sauvegardes_rattachees_au_jeu() {
     let mc = Game { install_dir: Some(inst.clone()), ..game(Launcher::CurseForge, "ATM9", "All the Mods 9") };
     assert_eq!(data::data_dirs(&mc, &cands, &[]), [inst.join("saves")]);
 }
+
+/// HoYoPlay : Genshin Impact (version mondiale) et Honkai: Star Rail (version chinoise) par leurs
+/// clés `GameInstallPath`, Zenless Zone Zero par son entrée Uninstall (repli), le launcher par la
+/// sienne ; une clé de jeu sans dossier est ignorée et comptée.
+#[test]
+fn hoyoplay_jeux_et_launcher() {
+    let mut reg = MemRegistry::new();
+    let hyp = "Software\\Cognosphere\\HYP\\1_0";
+    reg.set_str(Hive::CurrentUser, &format!("{hyp}\\hk4e_global"), "GameInstallPath", "D:\\HoYoPlay\\games\\Genshin Impact game");
+    reg.set_str(Hive::CurrentUser, &format!("{hyp}\\nap_global"), "GameVersion", "1.4.0");
+    reg.set_str(Hive::CurrentUser, "Software\\miHoYo\\HYP\\1_1\\hkrpg_cn", "GameInstallPath", "E:/米哈游/星穹铁道");
+    let u = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\HYP_1_0_global"), "DisplayName", "HoYoPlay");
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\HYP_1_0_global"), "Publisher", "COGNOSPHERE PTE. LTD.");
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\HYP_1_0_global"), "InstallLocation", "C:\\Program Files\\HoYoPlay");
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\nap_global"), "DisplayName", "Zenless Zone Zero");
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\nap_global"), "Publisher", "COGNOSPHERE PTE. LTD.");
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\nap_global"), "InstallLocation", "D:\\HoYoPlay\\games\\ZenlessZoneZero Game");
+    // Le même dossier que Genshin, déclaré aussi dans Uninstall : jamais compté deux fois.
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\hk4e_global"), "DisplayName", "Genshin Impact");
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\hk4e_global"), "Publisher", "COGNOSPHERE PTE. LTD.");
+    reg.set_str(Hive::CurrentUser, &format!("{u}\\hk4e_global"), "InstallLocation", "D:\\HoYoPlay\\games\\Genshin Impact game");
+    let d = detect(&Env::default(), &reg);
+    let hoyo: Vec<(&str, String)> = d.games.iter().filter(|g| g.launcher == Launcher::HoYoPlay).map(|g| (g.name.as_str(), norm(g.install_dir.as_deref().unwrap()))).collect();
+    assert_eq!(
+        hoyo,
+        [
+            ("Genshin Impact", norm(Path::new("D:\\HoYoPlay\\games\\Genshin Impact game"))),
+            ("Honkai: Star Rail", norm(Path::new("E:\\米哈游\\星穹铁道"))),
+            ("Zenless Zone Zero", norm(Path::new("D:\\HoYoPlay\\games\\ZenlessZoneZero Game"))),
+        ]
+    );
+    assert!(d.found.contains(&Launcher::HoYoPlay));
+    // Le launcher, jamais un jeu ; ouvert depuis son dossier pour désinstaller.
+    assert!(!d.games.iter().any(|g| g.name == "HoYoPlay"));
+    let exes: Vec<(Launcher, String)> = d.launcher_exes.iter().map(|(l, p)| (*l, norm(p))).collect();
+    assert_eq!(exes, [(Launcher::HoYoPlay, norm(Path::new("C:\\Program Files\\HoYoPlay\\launcher.exe")))]);
+    // Dernière partie inconnue (HoYoPlay ne la garde pas), jamais « À vérifier ».
+    assert!(d.games.iter().filter(|g| g.launcher == Launcher::HoYoPlay).all(|g| g.last_played.is_none()));
+    assert!(!Launcher::HoYoPlay.can_move());
+    // Clé de ZZZ sans GameInstallPath (le jeu vient de l'entrée Uninstall) : comptée comme ignorée.
+    assert!(d.ignored.iter().any(|i| i.launcher == Launcher::HoYoPlay && i.reason == Reason::Incomplete));
+}

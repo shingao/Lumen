@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDepth, useDepth } from "../../app/depth";
 import { CLEAN_CLOSED, useStore } from "../../app/store";
@@ -7,6 +7,7 @@ import { backend } from "../../ipc/client";
 import { DEFAULT_SETTINGS } from "../../ipc/mock";
 import { KpiBand } from "../kpi/KpiBand";
 import { DepthScreen } from "./DepthScreen";
+import { App } from "../../app/App";
 
 describe("Profondeur", () => {
   beforeEach(() => {
@@ -82,5 +83,47 @@ describe("Profondeur", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "WinSxS" }));
     await waitFor(() => expect(screen.getByRole("navigation", { name: "Fil d'Ariane" }).textContent).toContain("WinSxS"));
+  });
+
+  it("treemap du volume : précédent / suivant, fil d'Ariane, Étendre et raccourcis, comme l'Explorer", async () => {
+    const id = await backend.startScan({ kind: "volume", letter: "C:" }, "auto");
+    await new Promise<void>((resolve) => {
+      const off = backend.onScanEvent((e) => {
+        if (e.type === "done" && e.summary.scanId === id) {
+          off();
+          resolve();
+        }
+      });
+    });
+    render(<App />);
+    act(() => useStore.getState().go("depth"));
+    await screen.findByRole("region", { name: "Postes du volume" });
+    const crumbs = () => screen.getByRole("navigation", { name: "Fil d'Ariane" }).textContent ?? "";
+    const back = () => screen.getByRole("button", { name: /^Précédent/ }) as HTMLButtonElement;
+    const forward = () => screen.getByRole("button", { name: /^Suivant/ }) as HTMLButtonElement;
+    expect(back().disabled).toBe(true);
+    // Zoom par une tuile (clic), puis Étendre sur une sous-tuile.
+    fireEvent.click(screen.getByRole("button", { name: /^Windows,/ }));
+    await waitFor(() => expect(crumbs()).toContain("Windows"));
+    expect(back().getAttribute("aria-label")).toBe("Précédent : C:");
+    const winsxs = document.querySelector('[data-node] [data-expand]') as HTMLElement;
+    fireEvent.click(winsxs);
+    await waitFor(() => expect(useDepth.getState().back).toHaveLength(2));
+    // ← (bouton), puis Alt+→ (clavier) et Retour arrière, puis bouton 4 de la souris.
+    fireEvent.click(back());
+    await waitFor(() => expect(crumbs()).toMatch(/Windows$/));
+    expect(forward().disabled).toBe(false);
+    fireEvent.keyDown(window, { key: "ArrowRight", altKey: true });
+    await waitFor(() => expect(useDepth.getState().back).toHaveLength(2));
+    fireEvent.keyDown(window, { key: "Backspace" });
+    await waitFor(() => expect(crumbs()).toMatch(/Windows$/));
+    fireEvent.mouseUp(window, { button: 3 });
+    await waitFor(() => expect(crumbs()).toBe("C:"));
+    // Fil d'Ariane cliquable : nouvel emplacement dans l'historique.
+    fireEvent.click(screen.getByRole("button", { name: /^Program Files,/ }));
+    await waitFor(() => expect(crumbs()).toContain("Program Files"));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Fil d'Ariane" })).getByRole("button", { name: "C:" }));
+    await waitFor(() => expect(crumbs()).toBe("C:"));
+    expect(back().getAttribute("aria-label")).toBe("Précédent : Program Files");
   });
 });
