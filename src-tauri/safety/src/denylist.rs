@@ -106,7 +106,7 @@ const HIVE_PREFIXES: &[&str] = &["NTUSER.DAT", "USRCLASS.DAT"];
 const SECRET_NAMES: &[&str] = &[
     ".NPMRC", ".YARNRC", ".YARNRC.YML", ".GIT-CREDENTIALS", ".NETRC", "_NETRC", ".PGPASS",
     "COOKIES", "COOKIES-JOURNAL", "LOGIN DATA", "LOGIN DATA-JOURNAL", "LOGIN DATA FOR ACCOUNT", "WEB DATA",
-    "WEB DATA-JOURNAL", "LOCAL STORAGE", "SESSION STORAGE", "INDEXEDDB", "SESSIONS",
+    "WEB DATA-JOURNAL", "LOCAL STORAGE", "SESSION STORAGE", "INDEXEDDB", "SESSIONS", "WEBSTORAGE", "SERVICE WORKER",
     "COOKIES.SQLITE", "LOGINS.JSON", "KEY3.DB", "KEY4.DB", "CERT9.DB",
 ];
 const SECRET_PREFIXES: &[&str] = &["ID_RSA", "ID_ED25519", "ID_ECDSA", "ID_DSA"];
@@ -441,7 +441,7 @@ mod tests {
         }
         // Navigateurs et applis Electron : stockage, cookies, mots de passe, sessions — même dans un cache.
         let chrome = format!("{p}\\AppData\\Local\\Google\\Chrome\\User Data\\Default");
-        for rel in ["Cookies", "Network\\Cookies", "Login Data", "Local Storage\\leveldb\\000003.log", "IndexedDB", "Sessions\\Session_1", "Web Data", "Session Storage"] {
+        for rel in ["Cookies", "Network\\Cookies", "Login Data", "Local Storage\\leveldb\\000003.log", "IndexedDB", "Sessions\\Session_1", "Web Data", "Session Storage", "WebStorage\\QuotaManager", "Service Worker\\Database\\000001.log"] {
             assert_eq!(deny(&format!("{chrome}\\{rel}")), Some(Secret), "{rel}");
         }
         assert_eq!(deny(&format!("{p}\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\x.default\\logins.json")), Some(Secret));
